@@ -1,6 +1,7 @@
 # 0017 Assets, fonts and their licenses
 
-Status: accepted 2026-10-11, revised 2026-10-13 for the app's own fonts.
+Status: accepted 2026-10-11, revised 2026-10-13 for the app's own fonts,
+and 2026-10-16 for vendored C code and the C port's fonts (decision 0036).
 
 ## Context
 
@@ -23,6 +24,10 @@ terminal.
   `skins/<skin>/fonts/<Family>/<file>` beside that family's license file,
   copied verbatim.
 - Images: `skins/<skin>/images/`.
+- Vendored C source (decision 0036): `third_party/<library>/`, each file
+  beside its library's licence, copied verbatim. Each is listed in
+  `ASSETS.json` like an asset, with the same licence list and the
+  commit it was copied from.
 - DejaVu Sans Mono and DejaVu Sans come from the system, as a
   prerequisite: `install.sh` looks for both with `fc-list` and, when
   either is missing, names the distribution's package and stops.
@@ -46,5 +51,6 @@ Fonts inside each skin keep a skin a self-contained directory.
   openSUSE package the 2.37 release, the last there is, and Arch the
   same with 18 later upstream commits, so a bundled copy draws nothing
   different, and on Debian and Ubuntu the libraries Electron needs
-  already pull it in.
+  already pull it in. The C port of decision 0036 embeds both fonts all
+  the same, because macOS does not ship them.
 - A Markdown table manifest: harder to check mechanically.
