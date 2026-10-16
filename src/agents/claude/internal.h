@@ -252,12 +252,6 @@ void sk_claude_server_sweep(sk_claude_server *s, uint64_t now);
 void sk_claude_server_close(sk_claude_server *s);
 void sk_claude_server_free(sk_claude_server *s);
 
-/* ---- The watch adapter (watch.c) ---- */
-
-/* sk_claude_watch with a ud the part owns, freed by free_ud. */
-sk_part sk_claude_watch_owned(const sk_agent_ctx *ctx, sk_claude_find_fn find, void *ud,
-                              void (*free_ud)(void *));
-
 /* ---- The provider (claude.c, carry.c) ---- */
 
 /* What a new tab carries of argv, by Claude Code's options (0023). */
