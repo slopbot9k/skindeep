@@ -14,8 +14,22 @@ static bool write_file(const char *path, const uint8_t *data, size_t n)
     return fclose(f) == 0 && ok;
 }
 
+/* Every directory above path, made where missing: a name may hold a
+ * folder, as app/NAME does. */
+static void make_parents(const char *path)
+{
+    sk_buf dir = {0};
+    for (const char *p = strchr(path, '/'); p; p = strchr(p + 1, '/')) {
+        sk_buf_clear(&dir);
+        sk_buf_append(&dir, path, (size_t)(p - path));
+        mkdir(dir.ptr, 0755);
+    }
+    sk_buf_free(&dir);
+}
+
 static void save(const char *path, const sk_image *im)
 {
+    make_parents(path);
     size_t n = 0;
     uint8_t *q = sk_qoi_encode(im, &n);
     if (!q || !write_file(path, q, n))
@@ -71,8 +85,6 @@ void sk_test_golden_near(const char *file, int line, const char *name, const sk_
     /* As many pixels in a million as ppm may lie past the tolerance. */
     long allowed = (long)((long long)im->w * im->h * ppm / 1000000);
     if (!have || want.w != im->w || want.h != im->h || bad > allowed) {
-        mkdir("build", 0755);
-        mkdir("build/golden-out", 0755);
         sk_buf out = {0};
         sk_buf_printf(&out, "build/golden-out/%s.qoi", name);
         save(out.ptr, im);

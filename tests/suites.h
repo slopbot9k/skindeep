@@ -44,6 +44,7 @@
     X(clitab)                                                                \
     X(monitor)                                                               \
     X(dashboard)                                                             \
+    X(dashview)                                                              \
     X(foreign)                                                               \
     X(headless)                                                              \
     X(term_recorded)                                                         \
