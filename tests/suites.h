@@ -15,4 +15,7 @@
     X(bus)                                                                    \
     X(tail)                                                                   \
     X(carry)                                                                  \
-    X(agent)
+    X(agent)                                                                  \
+    X(command)                                                                \
+    X(proctree)                                                               \
+    X(session)
