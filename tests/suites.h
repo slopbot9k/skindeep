@@ -15,4 +15,9 @@
     X(bus)                                                                    \
     X(tail)                                                                   \
     X(carry)                                                                  \
-    X(agent)
+    X(agent)                                                                  \
+    X(procfds)                                                                \
+    X(codex_parse)                                                            \
+    X(codex_thread_name)                                                      \
+    X(codex_carry)                                                            \
+    X(codex_discovery)
