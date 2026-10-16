@@ -1,5 +1,6 @@
 #include "golden.h"
 
+#include "../src/base/paths.h"
 #include "test.h"
 
 #include <stdlib.h>
@@ -14,8 +15,15 @@ static bool write_file(const char *path, const uint8_t *data, size_t n)
     return fclose(f) == 0 && ok;
 }
 
+/* name may hold a folder, such as app/chooser_1x: it is made. */
 static void save(const char *path, const sk_image *im)
 {
+    const char *slash = strrchr(path, '/');
+    if (slash) {
+        char *dir = sk_xstrndup(path, (size_t)(slash - path));
+        sk_mkdirs(dir, 0755);
+        free(dir);
+    }
     size_t n = 0;
     uint8_t *q = sk_qoi_encode(im, &n);
     if (!q || !write_file(path, q, n))

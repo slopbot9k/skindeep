@@ -47,6 +47,7 @@
     X(foreign)                                                               \
     X(newtab)                                                                \
     X(picker)                                                                \
+    X(chooser)                                                               \
     X(headless)                                                              \
     X(term_recorded)                                                         \
     X(window)                                                                \
