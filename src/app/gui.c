@@ -1,6 +1,7 @@
 #include "gui.h"
 
 #include "../base/log.h"
+#include "../base/utf8.h"
 #include "../core/command.h"
 #include "../core/loop.h"
 #include "../platform/procinfo.h"
@@ -8,6 +9,7 @@
 #include "../term/keys.h"
 #include "../ui/termview.h"
 #include "clitab.h"
+#include "control.h"
 #include "identity.h"
 #include "launch.h"
 
@@ -1037,6 +1039,304 @@ static void on_event(void *ud, const sk_event *ev)
     }
 }
 
+/* ---- The control socket of the live checks ---- */
+
+typedef struct {
+    gui *g;
+    sk_control_req *req;
+    sk_buf msg;  /* the request, as JSON */
+    sk_buf core; /* what the core added: the tabs' members */
+} ctl_msg;
+
+static const struct {
+    const char *name;
+    sk_key key;
+} KEYS[] = {
+    {"Enter", SK_KEY_ENTER},   {"Tab", SK_KEY_TAB},         {"Backspace", SK_KEY_BACKSPACE},
+    {"Escape", SK_KEY_ESCAPE}, {"Up", SK_KEY_UP},           {"Down", SK_KEY_DOWN},
+    {"Left", SK_KEY_LEFT},     {"Right", SK_KEY_RIGHT},     {"Home", SK_KEY_HOME},
+    {"End", SK_KEY_END},       {"PageUp", SK_KEY_PAGE_UP},  {"PageDown", SK_KEY_PAGE_DOWN},
+    {"Insert", SK_KEY_INSERT}, {"Delete", SK_KEY_DELETE},
+};
+
+static uint32_t mods_of(const sk_json *v)
+{
+    uint32_t m = 0;
+    for (size_t i = 0; v && i < (v->type == SK_JSON_ARRAY ? v->array.len : 0); i++) {
+        sk_str s = {0};
+        sk_json_as_string(sk_json_at(v, i), &s);
+        m |= sk_str_eq_c(s, "shift")   ? SK_MOD_SHIFT
+             : sk_str_eq_c(s, "ctrl")  ? SK_MOD_CTRL
+             : sk_str_eq_c(s, "alt")   ? SK_MOD_ALT
+             : sk_str_eq_c(s, "super") ? SK_MOD_SUPER
+                                       : 0;
+    }
+    return m;
+}
+
+static double num(const sk_json *msg, const char *key, double dflt)
+{
+    double d;
+    return sk_json_as_number(sk_json_get(msg, key), &d) ? d : dflt;
+}
+
+/* A key as the platform would give it: a named key, or a character
+ * typed with its text and its base. */
+static bool key_of(const sk_json *msg, sk_key_event *k)
+{
+    memset(k, 0, sizeof *k);
+    k->mods = mods_of(sk_json_get(msg, "mods"));
+    sk_str name = {0}, text = {0};
+    sk_json_as_string(sk_json_get(msg, "key"), &name);
+    sk_json_as_string(sk_json_get(msg, "text"), &text);
+    for (size_t i = 0; i < SK_LEN(KEYS); i++)
+        if (sk_str_eq_c(name, KEYS[i].name))
+            k->key = KEYS[i].key;
+    if (!k->key && name.len > 1 && name.ptr[0] == 'F') {
+        int n = atoi(name.ptr + 1);
+        if (n >= 1 && n <= 24)
+            k->key = (sk_key)(SK_KEY_F1 + n - 1);
+    }
+    if (k->key)
+        return true;
+    sk_str ch = text.len ? text : name;
+    if (!ch.len || ch.len >= sizeof k->text)
+        return false;
+    memcpy(k->text, ch.ptr, ch.len);
+    uint32_t cp = 0;
+    sk_utf8_decode(ch.ptr, ch.len, &cp, NULL);
+    k->base = cp >= 'A' && cp <= 'Z' ? cp + 32 : cp;
+    if (name.len)
+        sk_utf8_decode(name.ptr, name.len, &k->base, NULL);
+    /* Ctrl and Super chords type nothing of their own. */
+    if (k->mods & (SK_MOD_CTRL | SK_MOD_SUPER) && !text.len)
+        k->text[0] = 0;
+    return true;
+}
+
+static void probe(gui *g, ctl_msg *m)
+{
+    sk_buf b = {0};
+    sk_jw w;
+    sk_jw_init(&w, &b, 0);
+    sk_jw_object(&w);
+    sk_jw_key(&w, SK_STR("ok"));
+    sk_jw_bool(&w, true);
+    /* The core's members, comma first, after the writer's last value. */
+    sk_buf_append(&b, m->core.ptr, m->core.len);
+    int pw, ph;
+    sk_window_size(g->win, &pw, &ph);
+    sk_jw_key(&w, SK_STR("window"));
+    sk_jw_object(&w);
+    sk_jw_key(&w, SK_STR("w"));
+    sk_jw_int(&w, pw);
+    sk_jw_key(&w, SK_STR("h"));
+    sk_jw_int(&w, ph);
+    sk_jw_key(&w, SK_STR("scale"));
+    sk_jw_number(&w, sk_window_scale(g->win));
+    sk_jw_key(&w, SK_STR("cols"));
+    sk_jw_int(&w, g->ui_cols);
+    sk_jw_key(&w, SK_STR("rows"));
+    sk_jw_int(&w, g->ui_rows);
+    sk_jw_key(&w, SK_STR("strip"));
+    sk_jw_bool(&w, strip_height(g) > 0);
+    sk_jw_object_end(&w);
+    sk_term *t = active_term(g);
+    sk_jw_key(&w, SK_STR("screen"));
+    if (t) {
+        sk_term_lock(t);
+        char *text = sk_term_screen_text(t);
+        sk_jw_string(&w, sk_str_c(text));
+        free(text);
+        char *sel = sk_term_has_selection(t) ? sk_term_selection_text(t) : NULL;
+        sk_jw_key(&w, SK_STR("selection"));
+        if (sel)
+            sk_jw_string(&w, sk_str_c(sel));
+        else
+            sk_jw_null(&w);
+        free(sel);
+        sk_term_cursor c;
+        sk_term_cursor_of(t, &c);
+        sk_jw_key(&w, SK_STR("cursor"));
+        sk_jw_array(&w);
+        sk_jw_int(&w, c.x);
+        sk_jw_int(&w, c.y);
+        sk_jw_array_end(&w);
+        sk_term_unlock(t);
+    } else {
+        sk_jw_null(&w);
+    }
+    sk_jw_object_end(&w);
+    sk_control_answer(m->req, b.ptr, b.len);
+    sk_buf_free(&b);
+}
+
+/* On the UI thread: each request goes the way the platform's events go. */
+static void ui_control(void *ud)
+{
+    ctl_msg *m = ud;
+    gui *g = m->g;
+    sk_arena a;
+    sk_arena_init(&a, 0);
+    const sk_json *msg = sk_json_parse(&a, m->msg.ptr, m->msg.len, NULL);
+    sk_str op = {0};
+    sk_json_as_string(sk_json_get(msg, "op"), &op);
+    sk_event ev;
+    memset(&ev, 0, sizeof ev);
+    ev.win = g->win;
+    const char *why = NULL;
+    if (sk_str_eq_c(op, "probe")) {
+        probe(g, m);
+        m->req = NULL;
+    } else if (sk_str_eq_c(op, "key")) {
+        ev.type = SK_EV_KEY_DOWN;
+        if (key_of(msg, &ev.key))
+            on_event(g, &ev);
+        else
+            why = "no such key";
+    } else if (sk_str_eq_c(op, "type")) {
+        sk_str text = {0};
+        sk_json_as_string(sk_json_get(msg, "text"), &text);
+        for (size_t i = 0; i < text.len;) {
+            uint32_t cp = 0;
+            size_t n = sk_utf8_decode(text.ptr + i, text.len - i, &cp, NULL);
+            n = n ? n : 1;
+            memset(&ev.key, 0, sizeof ev.key);
+            ev.type = SK_EV_KEY_DOWN;
+            if (cp == '\n' || cp == '\r') {
+                ev.key.key = SK_KEY_ENTER;
+            } else if (n < sizeof ev.key.text) {
+                memcpy(ev.key.text, text.ptr + i, n);
+                ev.key.base = cp >= 'A' && cp <= 'Z' ? cp + 32 : cp;
+                ev.key.mods = cp >= 'A' && cp <= 'Z' ? SK_MOD_SHIFT : 0;
+            }
+            on_event(g, &ev);
+            i += n;
+        }
+    } else if (sk_str_eq_c(op, "mouse")) {
+        sk_str kind = {0};
+        sk_json_as_string(sk_json_get(msg, "kind"), &kind);
+        ev.type = sk_str_eq_c(kind, "down") ? SK_EV_MOUSE_DOWN : sk_str_eq_c(kind, "up") ? SK_EV_MOUSE_UP
+                                                                                         : SK_EV_MOUSE_MOVE;
+        ev.mouse.x = num(msg, "x", 0);
+        ev.mouse.y = num(msg, "y", 0);
+        ev.mouse.button = (int)num(msg, "button", ev.type == SK_EV_MOUSE_MOVE ? 0 : 1);
+        ev.mouse.clicks = (int)num(msg, "clicks", 1);
+        ev.mouse.mods = mods_of(sk_json_get(msg, "mods"));
+        on_event(g, &ev);
+    } else if (sk_str_eq_c(op, "scroll")) {
+        ev.type = SK_EV_SCROLL;
+        ev.scroll.x = num(msg, "x", 0);
+        ev.scroll.y = num(msg, "y", 0);
+        ev.scroll.dy = num(msg, "dy", 0);
+        bool precise = false;
+        sk_json_as_bool(sk_json_get(msg, "precise"), &precise);
+        ev.scroll.precise = precise;
+        ev.scroll.mods = mods_of(sk_json_get(msg, "mods"));
+        on_event(g, &ev);
+    } else if (sk_str_eq_c(op, "focus")) {
+        ev.type = SK_EV_FOCUS;
+        ev.focused = true;
+        sk_json_as_bool(sk_json_get(msg, "focused"), &ev.focused);
+        on_event(g, &ev);
+    } else if (sk_str_eq_c(op, "close")) {
+        ev.type = SK_EV_CLOSE;
+        on_event(g, &ev);
+    } else if (sk_str_eq_c(op, "shot")) {
+        sk_str path = {0};
+        sk_json_as_string(sk_json_get(msg, "path"), &path);
+        sk_image im;
+        size_t n = 0;
+        uint8_t *q = NULL;
+        FILE *f = NULL;
+        if (!path.len || !sk_window_readback(g->win, &im)) {
+            why = "cannot read the window back";
+        } else {
+            q = sk_qoi_encode(&im, &n);
+            f = q ? fopen(path.ptr, "wb") : NULL;
+            if (!f || fwrite(q, 1, n, f) != n)
+                why = "cannot write the image";
+            if (f)
+                fclose(f);
+            free(q);
+            sk_image_free(&im);
+        }
+    } else {
+        why = "no such op";
+    }
+    if (m->req)
+        sk_control_ok(m->req, why);
+    sk_arena_free(&a);
+    sk_buf_free(&m->msg);
+    sk_buf_free(&m->core);
+    free(m);
+}
+
+/* On the core thread: what only the core knows goes in first. */
+static void on_control(void *ud, sk_control_req *req, const sk_json *msg)
+{
+    gui *g = ud;
+    sk_str op = {0};
+    sk_json_as_string(sk_json_get(msg, "op"), &op);
+    if (sk_str_eq_c(op, "hangup")) {
+        sk_tabs_hangup_all(g->tabs);
+        sk_control_ok(req, NULL);
+        return;
+    }
+    ctl_msg *m = sk_xcalloc(1, sizeof *m);
+    m->g = g;
+    m->req = req;
+    sk_jw w;
+    sk_jw_init(&w, &m->msg, 0);
+    sk_jw_value(&w, msg);
+    if (sk_str_eq_c(op, "probe")) {
+        /* The tabs' members of the probe, in place of skinnedProbe's. */
+        sk_jw_init(&w, &m->core, 0);
+        sk_jw_object(&w);
+        sk_tab *active = sk_tabs_active(g->tabs);
+        sk_jw_key(&w, SK_STR("active"));
+        sk_jw_int(&w, active ? active->id : 0);
+        sk_jw_key(&w, SK_STR("tabs"));
+        sk_jw_array(&w);
+        for (size_t i = 0; i < sk_tabs_count(g->tabs); i++) {
+            sk_tab *t = sk_tabs_at(g->tabs, i);
+            sk_session *s = sk_clitab_session(t);
+            sk_jw_object(&w);
+            sk_jw_key(&w, SK_STR("id"));
+            sk_jw_int(&w, t->id);
+            sk_jw_key(&w, SK_STR("pid"));
+            sk_jw_int(&w, s ? sk_session_pid(s) : 0);
+            sk_jw_key(&w, SK_STR("active"));
+            sk_jw_bool(&w, t == active);
+            sk_jw_key(&w, SK_STR("unseen"));
+            sk_jw_bool(&w, t->unseen);
+            sk_jw_key(&w, SK_STR("label"));
+            sk_jw_string(&w, sk_str_c(t->label));
+            sk_jw_key(&w, SK_STR("name"));
+            sk_jw_string(&w, sk_str_c(sk_tab_name(t)));
+            sk_jw_key(&w, SK_STR("cwd"));
+            sk_jw_string(&w, sk_str_c(t->cwd));
+            sk_jw_key(&w, SK_STR("argv"));
+            sk_jw_array(&w);
+            for (size_t k = 0; k < t->cmd.len; k++)
+                sk_jw_string(&w, sk_str_c(t->cmd.ptr[k]));
+            sk_jw_array_end(&w);
+            sk_jw_object_end(&w);
+        }
+        sk_jw_array_end(&w);
+        sk_jw_object_end(&w);
+        /* The object's members alone, for the UI to wrap. */
+        sk_buf inner = {0};
+        if (m->core.len > 2)
+            sk_buf_append(&inner, m->core.ptr + 1, m->core.len - 2);
+        sk_buf_clear(&m->core);
+        sk_buf_append_c(&m->core, ",");
+        sk_buf_append(&m->core, inner.ptr ? inner.ptr : "", inner.len);
+        sk_buf_free(&inner);
+    }
+    sk_ui_post(ui_control, m);
+}
+
 /* ---- The run ---- */
 
 int sk_gui_run(const sk_options *o, const sk_envp *env, const char *self)
@@ -1069,6 +1369,9 @@ int sk_gui_run(const sk_options *o, const sk_envp *env, const char *self)
     g->cache = sk_glyph_cache_new((size_t)32 << 20);
     sk_window_opts wo = {
         .title = "skinned", .w = WINDOW_W, .h = WINDOW_H, .min_w = WINDOW_MIN_W, .min_h = WINDOW_MIN_H, .ud = g};
+    /* For the live checks: a window off the screen. */
+    const char *hidden = sk_envp_get(env, "SKINNED_HIDDEN");
+    wo.hidden = hidden && *hidden == '1';
     g->win = sk_window_new(&wo, &err);
     if (!g->win) {
         sk_tell("cannot open a window: %s", err ? err : "unknown");
@@ -1120,6 +1423,13 @@ int sk_gui_run(const sk_options *o, const sk_envp *env, const char *self)
     sk_loop_signal(g->loop, SIGINT, on_stop, g);
     sk_loop_signal(g->loop, SIGTERM, on_stop, g);
     sk_loop_signal(g->loop, SIGHUP, on_stop, g);
+    sk_control *ctl = NULL;
+    const char *control = sk_envp_get(env, "SKINNED_CONTROL");
+    if (control && *control && !(ctl = sk_control_open(g->loop, control, on_control, g, &err))) {
+        sk_tell("%s", err);
+        free(err);
+        err = NULL;
+    }
 
     /* The first tab runs the command as typed (decision 0003). Until
      * the core thread starts, this thread is the core's. */
@@ -1153,6 +1463,7 @@ int sk_gui_run(const sk_options *o, const sk_envp *env, const char *self)
     for (size_t i = 0; i < g->ctabs.len; i++)
         st_unref(g->ctabs.ptr[i].st);
     sk_vec_free(&g->ctabs);
+    sk_control_close(ctl);
     sk_loop_free(g->loop);
 
 out:
