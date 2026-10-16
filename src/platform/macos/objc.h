@@ -13,6 +13,7 @@
 
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreGraphics/CoreGraphics.h>
+#include <limits.h>
 #include <objc/message.h>
 #include <objc/runtime.h>
 #include <stdlib.h>
@@ -27,12 +28,23 @@
 #define SK_MSG_STRET(T) ((T)objc_msgSend)
 #endif
 
+/* Foundation's NSRange, in UTF-16 units, which CoreFoundation does not
+ * define, passed and returned by value as the two words it is; and
+ * NSNotFound, NSIntegerMax. */
+typedef struct {
+    unsigned long location, length;
+} NSRange;
+#define NSNotFound ((unsigned long)LONG_MAX)
+
 /* Type encodings for class_addMethod. */
 #if OBJC_BOOL_IS_BOOL
 #define SK_ENC_BOOL "B"
 #else
 #define SK_ENC_BOOL "c"
 #endif
+#define SK_ENC_RANGE "{_NSRange=QQ}"
+#define SK_ENC_POINT "{CGPoint=dd}"
+#define SK_ENC_RECT "{CGRect={CGPoint=dd}{CGSize=dd}}"
 
 enum {
     NSWindowStyleMaskTitled = 1 << 0,
