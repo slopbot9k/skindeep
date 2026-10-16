@@ -47,6 +47,21 @@ typedef struct {
 
 /* The input, the menu's Visualization input. */
 enum { SK_VIZ_SRC_SESSION, SK_VIZ_SRC_SOUND, SK_VIZ_SRC_BOTH };
+/* The sound output's state: none yet, live, failed. */
+enum { SK_VIZ_SOUND_NONE, SK_VIZ_SOUND_LIVE, SK_VIZ_SOUND_FAILED };
+
+/* A whole frame, feed()'s message: every pane in strip order, the
+ * input (src), the sound output's state (st) and, while the input takes
+ * it and it is live, its newest samples, -1 to 1. A pane's synthesiser
+ * takes sk_synth_input only when src is not SK_VIZ_SRC_SOUND, and the
+ * samples in sk_synth_step. */
+typedef struct {
+    const sk_viz_pane_frame *panes;
+    size_t n_panes;
+    int src, st;
+    const float *samples;
+    size_t n_samples;
+} sk_viz_frame;
 
 /* An event as a mode reads it. */
 typedef struct {
@@ -111,7 +126,8 @@ void sk_synth_trigger(sk_synth *s, int kind, int cls);
 void sk_synth_touch(sk_synth *s, double u, double v);
 /* Advances dt seconds and fills samples and bands. src is the input;
  * sound, n of them, the sound output's newest samples, taken when n is
- * SK_SYNTH_N and src is not the session alone. */
+ * SK_SYNTH_N and src is not the session alone. The page stepped each
+ * pane once a display frame, dt the time since the last, at most 0.1. */
 void sk_synth_step(sk_synth *s, double dt, int src, const float *sound, size_t n);
 /* The events since the mark, oldest first, into *out (emptied first);
  * the sound output alone brings none, so there each rise of its

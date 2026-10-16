@@ -54,8 +54,10 @@ int sk_vmode_index(const sk_vmode *m);
 const sk_image *sk_vmode_draw(sk_vmode *m, sk_synth *s, double dt, int w, int h, double scale);
 /* The pointer at (x, y), points from the pane's top left, down while
  * the button is held: false when the mode has no answer of its own, and
- * the caller tones the synthesiser instead (sk_synth_touch), as the
- * page did. */
+ * the caller tones the synthesiser instead, as the page did: on the
+ * press and every 60 ms of a drag, sk_synth_touch with x / w and y / h.
+ * The press holds the pointer to its pane until the release; a move
+ * with the button up goes as SK_VIZ_MOVE, down false. */
 bool sk_vmode_pointer(sk_vmode *m, int kind, double x, double y, bool down);
 bool sk_vmode_has_pointer(const sk_vmode *m);
 
