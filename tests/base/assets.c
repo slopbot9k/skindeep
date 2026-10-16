@@ -53,7 +53,7 @@ static void test_manifest(void)
         if (path.ptr && sk_str_prefix(path, SK_STR("third_party/")))
             third_party++;
     }
-    CHECK_INT(third_party, 16);
+    CHECK_INT(third_party, 17);
     sk_arena_free(&a);
     free(text);
 }

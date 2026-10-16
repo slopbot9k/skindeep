@@ -45,4 +45,14 @@
     X(monitor)                                                               \
     X(dashboard)                                                             \
     X(foreign)                                                               \
-    X(headless)
+    X(headless)                                                              \
+    X(term_parser)                                                           \
+    X(term_print)                                                            \
+    X(term_cursor)                                                           \
+    X(term_erase)                                                            \
+    X(term_sgr)                                                              \
+    X(term_modes)                                                            \
+    X(term_replies)                                                          \
+    X(term_osc)                                                              \
+    X(term_reflow)                                                           \
+    X(term_select)

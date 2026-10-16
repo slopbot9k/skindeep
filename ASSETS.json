@@ -810,5 +810,12 @@
     "author": "Bitstream, Inc.; the DejaVu fonts team; Tavmjong Bah (Arev glyphs)",
     "license": "Bitstream-Vera",
     "notes": "the licence of the DejaVu fonts beside it, file dejavu-fonts-ttf-2.37/LICENSE, copied verbatim"
+  },
+  {
+    "path": "third_party/xterm.js/LICENSE",
+    "source": "https://registry.npmjs.org/@xterm/xterm/-/xterm-6.0.0.tgz",
+    "author": "The xterm.js authors; SourceLair Private Company; Christopher Jeffrey",
+    "license": "MIT",
+    "notes": "the licence of @xterm/xterm 6.0.0 (sha512 integrity as in package-lock.json), file package/LICENSE, copied verbatim. The C terminal in src/term follows the behaviour of its parser, input handler, buffers, reflow and selection, ported from its TypeScript; no xterm.js file is vendored."
   }
 ]
