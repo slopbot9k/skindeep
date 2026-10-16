@@ -127,4 +127,6 @@
     X(viz_canvas)                                                            \
     X(viz_rules)                                                             \
     X(viz_physics)                                                           \
-    X(viz_modes)
+    X(viz_modes)                                                             \
+    X(skin_pack)                                                             \
+    X(skin_compile)

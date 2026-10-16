@@ -3,7 +3,7 @@
 # the system C compiler.
 #
 #   make              build the library, the tests, skinned, skinned-relay,
-#                     skinc and hookdump
+#                     skinc and hookdump, and the shipped skins' packs
 #   make test         run the tests (T=json runs the json suite)
 #   make debug        run the tests under AddressSanitizer and UBSan
 #   make fuzz         build the fuzz targets
@@ -82,6 +82,15 @@ SKINC_OBJ := $(SKINC_SRC:skinc/%.c=$(BUILD)/skinc-objs/%.o)
 SKINC_LIB := $(BUILD)/libskinc.a
 SKINC := $(BUILD)/skinc
 
+# The shipped skins' packs (decision 0037), compiled by this build's
+# skinc and linked into skinned and the tests as generated C arrays;
+# not into libsk.a, which skinc links. A pack depends on every file of
+# its skin.
+SKINS := coffee deck library phosphor
+PACKS := $(SKINS:%=$(BUILD)/gen/%.pack)
+SHIPPED_OBJ := $(BUILD)/gen/packs.o
+rwildcard = $(foreach d,$(wildcard $(1)/*),$(call rwildcard,$(d)) $(d))
+
 TEST_SRC := $(filter-out tests/fuzz/%,$(wildcard tests/*.c tests/*/*.c))
 TEST_OBJ := $(TEST_SRC:%.c=$(BUILD)/%.o)
 TEST_BIN := $(BUILD)/tests/run
@@ -94,7 +103,8 @@ RELAY := $(BUILD)/skinned-relay
 HOOKDUMP := $(BUILD)/hookdump
 SKINNED := $(BUILD)/skinned
 
-FUZZ_TARGETS := json http utf8 base64 claude codex text path links term css png jpeg svg vorbis fontcheck adpcm
+FUZZ_TARGETS := json http utf8 base64 claude codex text path links term css png jpeg svg vorbis fontcheck adpcm \
+    pack
 FUZZ_BINS := $(FUZZ_TARGETS:%=$(BUILD)/fuzz-%)
 FUZZ_DRIVER := $(BUILD)/tests/fuzz/driver.o
 FUZZ_SECONDS ?= 30
@@ -139,6 +149,17 @@ $(BUILD)/gen/fonts.c: $(FONTS) $(BIN2C)
 	@mkdir -p $(dir $@)
 	$(BIN2C) sk_embedded_fonts $(FONTS) > $@.tmp && mv $@.tmp $@
 
+define pack_rule
+$(BUILD)/gen/$(1).pack: $(call rwildcard,skins/$(1)) $(SKINC)
+	@mkdir -p $$(dir $$@)
+	$(SKINC) skins/$(1) -o $$@
+endef
+$(foreach s,$(SKINS),$(eval $(call pack_rule,$(s))))
+
+$(BUILD)/gen/packs.c: $(PACKS) $(BIN2C)
+	@mkdir -p $(dir $@)
+	$(BIN2C) sk_shipped_packs $(PACKS) > $@.tmp && mv $@.tmp $@
+
 $(BUILD)/gen/%.o: $(BUILD)/gen/%.c
 	$(COMPILE) -I. -c $< -o $@
 
@@ -153,8 +174,8 @@ $(SKINC_LIB): $(SKINC_OBJ)
 	@rm -f $@
 	$(AR) rcs $@ $(SKINC_OBJ)
 
-$(TEST_BIN): $(TEST_OBJ) $(SHOT_OBJ) $(SKINC_LIB) $(LIB)
-	$(CC) $(OPT) $(LDFLAGS) -o $@ $(TEST_OBJ) $(SHOT_OBJ) $(SKINC_LIB) $(LIB) $(LDLIBS) $(UI_LIBS)
+$(TEST_BIN): $(TEST_OBJ) $(SHOT_OBJ) $(SHIPPED_OBJ) $(SKINC_LIB) $(LIB)
+	$(CC) $(OPT) $(LDFLAGS) -o $@ $(TEST_OBJ) $(SHOT_OBJ) $(SHIPPED_OBJ) $(SKINC_LIB) $(LIB) $(LDLIBS) $(UI_LIBS)
 
 $(SKINC): $(BUILD)/skinc-objs/main.o $(SKINC_LIB) $(LIB)
 	$(CC) $(OPT) $(LDFLAGS) -o $@ $^ $(LDLIBS)
@@ -162,7 +183,7 @@ $(SKINC): $(BUILD)/skinc-objs/main.o $(SKINC_LIB) $(LIB)
 $(RELAY): $(BUILD)/src/relay/main.o $(LIB)
 	$(CC) $(OPT) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
-$(SKINNED): $(BUILD)/src/main/skinned.o $(LIB)
+$(SKINNED): $(BUILD)/src/main/skinned.o $(SHIPPED_OBJ) $(LIB)
 	$(CC) $(OPT) $(LDFLAGS) -o $@ $^ $(LDLIBS) $(UI_LIBS)
 
 $(HOOKDUMP): $(BUILD)/tools/hookdump.o $(LIB)
