@@ -51,6 +51,18 @@ static void quiet(void *ud, const char *msg)
     (void)ud, (void)msg;
 }
 
+/* The app's lines come with the app's ud, from the session as from the
+ * tabs. */
+static app *the_app;
+static int told;
+
+static void tell_app(void *ud, const char *msg)
+{
+    (void)msg;
+    CHECK(ud == the_app);
+    told++;
+}
+
 static char *const window_cmd[] = {"sh", NULL};
 
 static void app_init(app *a, const char *run_dir)
@@ -203,6 +215,35 @@ static void test_a_tab_closed_before_its_start_ends_without_a_child(void)
     free(dir);
 }
 
+static void test_the_sessions_lines_reach_the_app_with_its_ud(void)
+{
+    char *dir = run_dir("run-tell");
+    app a;
+    app_init(&a, dir);
+    the_app = &a;
+    told = 0;
+    a.cli.log = tell_app;
+    a.cli.tell = tell_app;
+    char *cmd[] = {"no-such-program", NULL};
+    sk_tab_spec spec;
+    memset(&spec, 0, sizeof spec);
+    spec.kind = SK_TAB_CLI;
+    spec.cmd = cmd;
+    spec.cwd = sk_test_tmpdir();
+    spec.file = "/nonexistent/no-such-program";
+    sk_tab *tab = sk_tabs_add(a.tabs, &spec, -1, NULL);
+    CHECK(tab != NULL);
+    if (tab) {
+        sk_session_start(sk_clitab_session(tab), 80, 24);
+        CHECK(wait_ended(&a, 5000));
+        CHECK_INT(a.status, SK_EXIT_NOT_FOUND);
+        CHECK(told > 0); /* "cannot start" */
+    }
+    the_app = NULL;
+    app_free(&a);
+    free(dir);
+}
+
 static void test_a_tab_with_no_dir_for_it_is_not_made(void)
 {
     char *dir = sk_path_join(sk_test_tmpdir(), "no/such/run");
@@ -247,6 +288,7 @@ const sk_test sk_suite_clitab[] = {
     T(test_a_tab_runs_its_command_and_its_end_ends_the_app),
     T(test_the_app_ends_with_its_last_tab),
     T(test_a_tab_closed_before_its_start_ends_without_a_child),
+    T(test_the_sessions_lines_reach_the_app_with_its_ud),
     T(test_a_tab_with_no_dir_for_it_is_not_made),
     T(test_other_tabs_have_no_cli_parts),
     {0},

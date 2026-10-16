@@ -225,13 +225,16 @@ static void restore(headless *h)
     h->raw = false;
 }
 
-/* SKINNED_RELAY, else the skinned-relay beside this program. */
+/* SKINNED_RELAY, else the skinned-relay beside this program: the file
+ * itself, past any link to it, as bin/skinned's readlink -f found it. */
 static char *relay_path(const sk_envp *env, const char *self)
 {
     const char *given = sk_envp_get(env, "SKINNED_RELAY");
     if (given && *given)
         return sk_xstrdup(given);
-    char *me = strchr(self, '/') ? realpath(self, NULL) : sk_resolve_command(self, sk_envp_get(env, "PATH"));
+    char *found = strchr(self, '/') ? sk_xstrdup(self) : sk_resolve_command(self, sk_envp_get(env, "PATH"));
+    char *me = found ? realpath(found, NULL) : NULL;
+    free(found);
     if (!me)
         return NULL;
     char *slash = strrchr(me, '/');
@@ -283,9 +286,13 @@ int sk_headless_run(const sk_options *o, const char *metrics_path, const sk_envp
     fcntl(fileno(mf), F_SETFD, FD_CLOEXEC);
     sk_log_set_fd(log_fd);
     relay = relay_path(env, self);
+    /* As process.cwd() throws in app/main.js: a folder that is gone is
+     * not the root's. */
     char cwd[PATH_MAX];
-    if (!getcwd(cwd, sizeof cwd))
-        snprintf(cwd, sizeof cwd, "/");
+    if (!getcwd(cwd, sizeof cwd)) {
+        sk_tell("cannot open the tab: %s", strerror(errno));
+        goto out;
+    }
 
     headless h;
     memset(&h, 0, sizeof h);

@@ -8,14 +8,29 @@
 #include "../app/identity.h"
 #include "../core/command.h"
 
+#include <fcntl.h>
 #include <signal.h>
 #include <string.h>
+#include <unistd.h>
 
 extern char **environ;
+
+/* fds 0 to 2 open, on /dev/null when the app was started without them:
+ * else a pipe or file the app opens takes their number, and a child's
+ * dup2 onto its stdio goes wrong. */
+static void hold_stdio(void)
+{
+    int fd;
+    while ((fd = open("/dev/null", O_RDWR)) >= 0 && fd <= 2)
+        ;
+    if (fd > 2)
+        close(fd);
+}
 
 int main(int argc, char **argv)
 {
     (void)argc;
+    hold_stdio();
     signal(SIGPIPE, SIG_IGN);
     sk_tell_adopt(3);
     sk_identity_set_argv_source(sk_identity_kernel_argv);

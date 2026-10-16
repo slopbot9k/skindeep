@@ -35,6 +35,22 @@ static void on_output(void *ud, const char *bytes, size_t n)
         t->c->output(t->c->ud, t->tab, bytes, n);
 }
 
+/* The session's lines come with its own ud, the tab's: the app's go on
+ * with the app's. */
+static void on_log(void *ud, const char *msg)
+{
+    clitab *t = ud;
+    if (t->c->log)
+        t->c->log(t->c->ud, msg);
+}
+
+static void on_tell(void *ud, const char *msg)
+{
+    clitab *t = ud;
+    if (t->c->tell)
+        t->c->tell(t->c->ud, msg);
+}
+
 /* The tabs may free this tab, and so t, inside the call. */
 static void on_end(void *ud, int status)
 {
@@ -159,8 +175,8 @@ int sk_clitab_make(const sk_clitab_config *c, sk_tab *tab, const sk_tab_spec *sp
     o.on_spawn = on_spawn;
     o.on_output = on_output;
     o.on_end = on_end;
-    o.log = c->log;
-    o.tell = c->tell;
+    o.log = on_log;
+    o.tell = on_tell;
     o.ud = t;
     t->session = sk_session_new(&o);
     tab->session.ops = &ops;
