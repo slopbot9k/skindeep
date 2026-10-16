@@ -82,4 +82,5 @@
     X(term_xinput)                                                           \
     X(term_xparser)                                                          \
     X(term_xselect)                                                          \
-    X(term_xterminal)
+    X(term_xterminal)                                                        \
+    X(customglyph)
