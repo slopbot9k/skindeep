@@ -19,7 +19,7 @@ typedef struct {
 static void tick(sk_history *h, double now, const entry *entries, size_t n)
 {
     sk_history_values vals[8] = {{0}};
-    sk_history_sample s[8];
+    sk_history_sample s[8] = {{0}};
     sk_buf meta[8] = {{0}};
     for (size_t i = 0; i < n; i++) {
         for (const char *const *p = entries[i].pairs; p && *p; p++) {
