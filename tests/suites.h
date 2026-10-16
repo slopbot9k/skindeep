@@ -114,4 +114,5 @@
     X(skin_layout)                                                           \
     X(skin_paint)                                                            \
     X(skin_blur)                                                             \
-    X(skin_skins)
+    X(skin_skins)                                                            \
+    X(menu)
