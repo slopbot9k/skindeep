@@ -7,10 +7,12 @@
 #include "../base/paths.h"
 #include "../core/env.h"
 
+#include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <math.h>
 #include <poll.h>
+#include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
 #include <string.h>
@@ -22,6 +24,8 @@
 extern char **environ;
 
 #define MAX_OUTPUT (16 * 1048576)
+/* Past the last signal on Linux and macOS, as in core/session.c. */
+#define MAX_SIGNAL 65
 #define MAX_BODY (8 * 1048576)
 /* What a child is given on its stdin is written before it starts, so it
  * must fit a pipe at once: a credential request, or curl's config. */
@@ -109,13 +113,21 @@ static void remove_dots(sk_str path, sk_buf *out)
 }
 
 /* A host the URL parser accepts for a scheme with a host: none of its
- * forbidden code points, ASCII only (it would convert the rest). */
+ * forbidden code points, ASCII only (it would convert the rest). In
+ * brackets, an IPv6 address's characters only: the host goes on a line
+ * of its own to git credential, where a newline would name another. */
 static bool host_ok(sk_str h, bool special)
 {
     if (!h.len)
         return !special;
-    if (h.ptr[0] == '[')
-        return h.len > 2 && h.ptr[h.len - 1] == ']';
+    if (h.ptr[0] == '[') {
+        if (h.len < 4 || h.ptr[h.len - 1] != ']')
+            return false;
+        for (size_t i = 1; i + 1 < h.len; i++)
+            if (!isxdigit((unsigned char)h.ptr[i]) && h.ptr[i] != ':' && h.ptr[i] != '.')
+                return false;
+        return memchr(h.ptr, ':', h.len) != NULL;
+    }
     for (size_t i = 0; i < h.len; i++) {
         unsigned char c = (unsigned char)h.ptr[i];
         if (c <= ' ' || c >= 0x7f || strchr("#%/:<>?@[\\]^|", c))
@@ -505,6 +517,7 @@ struct job {
     pid_t pid; /* -1 when it never started */
     int out_fd, watch, timer, reap;
     sk_buf out;
+    size_t received; /* every byte read, kept or not */
     job_fn done;
     void *owner;
 };
@@ -678,7 +691,8 @@ static void on_output(sk_loop *loop, int fd, short revents, void *ud)
         if (n > 0) {
             /* As run() of app/board.js: what comes past the cap is
              * dropped, and the child goes on. */
-            if (j->out.len + (size_t)n <= MAX_OUTPUT)
+            j->received += (size_t)n;
+            if (j->received <= MAX_OUTPUT)
                 sk_buf_append(&j->out, chunk, (size_t)n);
             continue;
         }
@@ -749,14 +763,28 @@ static job *run_job(sk_boards *b, const char *cmd, char *const *argv, sk_str inp
     }
     if (ok) {
         char *const *envp = sk_envp_ptr(&env);
+        /* The loop's handlers would write to its pipe from the child: every
+         * signal is held across the fork, then the child takes the
+         * defaults and no mask, as Node's spawn gives. */
+        struct sigaction dfl;
+        memset(&dfl, 0, sizeof dfl);
+        dfl.sa_handler = SIG_DFL;
+        sigemptyset(&dfl.sa_mask);
+        sigset_t all, old, none;
+        sigfillset(&all);
+        sigemptyset(&none);
+        pthread_sigmask(SIG_SETMASK, &all, &old);
         j->pid = fork();
         if (j->pid == 0) {
-            signal(SIGPIPE, SIG_DFL);
+            for (int sig = 1; sig < MAX_SIGNAL; sig++)
+                sigaction(sig, &dfl, NULL);
+            sigprocmask(SIG_SETMASK, &none, NULL);
             if (dup2(in[0], 0) < 0 || dup2(out[1], 1) < 0 || dup2(null_fd, 2) < 0)
                 _exit(127);
             execve(path, argv, envp);
             _exit(127);
         }
+        pthread_sigmask(SIG_SETMASK, &old, NULL);
     }
     for (int i = 0; i < 2; i++)
         if (in[i] >= 0)
@@ -908,6 +936,10 @@ static job *gitea_page(sk_boards *b, remote_entry *e)
     sk_buf url = {0}, config = {0}, auth = {0};
     sk_buf_printf(&url, "%s://%s%s%s/api/v1/repos/%s/%s/issues?state=all&type=issues&limit=%d&page=%d", r->scheme,
                   r->host, *r->port ? ":" : "", r->port, r->owner, r->repo, SK_BOARD_PAGE, e->page);
+    /* Room for all of it at once: a buffer that grew would leave a copy
+     * of the password in the block it freed. Escaping at most doubles. */
+    sk_buf_reserve(&auth, 32 + e->token.len);
+    sk_buf_reserve(&config, 512 + 2 * (url.len + 32 + e->token.len));
     config_value(&config, "url", url.ptr);
     sk_buf_append_c(&config, "silent\ngloboff\nnoproxy = \"*\"\nmax-time = 15\nmax-filesize = 8388608\n");
     config_value(&config, "proto", !strcmp(r->scheme, "http") ? "=http" : "=https");

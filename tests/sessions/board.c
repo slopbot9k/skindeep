@@ -68,6 +68,12 @@ static void test_remotes_plain_http_only_on_the_loopback_host_no_other_form(void
     CHECK_NO_REMOTE(NULL);
     CHECK_NO_REMOTE("https://git.example.org:99999/o/r");
     CHECK_NO_REMOTE("https://git.example.org/o/r%zz");
+    /* In brackets, an IPv6 address alone: the host is a line of its own
+     * to git credential, where these would ask for another host's. */
+    CHECK_NO_REMOTE("https://[x\nhost=github.com\nx=]/o/r");
+    CHECK_NO_REMOTE("https://[fe80::1%25eth0]/o/r");
+    CHECK_NO_REMOTE("https://[]/o/r");
+    CHECK_REMOTE("https://[2001:db8::7]/o/r", SK_FORGE_GITEA, "https://[2001:db8::7]/o/r");
 }
 
 /* ---- The daily series and the stamps ---- */
