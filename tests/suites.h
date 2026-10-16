@@ -83,4 +83,6 @@
     X(term_xparser)                                                          \
     X(term_xselect)                                                          \
     X(term_xterminal)                                                        \
-    X(customglyph)
+    X(customglyph)                                                           \
+    X(termview)                                                              \
+    X(termview_golden)

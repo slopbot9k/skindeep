@@ -1,5 +1,6 @@
 /* What the files of src/ui share: the 2D canvas xterm.js's texture
- * atlas draws a cell on, and the custom glyphs drawn onto it. */
+ * atlas draws a cell on, the custom glyphs drawn onto it, and the atlas
+ * of drawn cells the view copies from. */
 #ifndef SK_UI_INTERNAL_H
 #define SK_UI_INTERNAL_H
 
@@ -66,5 +67,44 @@ sk_ui_custom_kind sk_ui_custom_kind_of(uint32_t cp);
  * leaves its clip to the cell, as on a canvas. false when cp has none. */
 bool sk_ui_custom_draw(sk_ui_canvas *cv, uint32_t cp, double x, double y, int w, int h, double font_px,
                        double scale);
+
+/* ---- The atlas ---- */
+
+/* A cell drawn as the texture atlas draws it, its background taken out:
+ * w by h pixels at (x, y) from the cell's corner, each opaque or 0. */
+typedef struct {
+    int x, y, w, h;
+    sk_px *px;
+} sk_ui_sprite;
+
+typedef struct sk_ui_atlas sk_ui_atlas;
+
+/* What the atlas draws with: the cell and character sizes in device
+ * pixels, the font at font_px CSS pixels times scale, the theme. */
+typedef struct {
+    sk_fontset *fonts;
+    sk_glyph_cache *glyphs;
+    float font_px;
+    double scale;
+    int cell_w, cell_h, char_w, char_h;
+    sk_term_palette pal;
+} sk_ui_atlas_config;
+
+sk_ui_atlas *sk_ui_atlas_new(void);
+void sk_ui_atlas_free(sk_ui_atlas *a);
+/* A new config forgets every sprite. */
+void sk_ui_atlas_configure(sk_ui_atlas *a, const sk_ui_atlas_config *cfg);
+/* Forgets every sprite when they hold more than the atlas's budget:
+ * between frames, never while a frame holds sprites. */
+void sk_ui_atlas_trim(sk_ui_atlas *a);
+/* The sprite for cps[0..n) in a cell width cells wide with the resolved
+ * attribute words fg, bg and ext (xterm.js's, the variant offset in
+ * ext's top bits), drawn when first asked for; NULL when it draws
+ * nothing. Valid until the next configure or trim. */
+const sk_ui_sprite *sk_ui_atlas_get(sk_ui_atlas *a, const uint32_t *cps, int n, int width, uint32_t fg, uint32_t bg,
+                                    uint32_t ext);
+/* How many sprites and bytes the atlas holds, for the tests. */
+size_t sk_ui_atlas_count(const sk_ui_atlas *a);
+size_t sk_ui_atlas_bytes(const sk_ui_atlas *a);
 
 #endif

@@ -23,6 +23,10 @@ typedef struct {
     /* Over the terminal's palette (sk_term_palette_of): the selection's
      * background, and its foreground when not 0 (0xAARRGGBB). */
     sk_color selection_bg, selection_inactive_bg, selection_fg;
+    /* The glyph's colour under a focused block cursor, over the
+     * terminal's background (the theme's cursorAccent): opaque black by
+     * default, whatever the background. */
+    sk_color cursor_accent;
 } sk_termview_style;
 
 /* xterm.js's selection colours for its default theme. */
