@@ -425,25 +425,30 @@ void sk_lines_insert(sk_lines *r, int i, sk_line *l)
 {
     if (i > r->len)
         i = r->len;
-    if (r->len == r->max) {
-        /* Inserted, then the first line trimmed. */
+    /* Full, it is inserted and the first line trimmed: the same as
+     * trimming first and inserting a line higher. */
+    bool full = r->len == r->max;
+    int at = i;
+    if (full) {
         if (i == 0) {
             sk_line_free(l);
-        } else {
-            sk_line_free(*slot(r, 0));
-            for (int k = 0; k < i - 1; k++)
-                *slot(r, k) = *slot(r, k + 1);
-            *slot(r, i - 1) = l;
+            emit(r, SK_LINES_INSERT, i, 1);
+            emit(r, SK_LINES_TRIM, 0, 1);
+            return;
         }
-        emit(r, SK_LINES_INSERT, i, 1);
-        emit(r, SK_LINES_TRIM, 0, 1);
-        return;
+        sk_line_free(*slot(r, 0));
+        *slot(r, 0) = NULL;
+        r->start = (r->start + 1) % r->max;
+        r->len--;
+        at--;
     }
-    for (int k = r->len; k > i; k--)
+    for (int k = r->len; k > at; k--)
         *slot(r, k) = *slot(r, k - 1);
-    *slot(r, i) = l;
+    *slot(r, at) = l;
     r->len++;
     emit(r, SK_LINES_INSERT, i, 1);
+    if (full)
+        emit(r, SK_LINES_TRIM, 0, 1);
 }
 
 void sk_lines_remove(sk_lines *r, int i)

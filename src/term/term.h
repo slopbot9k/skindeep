@@ -108,7 +108,9 @@ sk_underline sk_term_cell_underline(const sk_term_cell *c);
 typedef enum { SK_CURSOR_BLOCK, SK_CURSOR_UNDERLINE, SK_CURSOR_BAR } sk_cursor_style;
 
 typedef struct {
-    int x, y;    /* y in viewport rows, outside 0..rows-1 when scrolled away */
+    /* x may be cols, or cols + 1, past the last column, as in xterm.js;
+     * y is a viewport row, outside 0..rows-1 when scrolled away. */
+    int x, y;
     bool hidden; /* DECTCEM */
     bool initialized; /* xterm.js draws no cursor before focus or a buffer switch */
     sk_cursor_style style;
@@ -135,7 +137,9 @@ void sk_term_set_palette(sk_term *t, const sk_term_palette *p);
 void sk_term_palette_of(sk_term *t, sk_term_palette *out);
 
 /* The viewport: its first line, the first line of the screen, the lines
- * in the buffer. Output keeps a viewport scrolled up where it is. */
+ * in the buffer. Output keeps a viewport scrolled up where it is; the UI
+ * scrolls to the bottom on user input, as xterm.js's scrollOnUserInput
+ * does. */
 void sk_term_viewport(sk_term *t, int *top, int *base, int *lines);
 void sk_term_scroll(sk_term *t, int lines);
 void sk_term_scroll_to_bottom(sk_term *t);
@@ -170,8 +174,9 @@ char *sk_term_screen_text(sk_term *t);
 /* A line of the buffer, trailing blanks trimmed; malloc'd. */
 char *sk_term_line_text(sk_term *t, int line);
 
-/* Which viewport rows changed since the last call: rows[0..rows) set to
- * true for each. Returns whether any did. */
+/* Which viewport rows to redraw since the last call: those whose cells
+ * changed or now show another line, and those the cursor left and
+ * reached. rows[0..rows) is set to true for each; returns whether any. */
 bool sk_term_take_dirty(sk_term *t, bool *rows);
 
 #endif

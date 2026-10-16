@@ -85,6 +85,8 @@ struct sk_term {
     sk_seen *seen;
     int seen_rows;
     bool all_dirty;
+    /* The cursor as last drawn: x, viewport row, hidden. */
+    int seen_cursor[3];
 };
 
 static inline sk_line *sk_screen_line(const sk_buffer *b, int i)

@@ -219,6 +219,13 @@ static void test_dirty(void)
     CHECK(!sk_term_take_dirty(x.t, rows));
     tt_feed(&x, "\x1b[2;1Hab");
     CHECK(sk_term_take_dirty(x.t, rows));
+    /* Row 0 for the cursor that left it. */
+    CHECK(rows[0] && rows[1] && !rows[2]);
+    tt_feed(&x, "c");
+    CHECK(sk_term_take_dirty(x.t, rows));
+    CHECK(!rows[0] && rows[1] && !rows[2]);
+    tt_feed(&x, "\x1b[?25l");
+    CHECK(sk_term_take_dirty(x.t, rows));
     CHECK(!rows[0] && rows[1] && !rows[2]);
     tt_feed(&x, "\x1b[3;1H\n");
     CHECK(sk_term_take_dirty(x.t, rows));

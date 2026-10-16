@@ -2160,6 +2160,16 @@ bool sk_term_take_dirty(sk_term *t, bool *rows)
         any |= rows[y];
         t->seen[y] = now;
     }
+    /* A moved or toggled cursor redraws the rows it left and reached. */
+    int cursor[3] = {b->x, b->ybase + b->y - b->ydisp, t->cursor_hidden};
+    if (memcmp(cursor, t->seen_cursor, sizeof cursor)) {
+        for (int k = 0; k < 2; k++) {
+            int y = k ? cursor[1] : t->seen_cursor[1];
+            if (y >= 0 && y < t->rows)
+                any |= rows[y] = true;
+        }
+        memcpy(t->seen_cursor, cursor, sizeof cursor);
+    }
     t->all_dirty = false;
     sk_term_unlock(t);
     return any;

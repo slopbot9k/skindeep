@@ -146,6 +146,29 @@ static void test_scrolled_up_full_buffer(void)
     tt_close(&x);
 }
 
+static void test_region_scroll_full(void)
+{
+    /* A region from the top, scrolling with the scrollback full, inserts
+     * below itself and drops the oldest line. */
+    tt x;
+    tt_open(&x, 10, 3);
+    sk_buf s = {0};
+    for (int i = 0; i < 5003; i++)
+        sk_buf_printf(&s, i < 5002 ? "%d\r\n" : "%d", i);
+    tt_feedn(&x, s.ptr, s.len);
+    sk_buf_free(&s);
+    tt_feed(&x, "\x1b[1;2r\x1b[3;1HS\x1b[2;1H\n");
+    CHECK_ROWS(x.t, "5001\n\nS002");
+    int top, base, lines;
+    sk_term_viewport(x.t, &top, &base, &lines);
+    CHECK_INT(base, 5000);
+    CHECK_INT(lines, 5003);
+    char *first = sk_term_line_text(x.t, 0);
+    CHECK_STR(first, "1");
+    free(first);
+    tt_close(&x);
+}
+
 static void test_alt_resize(void)
 {
     /* The alternate buffer is not reflowed; the normal one is, under it. */
@@ -187,6 +210,7 @@ const sk_test sk_suite_term_reflow[] = {
     T(test_scrollback_limit),
     T(test_scrolled_up_stays),
     T(test_scrolled_up_full_buffer),
+    T(test_region_scroll_full),
     T(test_alt_resize),
     T(test_minimum_size),
     {0},
