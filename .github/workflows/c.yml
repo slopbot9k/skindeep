@@ -1,0 +1,44 @@
+# The C tree's tests (decision 0036) on Linux and macOS: the tests, the
+# tests under AddressSanitizer and UBSan, and a short fuzz run of every
+# parser. It checks out with git itself, so no action's JavaScript runs.
+name: C
+
+on:
+  push:
+    branches: ['c-port/**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: ubuntu-latest, cc: gcc}
+          - {os: ubuntu-latest, cc: clang}
+          - {os: macos-latest, cc: cc}
+    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.os }} ${{ matrix.cc }}
+    steps:
+      - name: Check out
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          auth=$(printf 'x-access-token:%s' "$TOKEN" | base64 | tr -d '\n')
+          git init -q .
+          git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+          git -c http.extraheader="AUTHORIZATION: basic $auth" fetch -q --depth 1 origin "$GITHUB_SHA"
+          git checkout -q FETCH_HEAD
+      - name: Compiler
+        run: ${{ matrix.cc }} --version
+      - name: Tests
+        run: make test CC=${{ matrix.cc }}
+      - name: Tests under the sanitizers
+        run: make debug CC=${{ matrix.cc }}
+      - name: Fuzz
+        if: matrix.cc != 'gcc'
+        run: make fuzz-run FUZZ_SECONDS=30 CC=${{ matrix.cc }}
