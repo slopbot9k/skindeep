@@ -39,7 +39,7 @@ jobs:
         run: ${{ matrix.cc }} --version
       - name: Xvfb
         if: runner.os == 'Linux'
-        run: sudo apt-get update -qq && sudo apt-get install -y xvfb
+        run: sudo apt-get update -qq && sudo apt-get install -y xvfb xauth
       # A failing step's last lines go out as an annotation as well: the
       # API serves annotations of a public repository to anyone, the log
       # only to a signed-in user.

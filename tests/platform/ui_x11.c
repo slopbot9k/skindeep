@@ -284,7 +284,7 @@ static void test_another_client_gets_the_clipboard(void)
     sk_x11 *c = other();
     const char *text = "for the other client";
     sk_clipboard_set(text);
-    sk_xui_once(10);
+    CHECK(sk_xui_sync()); /* the server knows the owner before the other client asks */
     const char *names[] = {"CLIPBOARD", "UTF8_STRING", "SKINNED_TEST"};
     uint32_t atoms[3];
     if (c && sk_x11_intern(c, names, 3, atoms)) {
@@ -391,7 +391,7 @@ static void test_title_cursor_and_focus(void)
         sk_window_set_cursor(w, SK_CURSOR_ARROW);
         sk_xui_once(50);
         sk_window_focus(w);
-        sk_xui_once(10);
+        CHECK(sk_xui_sync());
         sk_x11_reply r;
         sk_x11_prop p;
         CHECK(sk_x11_prop_get(c, false, sk_xui_window_id(w), name, 0, 4096, &r, &p));
