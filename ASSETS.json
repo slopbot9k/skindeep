@@ -698,5 +698,68 @@
     "author": "claude-skins",
     "license": "project-original",
     "notes": "the picture of the dev diary entry of the same name"
+  },
+  {
+    "path": "third_party/stb/stb_truetype.h",
+    "source": "https://raw.githubusercontent.com/nothings/stb/2c980bb59875b0d32144a71867fbdebb2f77cd20/stb_truetype.h",
+    "author": "Sean Barrett",
+    "license": "MIT",
+    "notes": "v1.26, vendored C source (decision 0036). Offered under MIT or the Unlicense; taken under MIT. Its header warns against untrusted font files, so it reads only trusted fonts and fonts skinc has checked. sha256 ecd30b05e0dd4fea3a13c26810dd9e1992dc379049482c393d5a19e6b5090aab"
+  },
+  {
+    "path": "third_party/stb/stb_image.h",
+    "source": "https://raw.githubusercontent.com/nothings/stb/2c980bb59875b0d32144a71867fbdebb2f77cd20/stb_image.h",
+    "author": "Sean Barrett",
+    "license": "MIT",
+    "notes": "v2.30, vendored C source (decision 0036). Offered under MIT or the Unlicense; taken under MIT. sha256 594c2fe35d49488b4382dbfaec8f98366defca819d916ac95becf3e75f4200b3"
+  },
+  {
+    "path": "third_party/stb/stb_vorbis.c",
+    "source": "https://raw.githubusercontent.com/nothings/stb/2c980bb59875b0d32144a71867fbdebb2f77cd20/stb_vorbis.c",
+    "author": "Sean Barrett",
+    "license": "MIT",
+    "notes": "v1.22, vendored C source (decision 0036). Offered under MIT or the Unlicense; taken under MIT. sha256 4c7cb2ff1f7011e9d67950446b7eb9ca044f2e464d76bfbb0b84dd2e23e65636"
+  },
+  {
+    "path": "third_party/stb/LICENSE",
+    "source": "https://raw.githubusercontent.com/nothings/stb/2c980bb59875b0d32144a71867fbdebb2f77cd20/LICENSE",
+    "author": "Sean Barrett",
+    "license": "MIT",
+    "notes": "the licence of the stb files beside it, copied verbatim"
+  },
+  {
+    "path": "third_party/nanosvg/nanosvg.h",
+    "source": "https://raw.githubusercontent.com/memononen/nanosvg/239e102ec2c691f2902e20ace2ed36ee4a35cfe6/src/nanosvg.h",
+    "author": "Mikko Mononen",
+    "license": "Zlib",
+    "notes": "vendored C source (decision 0036), the SVG parser; based on the Anti-Grain Geometry 2.4 SVG example, as its header credits. sha256 e34fd5d084be106cea972d19ce5d27fd96d17ba89f8d06bdceee058420c8b2b0"
+  },
+  {
+    "path": "third_party/nanosvg/nanosvgrast.h",
+    "source": "https://raw.githubusercontent.com/memononen/nanosvg/239e102ec2c691f2902e20ace2ed36ee4a35cfe6/src/nanosvgrast.h",
+    "author": "Mikko Mononen",
+    "license": "Zlib",
+    "notes": "vendored C source (decision 0036), the SVG rasterizer. sha256 79a9c5f4db19debf9f3a648a1589e96d92854f245a5cb4f3d823f263785234d8"
+  },
+  {
+    "path": "third_party/nanosvg/LICENSE.txt",
+    "source": "https://raw.githubusercontent.com/memononen/nanosvg/239e102ec2c691f2902e20ace2ed36ee4a35cfe6/LICENSE.txt",
+    "author": "Mikko Mononen",
+    "license": "Zlib",
+    "notes": "the licence of the nanosvg files beside it, copied verbatim"
+  },
+  {
+    "path": "third_party/qoi/qoi.h",
+    "source": "https://raw.githubusercontent.com/phoboslab/qoi/ffb2d2cb74a1de60819b21b939f7209aa53e91c1/qoi.h",
+    "author": "Dominic Szablewski",
+    "license": "MIT",
+    "notes": "vendored C source (decision 0036), the image format of skin packs. sha256 7de6fca1a285b1c20d38f2723dec8b774eb9f144edb9710800a95feeea09375a"
+  },
+  {
+    "path": "third_party/qoi/LICENSE",
+    "source": "https://raw.githubusercontent.com/phoboslab/qoi/ffb2d2cb74a1de60819b21b939f7209aa53e91c1/LICENSE",
+    "author": "Dominic Szablewski",
+    "license": "MIT",
+    "notes": "the licence of qoi.h beside it, copied verbatim"
   }
 ]

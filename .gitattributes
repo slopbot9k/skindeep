@@ -7,3 +7,4 @@
 *.woff binary
 *.woff2 binary
 test/fixtures/** -text
+third_party/** -text
