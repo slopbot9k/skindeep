@@ -317,6 +317,87 @@ static void test_svg_arcs_and_dashes(void)
     sk_tskin_close(&s);
 }
 
+static void test_decorations_and_background_boxes(void)
+{
+    sk_tskin s;
+    TSKIN(&s, "[" RECT("d", 0, 0, 60, 30) ", " RECT("n", 0, 40, 60, 30) ", " RECT("bc", 100, 0, 40, 40) "]", NULL,
+          ".d, .n { font: 20px \"DejaVu Sans Mono\"; color: #f00 }\n"
+          ".d::after { content: \"ab\"; text-decoration: line-through }\n.n::after { content: \"ab\" }\n"
+          ".bc { padding: 10px; border: 5px solid transparent; background: #f00 content-box }\n",
+          NULL);
+    sk_image im;
+    sk_tskin_paint(&s, (sk_frect){0, 0, 150, 80}, 1, &im);
+    /* The line crosses the gap between the letters, where the text
+     * alone leaves nothing. */
+    int hits = 0, bare = 0;
+    for (int y = 0; y < 30; y++) {
+        hits += alpha(pixel(&im, 12, y)) > 200;
+        bare += alpha(pixel(&im, 12, 40 + y)) > 200;
+    }
+    CHECK(hits >= 1 && hits <= 3);
+    CHECK_INT(bare, 0);
+    /* content-box: the colour inside the padding only. */
+    CHECK_INT(alpha(pixel(&im, 107, 20)), 0);
+    CHECK_COLOR(pixel(&im, 120, 20), RED, 0);
+    sk_image_free(&im);
+    sk_tskin_close(&s);
+}
+
+static void test_blend_modes_and_filters(void)
+{
+    sk_tskin s;
+    TSKIN(&s,
+          "[" RECT("bm", 0, 0, 10, 10) ", " RECT("co", 20, 0, 10, 10) ", " RECT("sa", 40, 0, 10, 10) ", " RECT(
+              "iv", 60, 0, 10, 10) ", " RECT("se", 80, 0, 10, 10) ", " RECT("hr", 100, 0, 10, 10) ", " RECT("oo", 120,
+                                                                                                             0, 10,
+                                                                                                             10) ", " RECT("bl", 0, 20, 20, 20) "]",
+          NULL,
+          ".bm { background: url(a.png), #ff0; background-blend-mode: multiply }\n"
+          ".co { background: #c0c0c0; filter: contrast(2) }\n.sa { background: #f00; filter: saturate(0) }\n"
+          ".iv { background: #f00; filter: invert(1) }\n.se { background: #fff; filter: sepia(1) }\n"
+          ".hr { background: #f00; filter: hue-rotate(180deg) }\n.oo { background: #f00; filter: opacity(0.5) }\n"
+          ".bl { background: #f00; filter: blur(2px) }\n",
+          NULL);
+    s.image = (sk_test_image){4, 4, 0xff00ffffu, 0xff00ffffu, 0};
+    sk_image im;
+    sk_tskin_paint(&s, (sk_frect){0, 0, 140, 50}, 1, &im);
+    /* Cyan multiplied over yellow, inside the box's own group. */
+    CHECK_COLOR(pixel(&im, 5, 5), GREEN, 0);
+    CHECK_COLOR(pixel(&im, 25, 5), 0xffffffffu, 1);
+    CHECK_COLOR(pixel(&im, 45, 5), 0xff363636u, 1);
+    CHECK_COLOR(pixel(&im, 65, 5), 0xff00ffffu, 0);
+    CHECK_COLOR(pixel(&im, 85, 5), 0xffffffefu, 1);
+    CHECK_COLOR(pixel(&im, 105, 5), 0xff006d6du, 2);
+    CHECK_WITHIN(alpha(pixel(&im, 125, 5)), 128, 1);
+    /* blur(2px): a sigma of 2, the edge half covered, the middle whole. */
+    CHECK_WITHIN(alpha(pixel(&im, 0, 30)), 128, 40);
+    CHECK_COLOR(pixel(&im, 10, 30), RED, 6);
+    sk_image_free(&im);
+    sk_tskin_close(&s);
+}
+
+static void test_pixelated_and_circles(void)
+{
+    sk_tskin s;
+    TSKIN(&s, "[" RECT("px", 0, 0, 20, 20) ", " RECT("sm", 30, 0, 20, 20) "]",
+          "[{\"id\": \"k\", \"type\": \"knob\", \"bind\": \"proc.cpu_pct\", \"rect\": {\"left\": 0, \"top\": 100, "
+          "\"width\": 100, \"height\": 100}}]",
+          ".px, .sm { background: url(a.png) 0 0 / 20px 20px } .px { image-rendering: pixelated }\n", NULL);
+    s.image = (sk_test_image){2, 2, RED, BLUE, 1};
+    sk_image im;
+    sk_tskin_paint(&s, (sk_frect){0, 0, 100, 200}, 1, &im);
+    /* Nearest keeps each texel a square; bilinear blends at the seam. */
+    CHECK_COLOR(pixel(&im, 9, 0), RED, 0);
+    CHECK_COLOR(pixel(&im, 10, 0), BLUE, 0);
+    sk_color seam = pixel(&im, 39, 5);
+    CHECK(((seam >> 16) & 255) > 40 && (seam & 255) > 40);
+    /* A knob drawn: its face a circle filled #2a2f36, outside it nothing. */
+    CHECK_COLOR(pixel(&im, 50, 150), 0xff2a2f36u, 0);
+    CHECK_INT(alpha(pixel(&im, 4, 104)), 0);
+    sk_image_free(&im);
+    sk_tskin_close(&s);
+}
+
 /* Values far past any skin's: a shadow blurred and spread across the
  * whole area, text of 3000px, a transform that flattens a box. Painted
  * all the same, in bounded memory. */
@@ -377,6 +458,9 @@ const sk_test sk_suite_skin_paint[] = {
     T(test_groups),
     T(test_clips_order_and_turns),
     T(test_svg_arcs_and_dashes),
+    T(test_decorations_and_background_boxes),
+    T(test_blend_modes_and_filters),
+    T(test_pixelated_and_circles),
     T(test_extreme_values),
     T(test_golden_features),
     {0},

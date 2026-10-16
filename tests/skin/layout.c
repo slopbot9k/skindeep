@@ -374,6 +374,87 @@ static void test_transform_about_origin(void)
     sk_tskin_close(&s);
 }
 
+static void test_flex_justify_align_auto_margins(void)
+{
+    sk_tskin s;
+    TSKIN(&s,
+          "[" RECT("j1", 0, 0, 300, 50) ", " RECT("j2", 0, 100, 300, 50) ", " RECT("j3", 0, 200, 300, 50) ", " RECT(
+              "j4", 0, 300, 300, 50) ", " RECT("sf", 400, 0, 100, 100) "]",
+          NULL,
+          ".j1, .j2, .j3, .j4 { display: flex }\n"
+          ".j1::before, .j2::before, .j3::before, .j4::before { content: \"\"; width: 50px; height: 10px }\n"
+          ".j1::after, .j2::after, .j3::after, .j4::after { content: \"\"; width: 50px; height: 20px }\n"
+          ".j1 { justify-content: space-between; align-items: center }\n"
+          ".j2 { justify-content: center; align-items: flex-end }\n"
+          ".j3 { justify-content: space-evenly }\n.j4::after { margin-left: auto; align-self: flex-end }\n"
+          ".sf { display: flex; justify-content: center; align-items: center }\n"
+          ".sf::after { content: \"\"; position: absolute; width: 10px; height: 10px }\n",
+          NULL);
+    CHECK_RECT(sk_tskin_pseudo(&s, "j1", false)->border, 0, 20, 50, 10);
+    CHECK_RECT(sk_tskin_pseudo(&s, "j1", true)->border, 250, 15, 50, 20);
+    CHECK_RECT(sk_tskin_pseudo(&s, "j2", false)->border, 100, 140, 50, 10);
+    CHECK_RECT(sk_tskin_pseudo(&s, "j2", true)->border, 150, 130, 50, 20);
+    CHECK_NEAR(sk_tskin_pseudo(&s, "j3", false)->border.x, 200.0f / 3);
+    CHECK_NEAR(sk_tskin_pseudo(&s, "j3", true)->border.x, 550.0f / 3);
+    /* An auto margin takes the free space; stretch is the default. */
+    CHECK_RECT(sk_tskin_pseudo(&s, "j4", true)->border, 250, 330, 50, 20);
+    CHECK_RECT(sk_tskin_pseudo(&s, "j4", false)->border, 0, 300, 50, 10);
+    /* An absolute child with no insets sits where the flex container
+     * would put it alone: centred. */
+    CHECK_RECT(sk_tskin_pseudo(&s, "sf", true)->border, 445, 45, 10, 10);
+    sk_tskin_close(&s);
+}
+
+static void test_line_of_mixed_fonts_and_pre(void)
+{
+    sk_tskin s;
+    TSKIN(&s, "[" RECT("m", 0, 0, 300, 100) ", " RECT("pre", 0, 200, 300, 100) "]", NULL,
+          ".m { font: 10px/12px \"DejaVu Sans Mono\" }\n"
+          ".m::before { content: \"a\"; font-size: 30px }\n.m::after { content: \"b\" }\n"
+          ".pre { white-space: pre; font: 10px/10px \"DejaVu Sans Mono\" }\n.pre::after { content: \"a\\A  b\" }\n",
+          NULL);
+    /* The 30px box's half-leading, 12px tall, sets the line's top; the
+     * strut its bottom; one baseline for both. */
+    float a10, d10, g, a30, d30;
+    metrics(mono(), 10, &a10, &d10, &g);
+    metrics(mono(), 30, &a30, &d30, &g);
+    float above = fmaxf(a10 + floorf((12 - a10 - d10) / 2), a30 + floorf((12 - a30 - d30) / 2));
+    const sk_lbox *m = sk_tskin_panel(&s, "m");
+    CHECK_INT(m->nruns, 2);
+    if (m->nruns == 2) {
+        CHECK_NEAR(s.l.runs[m->runs].y, above);
+        CHECK_NEAR(s.l.runs[m->runs + 1].y, above);
+        CHECK_NEAR(s.l.runs[m->runs + 1].x, adv(30));
+    }
+    /* pre: a line break where the text has one, its spaces kept (the
+     * escape \A takes the one space after it). */
+    const sk_lbox *p = sk_tskin_panel(&s, "pre");
+    CHECK_INT(p->nruns, 2);
+    if (p->nruns == 2) {
+        CHECK_NEAR(s.l.runs[p->runs + 1].y - s.l.runs[p->runs].y, 10);
+        CHECK_INT(s.l.runs[p->runs + 1].n, 2);
+    }
+    sk_tskin_close(&s);
+}
+
+static void test_grid_lines(void)
+{
+    sk_tskin s;
+    TSKIN(&s, NULL,
+          "[{\"id\": \"q\", \"type\": \"bar\", \"bind\": \"context.used_pct\", \"segments\": 4, \"rect\": {\"left\": "
+          "0, \"top\": 0, \"width\": 90, \"height\": 40}}]",
+          ".w-bar .track { display: grid !important; grid-template-columns: 30px 30px 30px; grid-auto-rows: 20px;\n"
+          "  gap: 0 !important }\n"
+          ".seg:first-child { grid-row: 2; grid-column: 1 / span 3 }\n",
+          NULL);
+    /* Its lines given, the first goes to the second row, across all
+     * three; the rest fill the first row. */
+    CHECK_RECT(sk_tskin_part(&s, "q", SK_ROLE_SEG, 0)->border, 0, 20, 90, 20);
+    CHECK_RECT(sk_tskin_part(&s, "q", SK_ROLE_SEG, 1)->border, 0, 0, 30, 20);
+    CHECK_RECT(sk_tskin_part(&s, "q", SK_ROLE_SEG, 3)->border, 60, 0, 30, 20);
+    sk_tskin_close(&s);
+}
+
 /* A tree far deeper than any skin's, built by hand: laid out and
  * painted, its depth cut at 200, no pass recursing past it. */
 static void test_deep_tree(void)
@@ -429,6 +510,9 @@ const sk_test sk_suite_skin_layout[] = {
     T(test_flex_grow_shrink_basis),
     T(test_flex_column_alignment),
     T(test_flex_baseline_and_reverse),
+    T(test_flex_justify_align_auto_margins),
+    T(test_line_of_mixed_fonts_and_pre),
+    T(test_grid_lines),
     T(test_flex_segments),
     T(test_grid_tracks_and_span),
     T(test_clipper_and_escape),
