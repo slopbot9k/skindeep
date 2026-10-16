@@ -65,6 +65,9 @@ typedef struct {
      * It is monotonic, not the wall clock: code that compares with file
      * times, such as Codex discovery, converts at the point of use. */
     uint64_t (*now)(void);
+    /* No timer even with a loop: the caller ticks, as fake-clock tests
+     * that need the loop for sockets do. */
+    bool manual_ticks;
 } sk_agent_ctx;
 
 /* ctx's clock. */
@@ -121,6 +124,11 @@ typedef struct sk_agent sk_agent;
 sk_agent *sk_agent_open(const sk_agent_ctx *ctx);
 /* The same with a provider of the caller's choice, for tests. */
 sk_agent *sk_agent_open_with(const sk_agent_ctx *ctx, const sk_provider *p);
+/* A session the app did not start (decision 0027), read only, as
+ * agent.js watch(): the given watch part, such as sk_claude_watch's or a
+ * Codex part made with ctx->launched, beside Generic counting from
+ * ctx->launched. kind names it in reports and logs. */
+sk_agent *sk_agent_watch(const sk_agent_ctx *ctx, const char *kind, sk_part adapter);
 const char *sk_agent_kind(const sk_agent *a);
 /* Once, before the spawn. Never fails: a part whose prepare fails is
  * closed, the notice becomes SK_AGENT_FAILED, and the session runs

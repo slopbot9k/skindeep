@@ -226,7 +226,40 @@ static void test_generic_on_a_fake_clock(void)
     sk_bus_free(bus);
 }
 
+/* agent.js watch(): a given part beside Generic, which counts its clock
+ * from the session's own start. With manual_ticks no timer runs even on
+ * a loop. */
+static void test_watch_and_manual_ticks(void)
+{
+    memset(&the_fake, 0, sizeof the_fake);
+    fake_now = 10000;
+    sk_bus *bus = sk_bus_new(NULL, NULL);
+    sk_loop *loop = sk_loop_new();
+    char *cmd[] = {"fake", NULL};
+    sk_agent_ctx c = ctx_for(bus, cmd);
+    c.loop = loop;
+    c.manual_ticks = true;
+    c.launched = 4000;
+    sk_agent *a = sk_agent_watch(&c, "claude", (sk_part){&FAKE_OPS, &the_fake});
+    CHECK_STR(sk_agent_kind(a), "claude");
+    sk_strv args = {0};
+    char *notice = NULL;
+    sk_agent_prepare(a, &args, &notice);
+    sk_agent_attach(a, getpid());
+    sk_loop_once(loop, 300);
+    CHECK_INT(the_fake.polled, 0); /* no timer ticked it */
+    sk_agent_tick(a, 10000);
+    CHECK_INT(the_fake.polled, 1);
+    CHECK(num(bus, "session.clock_s") == 6); /* from launched, not from now */
+    sk_agent_free(a);
+    sk_loop_free(loop);
+    free(notice);
+    sk_strv_free(&args);
+    sk_bus_free(bus);
+}
+
 const sk_test sk_suite_agent[] = {
+    T(test_watch_and_manual_ticks),
     T(test_dispatch_by_basename),
     T(test_order_of_operations),
     T(test_failed_prepare),

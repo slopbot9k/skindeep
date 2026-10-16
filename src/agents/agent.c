@@ -65,20 +65,31 @@ static void on_tick(sk_loop *loop, void *ud)
     sk_agent_tick(a, a->now ? a->now() : sk_now_ms());
 }
 
-sk_agent *sk_agent_open_with(const sk_agent_ctx *ctx, const sk_provider *p)
+static sk_agent *make(const sk_agent_ctx *ctx, const char *kind, sk_part adapter)
 {
     sk_agent *a = sk_xcalloc(1, sizeof *a);
-    a->kind = p->kind;
+    a->kind = kind;
     a->bus = ctx->bus;
-    a->loop = ctx->loop;
     a->log = ctx->log;
     a->log_ud = ctx->log_ud;
     a->now = ctx->now;
-    a->adapter = p->create(ctx);
+    a->adapter = adapter;
     a->generic = sk_generic_create(ctx);
-    if (a->loop)
+    if (ctx->loop && !ctx->manual_ticks) {
+        a->loop = ctx->loop;
         a->timer = sk_loop_timer(a->loop, SK_AGENT_TICK_MS, SK_AGENT_TICK_MS, on_tick, a);
+    }
     return a;
+}
+
+sk_agent *sk_agent_open_with(const sk_agent_ctx *ctx, const sk_provider *p)
+{
+    return make(ctx, p->kind, p->create(ctx));
+}
+
+sk_agent *sk_agent_watch(const sk_agent_ctx *ctx, const char *kind, sk_part adapter)
+{
+    return make(ctx, kind, adapter);
 }
 
 sk_agent *sk_agent_open(const sk_agent_ctx *ctx)
