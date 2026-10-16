@@ -43,7 +43,7 @@ jobs:
         run: |
           set -o pipefail
           if ! make test CC=${{ matrix.cc }} 2>&1 | tee out.log; then
-            echo "::error title=tests::$(tail -n 60 out.log | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"
+            echo "::error title=tests::$(grep -v -E '^(cc|gcc|clang|ar|make)( |\[)' out.log | tail -n 30 | cut -c1-200 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"
             exit 1
           fi
       - name: Tests under the sanitizers
@@ -51,7 +51,7 @@ jobs:
         run: |
           set -o pipefail
           if ! make debug CC=${{ matrix.cc }} 2>&1 | tee out.log; then
-            echo "::error title=sanitizers::$(tail -n 60 out.log | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"
+            echo "::error title=sanitizers::$(grep -v -E '^(cc|gcc|clang|ar|make)( |\[)' out.log | tail -n 30 | cut -c1-200 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"
             exit 1
           fi
       - name: Fuzz
