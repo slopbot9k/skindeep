@@ -51,11 +51,12 @@ COMPILE = $(CC) $(CSTD) $(WARN) $(DEFS) $(OPT) $(CFLAGS) -MMD -MP
 # Code for one system lives in src/platform/<os>/ (decision 0036).
 PLATFORM := $(if $(filter Darwin,$(OS)),macos,linux)
 
-LIB_SRC := $(wildcard src/base/*.c src/core/*.c src/platform/$(PLATFORM)/*.c) src/relay/relay.c
+LIB_SRC := $(wildcard src/base/*.c src/core/*.c src/agents/*.c src/agents/*/*.c \
+    src/platform/$(PLATFORM)/*.c) src/relay/relay.c
 LIB_OBJ := $(LIB_SRC:%.c=$(BUILD)/%.o)
 LIB := $(BUILD)/libsk.a
 
-TEST_SRC := $(wildcard tests/*.c tests/base/*.c tests/core/*.c tests/relay/*.c)
+TEST_SRC := $(filter-out tests/fuzz/%,$(wildcard tests/*.c tests/*/*.c))
 TEST_OBJ := $(TEST_SRC:%.c=$(BUILD)/%.o)
 TEST_BIN := $(BUILD)/tests/run
 
@@ -117,4 +118,5 @@ endif
 clean:
 	rm -rf build
 
--include $(LIB_OBJ:.o=.d) $(TEST_OBJ:.o=.d) $(BUILD)/src/relay/main.d $(BUILD)/tools/hookdump.d
+-include $(LIB_OBJ:.o=.d) $(TEST_OBJ:.o=.d) $(BUILD)/src/relay/main.d $(BUILD)/tools/hookdump.d \
+    $(wildcard $(BUILD)/tests/fuzz/*.d)

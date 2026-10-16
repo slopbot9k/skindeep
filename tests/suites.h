@@ -11,4 +11,8 @@
     X(http)                                                                  \
     X(paths)                                                                 \
     X(loop)                                                                  \
-    X(relay)
+    X(relay)                                                                  \
+    X(bus)                                                                    \
+    X(tail)                                                                   \
+    X(carry)                                                                  \
+    X(agent)
