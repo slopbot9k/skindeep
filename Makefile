@@ -62,7 +62,7 @@ PLATFORM := $(if $(filter Darwin,$(OS)),macos,linux)
 # run against a fake server, on every system; only Linux opens windows
 # with it.
 LIB_SRC := $(wildcard src/base/*.c src/core/*.c src/agents/*.c src/agents/*/*.c src/app/*.c src/sessions/*.c \
-    src/gfx/*.c src/text/*.c src/term/*.c src/vendor/*.c src/platform/x11/*.c src/platform/$(PLATFORM)/*.c) src/relay/relay.c
+    src/gfx/*.c src/text/*.c src/term/*.c src/ui/*.c src/vendor/*.c src/platform/x11/*.c src/platform/$(PLATFORM)/*.c) src/relay/relay.c
 # The embedded DejaVu, in sk_embedded_font's order (text/text.h).
 FONTS := $(addprefix third_party/dejavu/,DejaVuSansMono.ttf DejaVuSansMono-Bold.ttf DejaVuSansMono-Oblique.ttf \
     DejaVuSansMono-BoldOblique.ttf DejaVuSans.ttf DejaVuSans-Bold.ttf)
