@@ -124,6 +124,9 @@ typedef struct {
     unsigned press;    /* the number sk_menu_answer takes */
 } sk_menu_press;
 
+/* Whether x, y is on the drop-down or its flyout, which the pointer's
+ * events then go to and nothing under it. */
+bool sk_menu_contains(const sk_menu *m, double x, double y);
 /* A button 1 press at x, y. */
 sk_menu_press sk_menu_mouse_down(sk_menu *m, double x, double y);
 /* The pointer at x, y (or left the window: x, y negative); true when the

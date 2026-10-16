@@ -9,10 +9,16 @@
 #include "../term/keys.h"
 #include "../term/links.h"
 #include "../ui/termview.h"
+#include "appsettings.h"
 #include "clitab.h"
 #include "control.h"
+#include "foreign.h"
 #include "identity.h"
+#include "lastskin.h"
 #include "launch.h"
+#include "menu.h"
+#include "monitor.h"
+#include "runtime.h"
 
 #include <errno.h>
 #include <math.h>
@@ -44,6 +50,42 @@ extern char **environ;
 #define BLINK_MS 600
 #define SYNC_HOLD_MS 1000
 #define POLL_MS 2000    /* session.js's pollMs for the strip */
+#define SESSIONS_MS 2000 /* menu.js's refresh of the agent sessions */
+#define FONT_PX 14      /* the terminal's, with no skin and no setting */
+
+/* menu.js's chords as each entry shows them. */
+#ifdef __APPLE__
+#define KEYS_NEW "Cmd+T"
+#define KEYS_CLOSE "Cmd+W"
+#else
+#define KEYS_NEW "Ctrl+Shift+T"
+#define KEYS_CLOSE "Ctrl+Shift+W"
+#endif
+
+/* What a row of the drop-down does (menu.js's handlers). */
+enum {
+    ACT_NONE,
+    ACT_NEW_TAB,
+    ACT_CHOOSER,
+    ACT_CLOSE_TAB,
+    ACT_REOPEN,
+    ACT_DUPLICATE,
+    ACT_NEXT_TAB,
+    ACT_PREV_TAB,
+    ACT_SETTING,
+    ACT_RESET_PANELS,
+    ACT_FORGET_SKIN,
+    ACT_OPEN_LOGS,
+    ACT_CLEAR_LOGS,
+    ACT_SESSION,
+    ACT_DASHBOARD,
+    ACT_OPEN_SKIN,
+    ACT_SELECT_SKIN,
+    ACT_TOGGLE_VIZ,
+    ACT_VIZ_MODE,
+    ACT_VIZ_INPUT,
+    ACT_TOGGLE_SOUND,
+};
 
 typedef struct gui gui;
 
@@ -72,6 +114,7 @@ typedef struct {
  * the snapshot. */
 typedef struct {
     int id;
+    sk_tab_kind kind;
     char *name;
     char *folder; /* the strip's folder, when another tab shows the name */
     bool unseen;
@@ -130,7 +173,17 @@ typedef struct {
     int drag_tab;
     double drag_x0;
     bool dragging;
+    /* The drop-down of decision 0022, the skin's button it opens from
+     * (in points), and the agent sessions' refresh while it shows them. */
+    sk_menu *menu;
+    double button[4];
+    int sessions_timer;
 } gwin;
+
+/* A problem of this launch, for Housekeeping (decision 0022). */
+typedef struct {
+    char *title, *detail;
+} problem;
 
 struct gui {
     const sk_options *o;
@@ -145,6 +198,13 @@ struct gui {
     SK_VEC(cwin) cwins;
     char *strip_key; /* the strips last posted, to post a change alone */
     int status;
+    sk_env paths;
+    sk_foreign *foreign;
+    sk_monitor_config mon;
+    char *profiles_dir, *settings_file, *last_dir;
+    sk_appsettings settings;
+    SK_VEC(problem) problems;
+    size_t problems_seen;
 
     /* Between the threads. */
     atomic_bool frame_posted;
@@ -155,6 +215,7 @@ struct gui {
     sk_fonts *fonts;
     sk_fontset *mono, *sans;
     sk_glyph_cache *cache;
+    double font_px; /* the terminal's, from the settings */
     SK_VEC(gwin *) wins;
 };
 
@@ -263,6 +324,15 @@ static void free_snap_win(snap_win *w)
  * the tab's note. */
 static void strip_of(gui *g, sk_tab *tab, strip_text *out)
 {
+    /* A monitor says its own (monitor.js's strip). */
+    sk_tab_strip ms;
+    if (sk_monitor_strip(tab, &ms)) {
+        out->label = sk_xstrdup(ms.label ? ms.label : "");
+        out->cmdline = sk_xstrdup(ms.cmdline ? ms.cmdline : "");
+        out->cwd = sk_xstrdup(ms.cwd ? ms.cwd : "");
+        out->notice = ms.notice && *ms.notice ? sk_xstrdup(ms.notice) : NULL;
+        return;
+    }
     const char *home = sk_envp_get(g->env, "HOME");
     sk_buf b = {0}, live = {0};
     out->label = sk_xstrdup(tab->label);
@@ -315,6 +385,7 @@ static void post_snapshot(gui *g)
                 continue;
             snap_tab *t = &w->tabs[w->n++];
             t->id = list.ptr[i]->id;
+            t->kind = list.ptr[i]->kind;
             t->name = sk_xstrdup(sk_tab_name(list.ptr[i]));
             sk_buf folder = {0};
             if (sk_tabs_folder(g->tabs, list.ptr[i], &folder))
@@ -409,6 +480,11 @@ static void on_output(void *ud, sk_tab *tab, const char *bytes, size_t n)
     ctab *ct = find(g, tab->id);
     if (ct)
         sk_term_feed(ct->st->term, bytes, n);
+    if (tab->kind != SK_TAB_CLI) {
+        /* A pane's text marks nothing unseen. */
+        ask_frame(g);
+        return;
+    }
     if (tab != sk_tabs_active_of(g->tabs, tab->win)) {
         if (sk_tabs_output(g->tabs, tab))
             post_snapshot(g);
@@ -428,11 +504,17 @@ typedef struct {
     int id, win;
 } tab_msg;
 
-/* A new tab's CLI starts once the tabs have it, at its window's size. */
+/* A new tab's CLI starts once the tabs have it, at its window's size; a
+ * monitor starts watching. */
 static void do_start(void *ud)
 {
     tab_msg *m = ud;
     sk_tab *tab = sk_tabs_get(m->g->tabs, m->id);
+    if (tab && tab->kind == SK_TAB_MONITOR) {
+        sk_monitor_start(tab);
+        free(m);
+        return;
+    }
     sk_session *s = sk_clitab_session(tab);
     if (s && sk_session_get_state(s) == SK_SESSION_IDLE) {
         int cols, rows;
@@ -451,15 +533,44 @@ static void post_tab(gui *g, sk_task_cb fn, int id, int win)
     sk_loop_post(g->loop, fn, m);
 }
 
+/* A problem for Housekeeping, logged as main.js logs it. */
+static void add_problem(gui *g, const char *title, const char *detail)
+{
+    problem p = {sk_xstrdup(title), sk_xstrdup(detail ? detail : "")};
+    sk_vec_push(&g->problems, p);
+    sk_log("%s: %s", title, p.detail);
+}
+
+/* A monitor's watch agent, its strip and its pane (decision 0027). */
+static sk_agent *mon_watcher(void *ud, const sk_foreign_session *w, sk_bus *bus)
+{
+    return sk_foreign_watch(((gui *)ud)->foreign, w, bus);
+}
+
+static void mon_strip(void *ud, sk_tab *tab, const sk_tab_strip *strip)
+{
+    (void)tab, (void)strip;
+    post_snapshot(ud);
+}
+
+static void mon_pane(void *ud, sk_tab *tab, const char *text)
+{
+    on_output(ud, tab, text, strlen(text));
+}
+
 static int make_tab(void *ud, sk_tab *tab, const sk_tab_spec *spec, char **err)
 {
     gui *g = ud;
-    if (spec->kind != SK_TAB_CLI) {
-        *err = sk_xstrdup("this build opens only a CLI's tabs");
+    if (spec->kind == SK_TAB_MONITOR) {
+        if (sk_monitor_make(&g->mon, tab, spec, err) != 0)
+            return -1;
+    } else if (spec->kind == SK_TAB_CLI) {
+        if (sk_clitab_make(&g->cli, tab, spec, err) != 0)
+            return -1;
+    } else {
+        *err = sk_xstrdup("this build opens no dashboard tab yet");
         return -1;
     }
-    if (sk_clitab_make(&g->cli, tab, spec, err) != 0)
-        return -1;
     int cols, rows;
     grid_of_win(g, tab->win, &cols, &rows);
     ctab ct = {tab->id, st_new(g, tab->id, cols, rows)};
@@ -527,7 +638,7 @@ static void do_new_tab(void *ud)
     char *cwd = s && sk_session_pid(s) > 0 ? sk_procinfo_cwd(sk_session_pid(s)) : NULL;
     char *err = NULL;
     if (!sk_tabs_new_tab(g->tabs, cwd ? cwd : g->l->cwd, &err) && err)
-        sk_tell("New tab failed: %s", err);
+        add_problem(g, "New tab failed", err);
     free(err);
     free(cwd);
     free(m);
@@ -633,23 +744,378 @@ typedef struct {
     char uri[];
 } uri_msg;
 
-/* A link the user opened, with the system's opener, as Electron's
- * shell.openExternal: http and https alone. */
+/* The system's opener on a link or a folder. */
+static void run_opener(gui *g, const char *what)
+{
+#ifdef __APPLE__
+    char *argv[] = {"open", (char *)what, NULL};
+#else
+    char *argv[] = {"xdg-open", (char *)what, NULL};
+#endif
+    pid_t pid;
+    if (posix_spawnp(&pid, argv[0], NULL, NULL, argv, environ) == 0)
+        sk_loop_child(g->loop, pid, reaped, NULL);
+    else
+        sk_log("cannot run %s for %s", argv[0], what);
+}
+
+/* A link the user opened, as Electron's shell.openExternal: http and
+ * https alone. */
 static void do_open(void *ud)
 {
     uri_msg *m = ud;
-    if (!strncmp(m->uri, "http://", 7) || !strncmp(m->uri, "https://", 8)) {
-#ifdef __APPLE__
-        char *argv[] = {"open", m->uri, NULL};
-#else
-        char *argv[] = {"xdg-open", m->uri, NULL};
-#endif
-        pid_t pid;
-        if (posix_spawnp(&pid, argv[0], NULL, NULL, argv, environ) == 0)
-            sk_loop_child(m->g->loop, pid, reaped, NULL);
-        else
-            sk_log("cannot run %s for a link", argv[0]);
+    if (!strncmp(m->uri, "http://", 7) || !strncmp(m->uri, "https://", 8))
+        run_opener(m->g, m->uri);
+    free(m);
+}
+
+/* ---- The drop-down's side on the core thread ---- */
+
+typedef SK_VEC(sk_menu_row) row_vec;
+
+static sk_menu_row *row_add(row_vec *v, sk_row_kind kind, const char *text)
+{
+    sk_menu_row r;
+    memset(&r, 0, sizeof r);
+    r.kind = kind;
+    r.text = text ? sk_xstrdup(text) : NULL;
+    sk_vec_push(v, r);
+    return &v->ptr[v->len - 1];
+}
+
+static sk_menu_row *row_item(row_vec *v, const char *text, int action, sk_row_then then, const char *keys)
+{
+    sk_menu_row *r = row_add(v, SK_ROW_ITEM, text);
+    r->action = action;
+    r->then = then;
+    r->keys = keys ? sk_xstrdup(keys) : NULL;
+    return r;
+}
+
+/* menu.js's age: seconds, minutes, hours or days. */
+static char *age_text(double ms)
+{
+    long s = ms > 0 ? (long)(ms / 1000) : 0;
+    sk_buf b = {0};
+    if (s < 60)
+        sk_buf_printf(&b, "%ld s", s);
+    else if (s < 3600)
+        sk_buf_printf(&b, "%ld m", s / 60);
+    else if (s < 86400)
+        sk_buf_printf(&b, "%ld h", s / 3600);
+    else
+        sk_buf_printf(&b, "%ld d", s / 86400);
+    return b.ptr;
+}
+
+/* The agent sessions now, as the menu's sessions:list gives them. */
+static void sessions_now(gui *g, sk_menu_session **out, size_t *n)
+{
+    sk_foreign_entries l = {0};
+    sk_foreign_sessions(g->foreign, &l);
+    *n = l.len;
+    *out = sk_xcalloc(l.len ? l.len : 1, sizeof **out);
+    for (size_t i = 0; i < l.len; i++) {
+        const sk_foreign_entry *e = &l.ptr[i];
+        sk_menu_session *s = &(*out)[i];
+        s->key = sk_xstrdup(e->key);
+        s->label = sk_xstrdup(e->label ? e->label : "");
+        s->folder = sk_xstrdup(e->folder ? e->folder : "");
+        s->state = sk_xstrdup(e->state ? e->state : "unknown");
+        s->age = age_text(e->age);
+        s->where = sk_xstrdup(e->where ? e->where : "");
+        s->in_tab = e->tab_id != 0;
     }
+    sk_foreign_entries_free(&l);
+}
+
+/* File: the tab entries of decisions 0023 and 0026, Settings and
+ * Housekeeping. Showing it marks this launch's problems seen. */
+static void file_rows(gui *g, row_vec *v)
+{
+    sk_tabs_menu tm;
+    sk_tabs_menu_state(g->tabs, &tm);
+    row_item(v, "New tab", ACT_NEW_TAB, SK_ROW_CLOSES, KEYS_NEW);
+    /* The chooser of decision 0025 is not in this build yet. */
+    row_item(v, "New tab...", ACT_CHOOSER, SK_ROW_CLOSES, NULL)->disabled = true;
+    row_item(v, "Close tab", ACT_CLOSE_TAB, SK_ROW_CLOSES, KEYS_CLOSE);
+    /* Reopen and Duplicate resume or fork the session, else start a new
+     * one. */
+    sk_buf b = {0};
+    sk_buf_printf(&b, "Reopen closed tab%s", tm.reopen && tm.reopen_fresh ? " (new session)" : "");
+    row_item(v, b.ptr, ACT_REOPEN, SK_ROW_CLOSES, NULL)->disabled = !tm.reopen;
+    sk_buf_clear(&b);
+    sk_buf_printf(&b, "Duplicate tab%s", tm.duplicate && tm.duplicate_fresh ? " (new session)" : "");
+    row_item(v, b.ptr, ACT_DUPLICATE, SK_ROW_CLOSES, NULL)->disabled = !tm.duplicate;
+    row_item(v, "Next tab", ACT_NEXT_TAB, SK_ROW_CLOSES, "Ctrl+Tab");
+    row_item(v, "Previous tab", ACT_PREV_TAB, SK_ROW_CLOSES, "Ctrl+Shift+Tab");
+    row_add(v, SK_ROW_RULE, NULL);
+    row_add(v, SK_ROW_HEADING, "Settings");
+    sk_setting_row rows[SK_SETTINGS_COUNT];
+    sk_appsettings_menu(&g->settings, NULL, rows);
+    for (size_t i = 0; i < SK_SETTINGS_COUNT; i++) {
+        size_t at = v->len;
+        row_add(v, SK_ROW_FLYOUT, rows[i].setting->label);
+        sk_menu_row *f = &v->ptr[at];
+        f->nsub = rows[i].choices.len;
+        f->sub = sk_xcalloc(f->nsub ? f->nsub : 1, sizeof *f->sub);
+        for (size_t k = 0; k < f->nsub; k++) {
+            const sk_setting_choice *c = &rows[i].choices.ptr[k];
+            sk_menu_row *s = &f->sub[k];
+            sk_buf_clear(&b);
+            sk_buf_printf(&b, "%s%s", c->current ? "* " : "  ", c->label);
+            s->kind = SK_ROW_ITEM;
+            s->text = sk_xstrdup(b.ptr);
+            s->current = c->current;
+            s->action = ACT_SETTING;
+            s->then = SK_ROW_WAITS;
+            /* The setting's id and its value as JSON, null for the
+             * skin's own. */
+            sk_buf_clear(&b);
+            sk_buf_printf(&b, "%s\x1f", rows[i].setting->id);
+            if (c->is_default) {
+                sk_buf_append_c(&b, "null");
+            } else {
+                sk_jw w;
+                sk_jw_init(&w, &b, 0);
+                sk_jw_number(&w, c->value);
+            }
+            s->arg = sk_xstrdup(b.ptr);
+        }
+    }
+    sk_appsettings_menu_free(rows);
+    /* The skin's splits back to its own sizes (decision 0035): there is
+     * no skin to have any yet. */
+    row_item(v, "Reset panel sizes", ACT_RESET_PANELS, SK_ROW_WAITS, NULL)->disabled = true;
+    row_add(v, SK_ROW_RULE, NULL);
+    row_add(v, SK_ROW_HEADING, "Housekeeping");
+    for (size_t i = 0; i < g->problems.len; i++) {
+        sk_menu_row *p = row_item(v, g->problems.ptr[i].title, ACT_NONE, SK_ROW_SAYS, NULL);
+        p->problem = true;
+        p->arg = sk_xstrdup(g->problems.ptr[i].detail);
+    }
+    row_item(v, "Forget remembered skin", ACT_FORGET_SKIN, SK_ROW_WAITS, NULL);
+    row_item(v, "Open log folder", ACT_OPEN_LOGS, SK_ROW_CLOSES, NULL);
+    row_item(v, "Clear logs", ACT_CLEAR_LOGS, SK_ROW_WAITS, NULL);
+    g->problems_seen = g->problems.len;
+    sk_buf_free(&b);
+}
+
+/* Agents: the agent sessions of decision 0027 and the dashboard of
+ * decision 0028, which is not in this build yet. */
+static void agents_rows(gui *g, row_vec *v)
+{
+    row_add(v, SK_ROW_HEADING, "Agent sessions");
+    sk_menu_row *box = row_add(v, SK_ROW_SESSIONS, NULL);
+    sessions_now(g, &box->sessions, &box->nsessions);
+    row_item(v, "Sessions dashboard", ACT_DASHBOARD, SK_ROW_CLOSES, NULL)->disabled = true;
+}
+
+/* Skins and Visualization, whose subsystems are not in this build yet:
+ * their entries, none of them live. */
+static void skins_rows(row_vec *v)
+{
+    row_item(v, "Open skin...", ACT_OPEN_SKIN, SK_ROW_WAITS, NULL)->disabled = true;
+    row_add(v, SK_ROW_RULE, NULL);
+    row_add(v, SK_ROW_HEADING, "Skins");
+    static const char *const shipped[] = {"coffee", "deck", "library", "phosphor"};
+    for (size_t i = 0; i < SK_LEN(shipped); i++) {
+        char text[32];
+        snprintf(text, sizeof text, "  %s", shipped[i]);
+        row_item(v, text, ACT_SELECT_SKIN, SK_ROW_WAITS, NULL)->disabled = true;
+    }
+}
+
+static void viz_rows(row_vec *v)
+{
+    row_item(v, "Show visualization", ACT_TOGGLE_VIZ, SK_ROW_CLOSES, NULL)->disabled = true;
+    row_add(v, SK_ROW_FLYOUT, "Visualization mode");
+    row_add(v, SK_ROW_FLYOUT, "Visualization input");
+    row_item(v, "Mute skin sounds", ACT_TOGGLE_SOUND, SK_ROW_CLOSES, NULL)->disabled = true;
+}
+
+typedef struct {
+    gui *g;
+    int win, menu;
+    unsigned ask;
+    sk_menu_row *rows;
+    size_t n;
+    sk_menu_session *sessions;
+} menu_msg;
+
+static void ui_menu(void *ud);
+static void ui_sessions(void *ud);
+
+/* A window asked for a menu: its rows, back to the window. */
+static void do_menu(void *ud)
+{
+    menu_msg *m = ud;
+    gui *g = m->g;
+    sk_tabs_touch(g->tabs, m->win);
+    row_vec v = {0};
+    switch (m->menu) {
+    case SK_MENU_FILE:
+        file_rows(g, &v);
+        break;
+    case SK_MENU_AGENTS:
+        agents_rows(g, &v);
+        break;
+    case SK_MENU_SKINS:
+        skins_rows(&v);
+        break;
+    default:
+        viz_rows(&v);
+        break;
+    }
+    m->rows = v.ptr;
+    m->n = v.len;
+    sk_ui_post(ui_menu, m);
+}
+
+/* The agent sessions again, for the box that shows them. */
+static void do_sessions(void *ud)
+{
+    menu_msg *m = ud;
+    sessions_now(m->g, &m->sessions, &m->n);
+    sk_ui_post(ui_sessions, m);
+}
+
+typedef struct {
+    gui *g;
+    int win, action;
+    unsigned press;
+    bool waits;
+    char *error, *note;
+    double font_px;
+    char arg[];
+} act_msg;
+
+static void ui_answer(void *ud);
+static void ui_settings(void *ud);
+
+/* The terminal's size the settings give, or the default without a skin
+ * to give one. */
+static double font_of(const sk_appsettings *s)
+{
+    return s->set[SK_SETTING_FONT_SIZE] ? s->value[SK_SETTING_FONT_SIZE] : FONT_PX;
+}
+
+/* settings:set: a pick saved and applied to every window. */
+static char *set_setting(gui *g, const char *arg)
+{
+    const char *sep = strchr(arg, '\x1f');
+    if (!sep)
+        return sk_xstrdup("no such setting");
+    char *id = sk_xstrndup(arg, (size_t)(sep - arg));
+    sk_arena a;
+    sk_arena_init(&a, 0);
+    const sk_json *v = sk_json_parse(&a, sep + 1, strlen(sep + 1), NULL);
+    char *err = NULL;
+    if (!v || !sk_appsettings_valid(id, v) || !sk_appsettings_set(&g->settings, id, v)) {
+        sk_buf b = {0};
+        sk_buf_printf(&b, "no setting %s of %s", id, sep + 1);
+        err = b.ptr;
+    } else {
+        if (g->settings_file && sk_appsettings_save(g->settings_file, &g->settings) != 0)
+            sk_log("settings: %s", strerror(errno));
+        act_msg *s = sk_xcalloc(1, sizeof *s);
+        s->g = g;
+        s->font_px = font_of(&g->settings);
+        sk_ui_post(ui_settings, s);
+    }
+    sk_arena_free(&a);
+    free(id);
+    return err;
+}
+
+/* A row of the drop-down pressed in window m->win: what main.js's
+ * handler does, its error or note back to the menu when it waits. */
+static void do_action(void *ud)
+{
+    act_msg *m = ud;
+    gui *g = m->g;
+    sk_tabs_touch(g->tabs, m->win);
+    char *err = NULL, *note = NULL;
+    switch (m->action) {
+    case ACT_NEW_TAB: {
+        tab_msg *t = sk_xmalloc(sizeof *t);
+        *t = (tab_msg){g, 0, m->win};
+        do_new_tab(t);
+        break;
+    }
+    case ACT_CLOSE_TAB: {
+        sk_tab *a = sk_tabs_active_of(g->tabs, m->win);
+        if (a)
+            sk_tabs_close(g->tabs, a->id);
+        break;
+    }
+    case ACT_REOPEN:
+        if (!sk_tabs_reopen(g->tabs, &err) && err) {
+            add_problem(g, "Reopen closed tab failed", err);
+            free(err);
+            err = NULL;
+        }
+        break;
+    case ACT_DUPLICATE:
+        if (!sk_tabs_duplicate(g->tabs, &err) && err) {
+            add_problem(g, "Duplicate tab failed", err);
+            free(err);
+            err = NULL;
+        }
+        break;
+    case ACT_NEXT_TAB:
+    case ACT_PREV_TAB:
+        sk_tabs_step(g->tabs, m->action == ACT_NEXT_TAB ? 1 : -1, m->win);
+        break;
+    case ACT_SETTING:
+        err = set_setting(g, m->arg);
+        break;
+    case ACT_FORGET_SKIN:
+        if (!g->last_dir || sk_last_forget(g->last_dir) != 0) {
+            sk_buf b = {0};
+            sk_buf_printf(&b, "forget: %s", g->last_dir ? strerror(errno) : "no state folder");
+            err = b.ptr;
+        } else {
+            note = sk_xstrdup("Forgotten. The next launch opens the default skin, unless a window records another.");
+        }
+        break;
+    case ACT_OPEN_LOGS: {
+        char *dir = sk_runtime_log_dir(&g->paths);
+        if (dir) {
+            sk_mkdirs(dir, 0700);
+            run_opener(g, dir);
+        }
+        free(dir);
+        break;
+    }
+    case ACT_CLEAR_LOGS: {
+        int n = sk_runtime_clear_logs(&g->paths);
+        sk_buf b = {0};
+        if (n < 0)
+            sk_buf_printf(&b, "clear logs: %s", strerror(errno));
+        else
+            sk_buf_printf(&b, "Removed %d log%s of ended windows.", n, n == 1 ? "" : "s");
+        if (n < 0)
+            err = b.ptr;
+        else
+            note = b.ptr;
+        break;
+    }
+    case ACT_SESSION:
+        sk_foreign_open(g->foreign, m->arg, &err);
+        break;
+    default:
+        err = sk_xstrdup("not in this build yet");
+        break;
+    }
+    if (m->waits) {
+        m->error = err;
+        m->note = note;
+        sk_ui_post(ui_answer, m);
+        return;
+    }
+    free(err);
+    free(note);
     free(m);
 }
 
@@ -789,10 +1255,11 @@ static gwin *gwin_new(gui *g, int id)
     sk_termview_default_style(&w->style);
     w->style.fonts = g->mono;
     w->style.cache = g->cache;
-    w->style.font_px = 14;
+    w->style.font_px = g->font_px;
     w->style.scale = sk_window_scale(w->win);
     w->view = sk_termview_new(&w->style);
     sk_term_mouse_init(&w->mouse);
+    w->menu = sk_menu_new();
     sk_vec_push(&g->wins, w);
     return w;
 }
@@ -803,6 +1270,9 @@ static void gwin_free(gwin *w)
         sk_ui_cancel(w->blink_timer);
     if (w->sync_timer)
         sk_ui_cancel(w->sync_timer);
+    if (w->sessions_timer)
+        sk_ui_cancel(w->sessions_timer);
+    sk_menu_free(w->menu);
     free_snap_win(&w->snap);
     free(w->link_uri);
     free(w->preedit);
@@ -900,6 +1370,131 @@ static void ui_quit(void *ud)
     if (path && *path && g->wins.len && !shot(g->wins.ptr[0], path))
         sk_log("cannot write %s", path);
     sk_ui_quit();
+}
+
+/* ---- The drop-down ---- */
+
+static sk_menu_style menu_style(gwin *w)
+{
+    return (sk_menu_style){w->g->sans, w->g->mono, w->g->cache, sk_window_scale(w->win)};
+}
+
+/* menu.js's show: the menu asked of the core, the newest ask winning. */
+static void menu_ask(gwin *w, int menu)
+{
+    menu_msg *m = sk_xcalloc(1, sizeof *m);
+    m->g = w->g;
+    m->win = w->snap.id;
+    m->menu = menu;
+    m->ask = sk_menu_ask(w->menu, menu);
+    sk_loop_post(w->g->loop, do_menu, m);
+}
+
+static void on_sessions_tick(void *ud)
+{
+    gwin *w = ud;
+    if (!sk_menu_has_sessions(w->menu)) {
+        sk_ui_cancel(w->sessions_timer);
+        w->sessions_timer = 0;
+        return;
+    }
+    menu_msg *m = sk_xcalloc(1, sizeof *m);
+    m->g = w->g;
+    m->win = w->snap.id;
+    sk_loop_post(w->g->loop, do_sessions, m);
+}
+
+/* The sessions refresh every 2 s while the menu shows them, and no
+ * longer. */
+static void menu_changed(gwin *w)
+{
+    bool want = sk_menu_has_sessions(w->menu);
+    if (want && !w->sessions_timer)
+        w->sessions_timer = sk_ui_timer(SESSIONS_MS, SESSIONS_MS, on_sessions_tick, w);
+    else if (!want && w->sessions_timer) {
+        sk_ui_cancel(w->sessions_timer);
+        w->sessions_timer = 0;
+    }
+    redraw(w);
+}
+
+static void ui_menu(void *ud)
+{
+    menu_msg *m = ud;
+    gwin *w = gwin_of(m->g, m->win);
+    if (!w) {
+        sk_menu_rows_free(m->rows, m->n);
+    } else {
+        int pw, ph;
+        sk_window_size(w->win, &pw, &ph);
+        sk_menu_style st = menu_style(w);
+        if (sk_menu_show(w->menu, m->ask, m->menu, m->rows, m->n, &st, w->button[0], w->button[1], w->button[2],
+                         w->button[3], pw, ph, top_points(w)))
+            menu_changed(w);
+    }
+    free(m);
+}
+
+static void ui_sessions(void *ud)
+{
+    menu_msg *m = ud;
+    gwin *w = gwin_of(m->g, m->win);
+    if (w && sk_menu_has_sessions(w->menu)) {
+        sk_menu_sessions(w->menu, m->sessions, m->n);
+        redraw(w);
+    } else {
+        sk_menu_sessions_free(m->sessions, m->n);
+    }
+    free(m);
+}
+
+static void ui_answer(void *ud)
+{
+    act_msg *m = ud;
+    gwin *w = gwin_of(m->g, m->win);
+    if (w) {
+        sk_menu_answer(w->menu, m->press, m->error, m->note);
+        menu_changed(w);
+    }
+    free(m->error);
+    free(m->note);
+    free(m);
+}
+
+/* A setting picked: every window's terminal at its new size. */
+static void ui_settings(void *ud)
+{
+    act_msg *m = ud;
+    gui *g = m->g;
+    g->font_px = m->font_px;
+    for (size_t i = 0; i < g->wins.len; i++) {
+        gwin *w = g->wins.ptr[i];
+        w->style.font_px = g->font_px;
+        sk_termview_set_style(w->view, &w->style);
+        fit(w);
+        redraw(w);
+    }
+    free(m);
+}
+
+/* A press on the drop-down: what it asks for, run on the core. */
+static void menu_press(gwin *w, const sk_menu_press *p)
+{
+    if (p->kind == SK_MENU_PRESS_SHOW) {
+        menu_ask(w, p->menu);
+    } else if (p->kind == SK_MENU_PRESS_ACTION || p->kind == SK_MENU_PRESS_SESSION) {
+        size_t n = p->arg ? strlen(p->arg) : 0;
+        act_msg *m = sk_xcalloc(1, sizeof *m + n + 1);
+        m->g = w->g;
+        m->win = w->snap.id;
+        m->action = p->kind == SK_MENU_PRESS_SESSION ? ACT_SESSION : p->action;
+        m->press = p->press;
+        m->waits = p->waits;
+        if (n)
+            memcpy(m->arg, p->arg, n);
+        sk_loop_post(w->g->loop, do_action, m);
+    }
+    menu_changed(w);
 }
 
 /* ---- Drawing ---- */
@@ -1096,6 +1691,11 @@ static void draw(gwin *w)
     sk_image *f = sk_window_frame(w->win);
     sk_rect dirty[2];
     size_t nd = 0;
+    /* The drop-down and its shadow lie over what is below: while it is
+     * open, each frame is drawn whole and it goes on top. */
+    bool menu = sk_menu_open(w->menu);
+    if (menu)
+        w->all = true;
     if (w->all) {
         draw_chrome(w, f);
         /* The stage is the page's black around the terminal. */
@@ -1177,6 +1777,10 @@ static void draw(gwin *w)
             w->cursor_on = true;
         }
         sk_term_unlock(t);
+    }
+    if (menu) {
+        sk_menu_style st = menu_style(w);
+        sk_menu_draw(w->menu, f, &st);
     }
     if (w->all)
         sk_window_present(w->win, NULL, 0);
@@ -1274,6 +1878,15 @@ static bool chord(gwin *w, const sk_key_event *k)
 
 static void on_key(gwin *w, const sk_key_event *k)
 {
+    /* An open drop-down takes every key: Left and Right step through
+     * the menus, Escape closes it, the rest are dropped (decision 0022). */
+    int show;
+    if (sk_menu_key(w->menu, k, &show)) {
+        if (show >= 0)
+            menu_ask(w, show);
+        menu_changed(w);
+        return;
+    }
     if (chord(w, k))
         return;
     sk_term *t = active_term(w);
@@ -1531,6 +2144,23 @@ static bool strip_mouse(gwin *w, const sk_event *ev)
 static void on_mouse(gwin *w, const sk_event *ev)
 {
     gui *g = w->g;
+    /* The drop-down is above everything: what lands on it is its own,
+     * and a press elsewhere closes it and goes on to what is there. */
+    if (sk_menu_open(w->menu)) {
+        if (ev->type == SK_EV_MOUSE_MOVE && sk_menu_mouse_move(w->menu, ev->mouse.x, ev->mouse.y))
+            redraw(w);
+        if (ev->type == SK_EV_MOUSE_DOWN && ev->mouse.button == 1) {
+            sk_menu_press p = sk_menu_mouse_down(w->menu, ev->mouse.x, ev->mouse.y);
+            menu_press(w, &p);
+            if (p.kind != SK_MENU_PRESS_OUTSIDE)
+                return;
+        } else if (sk_menu_contains(w->menu, ev->mouse.x, ev->mouse.y)) {
+            return;
+        } else if (ev->type == SK_EV_MOUSE_DOWN) {
+            sk_menu_close(w->menu);
+            menu_changed(w);
+        }
+    }
     sk_term *t = active_term(w);
     double gx, gy;
     grid_point(w, ev->mouse.x, ev->mouse.y, &gx, &gy);
@@ -1640,6 +2270,12 @@ static void on_mouse(gwin *w, const sk_event *ev)
 
 static void on_scroll(gwin *w, const sk_event *ev)
 {
+    /* A positive dy scrolls back, up; the menu takes lines down. */
+    if (sk_menu_open(w->menu) && sk_menu_scroll(w->menu, ev->scroll.x, ev->scroll.y,
+                                                -(ev->scroll.precise ? ev->scroll.dy / 20.8 : ev->scroll.dy))) {
+        redraw(w);
+        return;
+    }
     sk_term *t = active_term(w);
     if (!t)
         return;
@@ -1721,6 +2357,8 @@ static void on_event(void *ud, const sk_event *ev)
         /* What an input method commits is typed, as xterm.js sends a
          * composition's end. */
         snap_tab *at = active_tab(w);
+        if (sk_menu_open(w->menu))
+            break;
         if (at && ev->text && *ev->text) {
             sk_term_scroll_to_bottom(at->st->term);
             sk_term_select_clear(at->st->term);
@@ -1875,6 +2513,11 @@ static void probe(gui *g, gwin *w, ctl_msg *m)
         window_json(&jw, w);
     else
         sk_jw_null(&jw);
+    sk_jw_key(&jw, SK_STR("menu"));
+    if (w)
+        sk_menu_state(w->menu, &jw);
+    else
+        sk_jw_null(&jw);
     /* The web link under the pointer, as the addon found it. */
     sk_jw_key(&jw, SK_STR("link"));
     if (w && w->link_uri)
@@ -1986,6 +2629,24 @@ static void ui_control(void *ud)
     } else if (sk_str_eq_c(op, "close")) {
         ev.type = SK_EV_CLOSE;
         on_event(g, &ev);
+    } else if (sk_str_eq_c(op, "menu")) {
+        /* Until a skin places its button, the check gives the button's
+         * rect, and the menu to show, or none to close it. */
+        const sk_json *b = sk_json_get(msg, "button");
+        for (size_t i = 0; i < 4 && b && b->type == SK_JSON_ARRAY && i < b->array.len; i++)
+            sk_json_as_number(sk_json_at(b, i), &w->button[i]);
+        sk_str show = {0};
+        sk_json_as_string(sk_json_get(msg, "show"), &show);
+        int menu = -1;
+        for (int i = 0; i < SK_MENU_COUNT; i++)
+            if (sk_str_eq_c(show, sk_menu_titles[i]))
+                menu = i;
+        if (menu >= 0) {
+            menu_ask(w, menu);
+        } else {
+            sk_menu_close(w->menu);
+            menu_changed(w);
+        }
     } else if (sk_str_eq_c(op, "shot")) {
         sk_str path = {0};
         sk_json_as_string(sk_json_get(msg, "path"), &path);
@@ -2037,6 +2698,10 @@ static void on_control(void *ud, sk_control_req *req, const sk_json *msg)
             sk_jw_int(&jw, t->id);
             sk_jw_key(&jw, SK_STR("win"));
             sk_jw_int(&jw, t->win);
+            sk_jw_key(&jw, SK_STR("kind"));
+            sk_jw_string(&jw, sk_str_c(t->kind == SK_TAB_MONITOR     ? "monitor"
+                                       : t->kind == SK_TAB_DASHBOARD ? "dashboard"
+                                                                     : "cli"));
             sk_jw_key(&jw, SK_STR("pid"));
             sk_jw_int(&jw, s ? sk_session_pid(s) : 0);
             sk_jw_key(&jw, SK_STR("active"));
@@ -2098,6 +2763,15 @@ int sk_gui_run(const sk_options *o, const sk_envp *env, const char *self)
     g->mono = sk_fontset_new(g->fonts, NULL, true);
     g->sans = sk_fontset_new(g->fonts, NULL, false);
     g->cache = sk_glyph_cache_new((size_t)32 << 20);
+    /* The user's settings, read at launch (decision 0022), and where
+     * the last skins and the profiles are kept. */
+    sk_env_current(&g->paths);
+    g->settings_file = sk_appsettings_file(&g->paths);
+    if (g->settings_file)
+        sk_appsettings_load(&g->settings, g->settings_file);
+    g->font_px = font_of(&g->settings);
+    g->last_dir = sk_last_dir(&g->paths);
+    g->profiles_dir = sk_profiles_dir(&g->paths);
 
     /* The first window opens before its first tab, so the tab starts at
      * the window's size. It is the tabs' window 0. */
@@ -2138,6 +2812,26 @@ int sk_gui_run(const sk_options *o, const sk_envp *env, const char *self)
     tc.home = sk_envp_get(env, "HOME");
     g->tabs = sk_tabs_new(&tc);
     g->cli.tabs = g->tabs;
+    /* The agent sessions the app did not start (decision 0027), and the
+     * monitor tabs that watch them. */
+    sk_foreign_config fc;
+    memset(&fc, 0, sizeof fc);
+    fc.tabs = g->tabs;
+    fc.loop = g->loop;
+    fc.env = env;
+    fc.home = tc.home;
+    fc.profiles_dir = g->profiles_dir;
+    fc.log = log_line;
+    fc.ud = g;
+    g->foreign = sk_foreign_new(&fc);
+    g->mon.loop = g->loop;
+    g->mon.tabs = g->tabs;
+    g->mon.home = tc.home;
+    g->mon.watcher = mon_watcher;
+    g->mon.strip = mon_strip;
+    g->mon.pane = mon_pane;
+    g->mon.log = log_line;
+    g->mon.ud = g;
     sk_loop_signal(g->loop, SIGINT, on_stop, g);
     sk_loop_signal(g->loop, SIGTERM, on_stop, g);
     sk_loop_signal(g->loop, SIGHUP, on_stop, g);
@@ -2150,6 +2844,7 @@ int sk_gui_run(const sk_options *o, const sk_envp *env, const char *self)
         sk_tell("%s", err);
         free(err);
         sk_tabs_free(g->tabs);
+        sk_foreign_free(g->foreign);
         sk_loop_free(g->loop);
         goto out;
     }
@@ -2182,12 +2877,20 @@ int sk_gui_run(const sk_options *o, const sk_envp *env, const char *self)
             status = sk_tabs_done(g->tabs) ? sk_tabs_exit_status(g->tabs) : g->status;
         }
     }
+    /* The tabs' watch agents are the foreign sessions', so the tabs go
+     * first. */
     sk_tabs_free(g->tabs);
+    sk_foreign_free(g->foreign);
     for (size_t i = 0; i < g->ctabs.len; i++)
         st_unref(g->ctabs.ptr[i].st);
     sk_vec_free(&g->ctabs);
     sk_vec_free(&g->cwins);
     free(g->strip_key);
+    for (size_t i = 0; i < g->problems.len; i++) {
+        free(g->problems.ptr[i].title);
+        free(g->problems.ptr[i].detail);
+    }
+    sk_vec_free(&g->problems);
     sk_control_close(ctl);
     sk_loop_free(g->loop);
 
@@ -2201,6 +2904,10 @@ out:
     sk_fontset_free(g->sans);
     sk_fonts_free(g->fonts);
     sk_ui_close();
+    sk_appsettings_free(&g->settings);
+    free(g->settings_file);
+    free(g->last_dir);
+    free(g->profiles_dir);
     free(g);
     sk_launch_close(&l);
     return status;

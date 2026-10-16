@@ -443,6 +443,153 @@ static void test_closing_the_window_hangs_up(void)
     CHECK_INT(finish(&a, 5000), 128 + SIGHUP);
 }
 
+/* The probe once its drop-down shows menu, or with menu NULL once it is
+ * closed; NULL after ms. */
+static const sk_json *wait_menu(app *a, sk_arena *ar, const char *menu, int ms)
+{
+    for (uint64_t until = sk_now_ms() + (uint64_t)ms;; sk_test_sleep_ms(50)) {
+        const sk_json *p = probe(a, ar);
+        bool open = false;
+        sk_json_as_bool(sk_json_dig(p, "menu", "open", NULL), &open);
+        sk_str shown = {0};
+        sk_json_as_string(sk_json_dig(p, "menu", "shown", NULL), &shown);
+        if (menu ? open && sk_str_eq_c(shown, menu) : !open)
+            return p;
+        if (sk_now_ms() > until)
+            return NULL;
+    }
+}
+
+/* The drop-down's row whose text is text, from a probe. */
+static const sk_json *menu_row(const sk_json *p, const char *text)
+{
+    const sk_json *rows = sk_json_dig(p, "menu", "rows", NULL);
+    for (size_t i = 0; rows && i < rows->array.len; i++) {
+        sk_str t = {0};
+        sk_json_as_string(sk_json_get(sk_json_at(rows, i), "text"), &t);
+        if (sk_str_eq_c(t, text))
+            return sk_json_at(rows, i);
+    }
+    return NULL;
+}
+
+/* A press in the middle of a row, x points in from the drop-down's
+ * left. */
+static void press_row(app *a, const sk_json *p, const sk_json *row, double x)
+{
+    char req[160];
+    snprintf(req, sizeof req, "{\"op\":\"mouse\",\"kind\":\"down\",\"x\":%g,\"y\":%g}",
+             num(sk_json_get(p, "menu"), "x") + x, num(row, "y") + num(row, "h") / 2);
+    ok(a, req);
+    snprintf(req, sizeof req, "{\"op\":\"mouse\",\"kind\":\"up\",\"x\":%g,\"y\":%g}",
+             num(sk_json_get(p, "menu"), "x") + x, num(row, "y") + num(row, "h") / 2);
+    ok(a, req);
+}
+
+/* The drop-down of decision 0022, from a stand-in for the skin's
+ * button: it opens on its menu, Right and Escape step and close it,
+ * New tab opens a tab, Clear logs answers with a note, and a font size
+ * picked in Settings sizes the terminal and is saved. */
+static void test_the_menus(void)
+{
+    app a;
+    const char *cmd[] = {"cat", NULL};
+    if (!start(&a, cmd))
+        return;
+    sk_arena ar;
+    sk_arena_init(&ar, 0);
+    ok(&a, "{\"op\":\"menu\",\"show\":\"File\",\"button\":[100,40,30,30]}");
+    const sk_json *p = wait_menu(&a, &ar, "File", 5000);
+    CHECK(p != NULL);
+    CHECK(menu_row(p, "New tab") != NULL);
+    CHECK_INT(num(sk_json_get(p, "menu"), "y"), 72);
+    ok(&a, "{\"op\":\"key\",\"key\":\"Right\"}");
+    p = wait_menu(&a, &ar, "Agents", 5000);
+    CHECK(p != NULL);
+    CHECK(menu_row(p, "Sessions dashboard") != NULL);
+    /* Every other key is the menu's while it is open: none reaches cat. */
+    ok(&a, "{\"op\":\"type\",\"text\":\"dropped\"}");
+    ok(&a, "{\"op\":\"key\",\"key\":\"Escape\"}");
+    CHECK(wait_menu(&a, &ar, NULL, 5000) != NULL);
+    p = probe(&a, &ar);
+    CHECK(!screen_has(p, "dropped"));
+
+    ok(&a, "{\"op\":\"menu\",\"show\":\"File\"}");
+    p = wait_menu(&a, &ar, "File", 5000);
+    const sk_json *row = p ? menu_row(p, "New tab") : NULL;
+    CHECK(row != NULL);
+    if (row)
+        press_row(&a, p, row, 20);
+    for (uint64_t until = sk_now_ms() + 5000; sk_now_ms() < until; sk_test_sleep_ms(50)) {
+        p = probe(&a, &ar);
+        if (sk_json_get(p, "tabs") && sk_json_get(p, "tabs")->array.len == 2)
+            break;
+    }
+    CHECK(sk_json_get(p, "tabs") && sk_json_get(p, "tabs")->array.len == 2);
+    bool open = true;
+    sk_json_as_bool(sk_json_dig(p, "menu", "open", NULL), &open);
+    CHECK(!open);
+
+    /* A row that waits keeps the menu open with its answer. */
+    ok(&a, "{\"op\":\"menu\",\"show\":\"File\"}");
+    p = wait_menu(&a, &ar, "File", 5000);
+    row = p ? menu_row(p, "Clear logs") : NULL;
+    CHECK(row != NULL);
+    if (row)
+        press_row(&a, p, row, 20);
+    sk_str msg = {0};
+    for (uint64_t until = sk_now_ms() + 5000; sk_now_ms() < until; sk_test_sleep_ms(50)) {
+        p = probe(&a, &ar);
+        if (sk_json_as_string(sk_json_dig(p, "menu", "message", NULL), &msg))
+            break;
+    }
+    CHECK(msg.ptr && !strncmp(msg.ptr, "Removed ", 8) && strstr(msg.ptr, "of ended windows."));
+
+    /* Settings: the flyout opens on its row, and 16 px is picked. */
+    int cols = (int)num(sk_json_get(p, "window"), "cols");
+    row = menu_row(p, "Terminal font size");
+    CHECK(row != NULL);
+    if (row) {
+        double mx = num(sk_json_get(p, "menu"), "x"), mw = num(sk_json_get(p, "menu"), "w");
+        double ry = num(row, "y");
+        char req[160];
+        snprintf(req, sizeof req, "{\"op\":\"mouse\",\"kind\":\"move\",\"x\":%g,\"y\":%g}", mx + 20, ry + 5);
+        ok(&a, req);
+        p = probe(&a, &ar);
+        const sk_json *fly = sk_json_dig(p, "menu", "flyout", NULL);
+        size_t pick = (size_t)-1;
+        for (size_t i = 0; fly && fly->type == SK_JSON_ARRAY && i < fly->array.len; i++) {
+            sk_str t = {0};
+            sk_json_as_string(sk_json_get(sk_json_at(fly, i), "text"), &t);
+            if (sk_str_eq_c(t, "  16 px"))
+                pick = i;
+        }
+        CHECK(pick != (size_t)-1);
+        /* The flyout's rows start level with its own, to its right. */
+        double y = ry + 20.8 * (double)pick + 10;
+        snprintf(req, sizeof req, "{\"op\":\"mouse\",\"kind\":\"move\",\"x\":%g,\"y\":%g}", mx + mw + 20, y);
+        ok(&a, req);
+        snprintf(req, sizeof req, "{\"op\":\"mouse\",\"kind\":\"down\",\"x\":%g,\"y\":%g}", mx + mw + 20, y);
+        ok(&a, req);
+        CHECK(wait_menu(&a, &ar, NULL, 5000) != NULL);
+        for (uint64_t until = sk_now_ms() + 5000; sk_now_ms() < until; sk_test_sleep_ms(50)) {
+            p = probe(&a, &ar);
+            if (num(sk_json_get(p, "window"), "cols") < cols)
+                break;
+        }
+        CHECK(num(sk_json_get(p, "window"), "cols") < cols);
+        sk_buf f = {0};
+        sk_buf_printf(&f, "%s/state/claude-skins/settings.json", sk_test_tmpdir());
+        char *text = sk_test_read(f.ptr, NULL);
+        CHECK(text && strstr(text, "16"));
+        free(text);
+        sk_buf_free(&f);
+    }
+    sk_arena_free(&ar);
+    ok(&a, "{\"op\":\"hangup\"}");
+    CHECK_INT(finish(&a, 5000), 128 + SIGHUP);
+}
+
 const sk_test sk_suite_window[] = {
     T(test_typing_reaches_the_tab),
     T(test_the_tab_chords),
@@ -451,5 +598,6 @@ const sk_test sk_suite_window[] = {
     T(test_a_url_in_the_text_is_a_link),
     T(test_a_tab_dragged_out_gets_its_own_window),
     T(test_closing_the_window_hangs_up),
+    T(test_the_menus),
     {0},
 };

@@ -115,4 +115,5 @@
     X(skin_paint)                                                            \
     X(skin_blur)                                                             \
     X(skin_skins)                                                            \
-    X(menu)
+    X(menu)                                                                  \
+    X(lastskin)

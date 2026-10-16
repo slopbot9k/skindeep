@@ -716,6 +716,11 @@ static hit_t hit(const sk_menu *m, double x, double y)
     return h;
 }
 
+bool sk_menu_contains(const sk_menu *m, double x, double y)
+{
+    return hit(m, x, y).inside;
+}
+
 /* Whether a row takes a press and lights under the pointer. */
 static bool acts(const sk_menu_row *r)
 {
