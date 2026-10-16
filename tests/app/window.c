@@ -337,6 +337,15 @@ static void test_a_url_in_the_text_is_a_link(void)
     sk_str link = {0};
     CHECK(sk_json_as_string(sk_json_get(p, "link"), &link));
     CHECK(link.ptr && !strcmp(link.ptr, "https://example.com/a/b"));
+    /* A change of tabs with a link under the pointer drops it once. */
+    ok(&a, "{\"op\":\"key\",\"key\":\"t\",\"mods\":" APP_MODS "}");
+    sk_test_sleep_ms(500);
+    p = probe(&a, &ar);
+    CHECK(p != NULL);
+    CHECK(!sk_json_as_string(sk_json_get(p, "link"), &link));
+    ok(&a, "{\"op\":\"key\",\"key\":\"Tab\",\"mods\":[\"ctrl\"]}");
+    sk_test_sleep_ms(300);
+    ok(&a, req);
     /* Off the URL, no link. */
     snprintf(req, sizeof req, "{\"op\":\"mouse\",\"kind\":\"move\",\"x\":%.1f,\"y\":5}", cell * 1.5);
     ok(&a, req);

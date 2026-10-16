@@ -105,6 +105,9 @@ struct gui {
      * exclusive; link_r0 < 0 for none. */
     int link_r0, link_c0, link_r1, link_c1;
     char *link_uri;
+    /* An input method's composition, and where its candidates go. */
+    char *preedit;
+    int ime_x, ime_y;
     int ui_cols, ui_rows;
 };
 
@@ -542,7 +545,6 @@ static void ui_snapshot(void *ud)
     bool switched = s->active != g->snap.active;
     bool strip = (s->n > 1) != (g->snap.n > 1);
     free_snapshot(&g->snap);
-    free(g->link_uri);
     g->snap = *s;
     free(s);
     if (!g->win)
@@ -670,6 +672,33 @@ static void draw(gui *g)
         }
         sk_term_cursor c;
         sk_term_cursor_of(t, &c);
+        int cw, ch;
+        sk_termview_cell(g->view, &cw, &ch);
+        int cx = SK_MIN(c.x, g->ui_cols - 1) * cw, cy = c.y * ch;
+        /* An input method's composition, at the cursor over the cells,
+         * underlined, as xterm.js's composition view shows it. */
+        if (!hold && g->preedit && *g->preedit && c.y >= 0 && c.y < g->ui_rows) {
+            sk_term_palette p;
+            sk_term_palette_of(t, &p);
+            float px = (float)(g->style.font_px * g->style.scale);
+            float w = sk_measure_text(g->mono, 0, px, g->preedit, strlen(g->preedit));
+            sk_rect box = sk_rect_make(cx, cy, (int)ceilf(w), ch);
+            sk_fill_rect(&area, box, (sk_color)(0xff000000u | p.bg), SK_BLEND_SRC, NULL);
+            sk_draw_text(&area, g->cache, g->mono, 0, px, (float)cx, (float)cy + (float)ch * 0.78f, g->preedit,
+                         strlen(g->preedit), (sk_color)(0xff000000u | p.fg), &box);
+            int thick = SK_MAX(1, (int)lround(g->style.scale));
+            sk_fill_rect(&area, sk_rect_make(cx, cy + ch - thick, box.w, thick), (sk_color)(0xff000000u | p.fg),
+                         SK_BLEND_SRC, NULL);
+            dirty[nd++] = sk_rect_make(box.x + a.x, box.y + a.y, box.w, box.h);
+        }
+        /* The candidate window goes beside the cursor. */
+        double s = sk_window_scale(g->win);
+        int ix = (int)lround(cx / s), iy = (int)lround((cy + a.y) / s);
+        if (ix != g->ime_x || iy != g->ime_y) {
+            g->ime_x = ix;
+            g->ime_y = iy;
+            sk_window_set_ime_rect(g->win, ix, iy, (int)lround(cw / s), (int)lround(ch / s));
+        }
         if (c.blink && !g->blink_timer) {
             g->blink_timer = sk_ui_timer(BLINK_MS, BLINK_MS, on_blink, g);
         } else if (!c.blink && g->blink_timer) {
@@ -1155,6 +1184,23 @@ static void on_event(void *ud, const sk_event *ev)
     case SK_EV_SCROLL:
         on_scroll(g, ev);
         break;
+    case SK_EV_TEXT: {
+        /* What an input method commits is typed, as xterm.js sends a
+         * composition's end. */
+        snap_tab *at = active_tab(g);
+        if (at && ev->text && *ev->text) {
+            sk_term_scroll_to_bottom(at->st->term);
+            sk_term_select_clear(at->st->term);
+            post_input(g, at->id, ev->text, strlen(ev->text));
+        }
+        break;
+    }
+    case SK_EV_PREEDIT:
+        free(g->preedit);
+        g->preedit = ev->text && *ev->text ? sk_xstrdup(ev->text) : NULL;
+        g->all = true;
+        sk_window_request_frame(g->win);
+        break;
     default:
         break;
     }
@@ -1481,6 +1527,7 @@ int sk_gui_run(const sk_options *o, const sk_envp *env, const char *self)
     g->cursor_on = true;
     g->focused = true;
     g->link_r0 = -1;
+    g->ime_x = g->ime_y = -1;
     atomic_init(&g->frame_posted, false);
     atomic_init(&g->core_done, false);
     char *err = NULL;
@@ -1596,6 +1643,8 @@ int sk_gui_run(const sk_options *o, const sk_envp *env, const char *self)
 
 out:
     free_snapshot(&g->snap);
+    free(g->link_uri);
+    free(g->preedit);
     if (g->view)
         sk_termview_free(g->view);
     if (g->win)
