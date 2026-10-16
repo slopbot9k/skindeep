@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- every shape and path command nanosvg parses -->
+<svg xmlns="http://www.w3.org/2000/svg" width="40mm" height="30mm" viewBox="-10 -10 120 90" preserveAspectRatio="xMinYMax slice">
+ <rect x="0" y="0" width="20" height="10" rx="3" ry="6" fill="#abc"/>
+ <circle cx="40" cy="10" r="8" fill="none" stroke="black"/>
+ <ellipse cx="70" cy="10" rx="12" ry="5"/>
+ <line x1="0" y1="25" x2="100" y2="30" stroke="#f00" stroke-width="0.5"/>
+ <polyline points="0,40 10,35 20,45 30,35 40,45" fill="none" stroke="teal"/>
+ <polygon points="50 40 60 30 70 40 65 50 55 50" fill-rule="evenodd" fill="gold"/>
+ <path d="M0 60 L10 50 H20 V60 Z m5 -5 l5 5 h5 v-5 z" fill="purple"/>
+ <path d="M30 60 Q35 45 40 60 T50 60 t10 0 q5 -10 10 0" fill="none" stroke="navy"/>
+ <path d="M70 60 C72 50 78 50 80 60 S88 70 90 60 c2 -5 4 -5 6 0 s4 5 6 0" fill="none" stroke="olive"/>
+ <path d="M10 75 A10 6 30 1 0 30 75 a5 5 0 0 1 10 0 A8 8 0 0 0 60 75 A0 0 0 0 0 70 75" fill="none" stroke="maroon"/>
+ <path d="M80,75l5-5,5,5-5,5zM90 70 100 80 90 80z" fill="#0f08"/>
+ <path d="M 1e3 1e3 L 1.5e-2 .5e1 L -.5 -.5"/>
+</svg>

@@ -9,20 +9,23 @@
  * (head, hhea, maxp, hmtx, cmap's Unicode subtables, loca, glyf, kern,
  * GPOS's pair adjustments, name, OS/2 and post), following each
  * offset, count and search the readers do, so that no read of theirs
- * leaves the table it belongs to. Each glyph is walked as stb_truetype
- * turns it into vertices: every byte its points take lies inside the
- * glyph, each contour as stb_truetype walks it ends inside the point
- * list, a compound holds glyphs that exist, places them by offsets
- * (stb_truetype asserts on matched points), nests no deeper than
- * SK_FONTCHECK_MAX_DEPTH, never holds itself, and moves no value past
- * a short's range. The outline stb_truetype draws, its curves'
- * extremes and its components where it places them, stays inside the
- * glyph's box, but for the unit font tools round by (two for a
- * compound), so it rasterizes inside the bitmap the box sizes; and a
- * glyph whose box tops out at or below the baseline draws nothing
- * above it, where stb_truetype's rasterizer would assert. Fonts made
- * by tools that box only the points on the curve, as DejaVu's are,
- * are refused. A font that passes opens with sk_font_open. */
+ * leaves the table it belongs to, and no 32-bit number it reads, as an
+ * int shifted 24 places, overflows (cmap's groups, kern's pairs, which
+ * also limit such a font to 32768 glyphs). Each glyph is walked as
+ * stb_truetype turns it into vertices: every byte its points take
+ * lies inside the glyph, each contour as stb_truetype walks it ends
+ * inside the point list, a compound holds glyphs that exist, places
+ * them by offsets (stb_truetype asserts on matched points), nests no
+ * deeper than SK_FONTCHECK_MAX_DEPTH, never holds itself, and moves no
+ * value past a short's range. The outline stb_truetype draws, its
+ * curves' extremes and its components where it places them, stays
+ * inside the glyph's box, but for the unit font tools round by (two
+ * for a compound), so it rasterizes inside the bitmap the box sizes;
+ * and a glyph whose box tops out at or below the baseline draws
+ * nothing above it, where stb_truetype's rasterizer would assert.
+ * Fonts made by tools that box only the points on the curve, as
+ * DejaVu's are, are refused. A font that passes opens with
+ * sk_font_open. */
 #ifndef SK_TEXT_FONTCHECK_H
 #define SK_TEXT_FONTCHECK_H
 

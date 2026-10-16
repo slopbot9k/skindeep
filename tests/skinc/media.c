@@ -183,14 +183,17 @@ static void test_png_forms(void)
     CHECK_INT(sk_image_row(&im, 0)[1], 0);
     sk_image_free(&im);
     free(png);
-    /* A palette of 2 bits with alpha from tRNS, as deck's sliders. */
+    /* A palette of 2 bits with alpha from tRNS, as deck's sliders; an
+     * index past the palette is opaque black, not what stb_image's
+     * stack held. */
     const uint8_t plte[9] = {255, 0, 0, 0, 255, 0, 0, 0, 255}, trns[2] = {128, 0};
-    const uint8_t idx[1] = {0x1B}; /* 0, 1, 2, then padding */
-    png = sk_test_png(3, 1, 3, 2, false, idx, 1, plte, 3, trns, 2, &n);
+    const uint8_t idx[1] = {0x1B}; /* 0, 1, 2, 3 */
+    png = sk_test_png(4, 1, 3, 2, false, idx, 1, plte, 3, trns, 2, &n);
     im = decoded(png, n);
     CHECK_PX(im, 0, 0, SK_RGBA(255, 0, 0, 128));
     CHECK_INT(sk_image_row(&im, 0)[1], 0);
     CHECK_PX(im, 2, 0, SK_RGB(0, 0, 255));
+    CHECK_PX(im, 3, 0, SK_RGB(0, 0, 0));
     sk_image_free(&im);
     free(png);
 }
@@ -399,6 +402,26 @@ static void test_svg_fit(void)
     CHECK(sk_svg_render(s, 10, 10, 2.5f, 0, &im, NULL));
     CHECK_INT(im.w, 25);
     CHECK_INT(sk_image_row(&im, 24)[24], sk_premul(SK_RGB(255, 0, 0)));
+    sk_image_free(&im);
+    sk_svg_free(s);
+}
+
+/* A style sheet's blocks as editors write them, a ';' and a space or
+ * a line before the '}' or the element's end, which nanosvg's style
+ * parser read a byte past (found by fuzzing; the sanitizers of make
+ * debug see it), still apply. */
+static void test_svg_styles(void)
+{
+    sk_svg *s = parsed("<svg xmlns='http://www.w3.org/2000/svg' width='4' height='4'>\n"
+                       "<style>\n .a { fill: #00ff00; }\n .b { fill: #0000ff; \n</style>\n"
+                       "<rect class='a' width='2' height='4'/><rect class='b' x='2' width='2' height='4' "
+                       "style='opacity: 1; '/></svg>");
+    if (!s)
+        return;
+    sk_image im;
+    CHECK(sk_svg_render(s, 4, 4, 1, 0, &im, NULL));
+    CHECK_INT(sk_image_row(&im, 1)[0], sk_premul(SK_RGB(0, 255, 0)));
+    CHECK_INT(sk_image_row(&im, 1)[3], sk_premul(SK_RGB(0, 0, 255)));
     sk_image_free(&im);
     sk_svg_free(s);
 }
@@ -614,9 +637,28 @@ static void test_sound_refusals(void)
         CHECK(!sk_media_sound(ogg, n, 0.25, &s, &err));
         CHECK_SAID(err, "is longer than 0.25 seconds");
         CHECK(!sk_media_sound(ogg, 100, 0, &s, &err));
-        CHECK_SAID(err, "is not an Ogg Vorbis file stb_vorbis can read");
+        CHECK_SAID(err, "is not an Ogg Vorbis file whose comment header stb_vorbis can read");
         ogg[0x1C + 11] ^= 0xff; /* the identification header's channels */
         CHECK(!sk_media_sound(ogg, n, 0, &s, &err));
+        sk_buf_clear(&err);
+        ogg[0x1C + 11] ^= 0xff;
+        /* The comment header, on the second page: a count of comments
+         * past its bytes, which stb_vorbis would allocate for and then,
+         * the allocation failed, read the list it never made (found by
+         * fuzzing); and the vendor string's length past them. */
+        size_t body = 58 + 27 + ogg[58 + 26], vendor = body + 7, count = vendor + 4 + (ogg[vendor] | ogg[vendor + 1] << 8);
+        uint8_t keep[4];
+        memcpy(keep, ogg + count, 4);
+        memcpy(ogg + count, "\x00\x00\x00\x40", 4);
+        CHECK(!sk_media_sound(ogg, n, 0, &s, &err));
+        CHECK_SAID(err, "is not an Ogg Vorbis file whose comment header stb_vorbis can read");
+        memcpy(ogg + count, keep, 4);
+        ogg[vendor + 3] = 0x7f;
+        CHECK(!sk_media_sound(ogg, n, 0, &s, &err));
+        CHECK_SAID(err, "comment header");
+        ogg[vendor + 3] = 0;
+        CHECK(sk_media_sound(ogg, n, 0, &s, &err));
+        sk_sound_free(&s);
         free(ogg);
     }
     sk_buf_free(&err);
@@ -624,6 +666,6 @@ static void test_sound_refusals(void)
 
 const sk_test sk_suite_skinc_media[] = {
     T(test_sniff),         T(test_skin_images), T(test_png_forms),   T(test_jpeg_orientation),
-    T(test_image_refusals), T(test_skin_svgs),  T(test_svg_fit),     T(test_svg_refusals),
+    T(test_image_refusals), T(test_skin_svgs),  T(test_svg_fit),     T(test_svg_styles), T(test_svg_refusals),
     T(test_skin_sounds),   T(test_wav_forms),   T(test_sound_refusals), {0},
 };

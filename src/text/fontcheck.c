@@ -740,10 +740,23 @@ static bool check_cmap(checker *c)
                 return fail(c, "has a cmap format 6 subtable past the end of its table");
             break;
         case 12:
-        case 13:
+        case 13: {
             if (!inside(s, 0, 16) || !inside(s, 16, 12 * (uint64_t)u32(s.p + 12)))
                 return fail(c, "has a cmap format %u subtable past the end of its table", format);
+            /* stb_truetype reads these as (p[0] << 24) + ..., an int
+             * shift that overflows from 2^31: codes are Unicode's and
+             * glyphs 16 bits, far below. */
+            uint32_t groups = u32(s.p + 12);
+            if (!spend(c, groups))
+                return too_costly(c);
+            for (uint32_t k = 0; k < groups; k++) {
+                const uint8_t *g = s.p + 16 + 12 * k;
+                if (u32(g) > 0x10FFFF || u32(g + 4) > 0x10FFFF || u32(g + 8) > 0xFFFF)
+                    return fail(c, "has a cmap format %u group past Unicode's codes or the glyphs' 16 bits",
+                                format);
+            }
             break;
+        }
         default:
             break;
         }
@@ -756,7 +769,9 @@ static bool check_cmap(checker *c)
 /* ---- kern and GPOS ---- */
 
 /* stb_truetype reads the first subtable, when it is horizontal and of
- * format 0: a binary search of its pairs. */
+ * format 0: a binary search of its pairs, each read as the first
+ * glyph shifted 16 places in an int, and the glyph sought the same, so
+ * neither may reach 32768. */
 static bool check_kern(checker *c)
 {
     table t = c->kern;
@@ -770,8 +785,15 @@ static bool check_kern(checker *c)
         return fail(c, "has a kern table too short for its first subtable");
     if (u16(t.p + 8) != 1)
         return true;
-    if (!inside(t, 0, 18) || !inside(t, 18, 6 * (uint64_t)u16(t.p + 10)))
+    uint32_t pairs = u16(t.p + 10);
+    if (!inside(t, 0, 18) || !inside(t, 18, 6 * (uint64_t)pairs))
         return fail(c, "has a kern table whose pairs run past its end");
+    if (c->glyphs > 32768)
+        return fail(c, "has a kern table and more than 32768 glyphs, which stb_truetype cannot search");
+    for (uint32_t k = 0; k < pairs; k++)
+        if (u16(t.p + 18 + 6 * k) >= 32768)
+            return fail(c, "has a kern pair of glyph %u, past the 32768 stb_truetype can search",
+                        (unsigned)u16(t.p + 18 + 6 * k));
     return true;
 }
 

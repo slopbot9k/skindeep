@@ -103,6 +103,38 @@ static bool jpeg_segment(const uint8_t *d, size_t n, size_t *at, uint8_t *marker
     return false;
 }
 
+/* A PNG with each PLTE chunk of fewer than 256 entries made 256, the
+ * new ones opaque black, or NULL when it has none. stb_image keeps its
+ * palette on the stack, uninitialized past the entries the file gives,
+ * and reads an index past them from there. It checks no CRC, so the
+ * new chunks keep the old ones' places and carry none. */
+static uint8_t *full_palette(const uint8_t *d, size_t n, size_t *out_n)
+{
+    sk_buf out = {0};
+    size_t done = 0;
+    for (size_t at = 8; at + 12 <= n;) {
+        size_t len = be32(d + at);
+        if (len > n - at - 12)
+            break;
+        if (!memcmp(d + at + 4, "PLTE", 4) && len < 768 && len % 3 == 0) {
+            static const uint8_t head[8] = {0, 0, 3, 0, 'P', 'L', 'T', 'E'};
+            sk_buf_append(&out, d + done, at - done);
+            sk_buf_append(&out, head, 8);
+            if (len)
+                sk_buf_append(&out, d + at + 8, len);
+            for (size_t i = len; i < 768 + 4; i++)
+                sk_buf_putc(&out, 0);
+            done = at + 12 + len;
+        }
+        at += 12 + len;
+    }
+    if (!out.len)
+        return NULL;
+    sk_buf_append(&out, d + done, n - done);
+    *out_n = out.len;
+    return (uint8_t *)out.ptr;
+}
+
 /* The size a PNG's IHDR or a JPEG's frame header gives, read here so a
  * size past the limits is refused before stb_image allocates for it;
  * false when neither is found, which stb_image then reports. */
@@ -211,14 +243,9 @@ static void orient(const uint8_t *rgba, int w, int h, int o, sk_image *out)
     }
 }
 
-bool sk_media_image(const uint8_t *data, size_t n, size_t max_pixels, sk_image *out, sk_buf *err)
+static bool decode(const uint8_t *data, size_t n, sk_media_type type, size_t max_pixels, sk_image *out,
+                   sk_buf *err)
 {
-    memset(out, 0, sizeof *out);
-    if (!max_pixels)
-        max_pixels = SK_MEDIA_MAX_PIXELS;
-    sk_media_type type = sk_media_sniff(data, n);
-    if (type != SK_MEDIA_PNG && type != SK_MEDIA_JPEG)
-        return say(err, "is not a PNG or a JPEG");
     const char *kind = type == SK_MEDIA_PNG ? "PNG" : "JPEG";
     if (n > INT_MAX)
         return say(err, "is a %s larger than stb_image reads", kind);
@@ -241,6 +268,21 @@ bool sk_media_image(const uint8_t *data, size_t n, size_t max_pixels, sk_image *
     orient(rgba, w, h, type == SK_MEDIA_JPEG ? exif_orientation(data, n) : 1, out);
     stbi_image_free(rgba);
     return true;
+}
+
+bool sk_media_image(const uint8_t *data, size_t n, size_t max_pixels, sk_image *out, sk_buf *err)
+{
+    memset(out, 0, sizeof *out);
+    if (!max_pixels)
+        max_pixels = SK_MEDIA_MAX_PIXELS;
+    sk_media_type type = sk_media_sniff(data, n);
+    if (type != SK_MEDIA_PNG && type != SK_MEDIA_JPEG)
+        return say(err, "is not a PNG or a JPEG");
+    size_t padded_n = 0;
+    uint8_t *padded = type == SK_MEDIA_PNG ? full_palette(data, n, &padded_n) : NULL;
+    bool ok = padded ? decode(padded, padded_n, type, max_pixels, out, err) : decode(data, n, type, max_pixels, out, err);
+    free(padded);
+    return ok;
 }
 
 /* ---- SVG ---- */
@@ -272,6 +314,8 @@ static bool bounded(const float *v, size_t n, float bound)
             return false;
     return true;
 }
+
+#define MAX_MITER 100.0f
 
 /* A transform's entries at most this far from 0: a gradient's
  * coordinates, its inverse applied to a pixel's, then stay far from
@@ -316,13 +360,24 @@ sk_svg *sk_svg_parse(const uint8_t *data, size_t n, sk_buf *err)
         say(err, "is an SVG larger than %zu bytes", SK_MEDIA_MAX_SVG_BYTES);
         return NULL;
     }
-    /* nanosvg parses a C string, in place. */
-    char *text = sk_xmalloc(n + 1);
-    if (n)
-        memcpy(text, data, n);
-    text[n] = 0;
-    NSVGimage *im = nsvgParse(text, "px", 96.0f);
-    free(text);
+    /* nanosvg parses a C string, in place. Its style parser, given a
+     * declaration list that ends in a ';' and spaces, or in spaces
+     * alone, reads a byte past the string's end. A style sheet's block
+     * it copies into a string of its own, ending at its '}' or where
+     * the element's text ends, at the next '<' or the end: so the
+     * spaces before each of those go. Two NULs end the text, for an
+     * attribute's value that runs to the end. */
+    sk_buf text = {0};
+    sk_buf_reserve(&text, n + 2);
+    for (size_t i = 0; i <= n; i++) {
+        if (i == n || data[i] == '}' || data[i] == '<')
+            while (text.len && (text.ptr[text.len - 1] == ' ' || text.ptr[text.len - 1] == '\t' ||
+                                text.ptr[text.len - 1] == '\n' || text.ptr[text.len - 1] == '\r'))
+                text.len--;
+        sk_buf_putc(&text, i < n ? (char)data[i] : 0);
+    }
+    NSVGimage *im = nsvgParse(text.ptr, "px", 96.0f);
+    sk_buf_free(&text);
     if (!im) {
         say(err, "is not an SVG nanosvg can read");
         return NULL;
@@ -334,13 +389,18 @@ sk_svg *sk_svg_parse(const uint8_t *data, size_t n, sk_buf *err)
         return NULL;
     }
     size_t points = 0;
-    for (const NSVGshape *sh = im->shapes; sh; sh = sh->next)
+    for (NSVGshape *sh = im->shapes; sh; sh = sh->next) {
         if (!shape_ok(sh, &points)) {
             say(err, "is an SVG with a shape nanosvg cannot draw: a number past all reason, or more than %d points",
                 SK_MEDIA_MAX_SVG_POINTS);
             nsvgDelete(im);
             return NULL;
         }
+        /* A miter's spike is at most this many half widths long, so a
+         * stroke ends near its path, inside the coordinates drawable()
+         * allows: past it, a corner too sharp to see the difference. */
+        sh->miterLimit = fminf(sh->miterLimit, MAX_MITER);
+    }
     sk_svg *s = sk_xcalloc(1, sizeof *s);
     s->im = im;
     s->w = im->width;
@@ -477,16 +537,84 @@ static int16_t to16(float v)
     return (int16_t)lrintf(v * 32767.0f);
 }
 
-/* All its memory from one buffer: stb_vorbis takes what a stream's
- * headers ask for from it, or fails, and never from the stack. The
- * skins' sounds need about 100 KiB. */
+/* All its memory from one buffer, zeroed: stb_vorbis takes what a
+ * stream's headers ask for from it, or fails, and never from the
+ * stack. coffee's sounds take 177,456 bytes to set up and 4 KiB a
+ * frame. */
 #define VORBIS_ARENA (4 << 20)
+/* The most the comment header's text may take. */
+#define VORBIS_COMMENTS (1 << 20)
+
+/* The second packet of an Ogg stream, the Vorbis comment header, as
+ * far as the data holds it: its segments gathered across the pages in
+ * their order in the data, as stb_vorbis reads them. */
+static void ogg_comments(const uint8_t *d, size_t n, sk_buf *out)
+{
+    int packet = 0;
+    for (size_t at = 0; at + 27 <= n && memcmp(d + at, "OggS", 4) == 0;) {
+        size_t segs = d[at + 26], body = at + 27 + segs;
+        if (body > n)
+            return;
+        for (size_t s = 0; s < segs; s++) {
+            size_t len = d[at + 27 + s];
+            if (packet == 1 && body < n)
+                sk_buf_append(out, d + body, SK_MIN(len, n - body));
+            body += len;
+            if (len < 255 && packet++ == 1)
+                return;
+        }
+        at = body;
+    }
+}
+
+/* stb_vorbis reads the comment header's lengths with no check, reading
+ * one past the data as 0xFFFFFFFF, allocates what they say, and its
+ * cleanup after an allocation that failed reads the list it could not
+ * make. So each length must lie inside the header, its text too, and
+ * all of it fit in VORBIS_COMMENTS, which the arena always has. */
+/* A 32-bit length at *at, *at then past it; false past the data. */
+static bool take_len(const uint8_t *p, size_t len, size_t *at, uint64_t *v)
+{
+    if (*at + 4 > len)
+        return false;
+    *v = le32(p + *at);
+    *at += 4;
+    return true;
+}
+
+static bool comments_ok(const uint8_t *d, size_t n)
+{
+    sk_buf packet = {0};
+    ogg_comments(d, n, &packet);
+    const uint8_t *p = (const uint8_t *)packet.ptr;
+    size_t len = packet.len, at = 7;
+    uint64_t v = 0, count = 0, total = 0;
+    /* The packet's type and "vorbis", the vendor string, the count of
+     * comments, then each. */
+    bool ok = len >= at && take_len(p, len, &at, &v) && v <= len - at;
+    if (ok) {
+        at += (size_t)v;
+        total = v + 8;
+        ok = take_len(p, len, &at, &count) && count <= (len - at) / 4;
+        total += 8 * count;
+    }
+    for (uint64_t i = 0; ok && i < count; i++) {
+        ok = take_len(p, len, &at, &v) && v <= len - at;
+        if (ok)
+            at += (size_t)v;
+        total += v + 8;
+    }
+    sk_buf_free(&packet);
+    return ok && total <= VORBIS_COMMENTS;
+}
 
 static bool vorbis(const uint8_t *data, size_t n, double max_seconds, sk_sound *out, sk_buf *err)
 {
     if (n > INT_MAX)
         return say(err, "is an Ogg Vorbis file larger than stb_vorbis reads");
-    stb_vorbis_alloc arena = {sk_xmalloc(VORBIS_ARENA), VORBIS_ARENA};
+    if (!comments_ok(data, n))
+        return say(err, "is not an Ogg Vorbis file whose comment header stb_vorbis can read");
+    stb_vorbis_alloc arena = {sk_xcalloc(VORBIS_ARENA, 1), VORBIS_ARENA};
     int e = 0;
     stb_vorbis *v = stb_vorbis_open_memory(data, (int)n, &e, &arena);
     if (!v) {
