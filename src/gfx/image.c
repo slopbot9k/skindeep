@@ -28,13 +28,17 @@ sk_color sk_unpremul(sk_px p)
     return a << 24 | SK_MIN(r, 255u) << 16 | SK_MIN(g, 255u) << 8 | SK_MIN(b, 255u);
 }
 
+/* A rectangle's far edges, x + w and y + h, may pass INT_MAX: they are
+ * worked out in long long. */
 sk_rect sk_rect_intersect(sk_rect a, sk_rect b)
 {
-    int x0 = SK_MAX(a.x, b.x), y0 = SK_MAX(a.y, b.y);
-    int x1 = SK_MIN(a.x + a.w, b.x + b.w), y1 = SK_MIN(a.y + a.h, b.y + b.h);
+    long long x0 = SK_MAX(a.x, b.x), y0 = SK_MAX(a.y, b.y);
+    long long x1 = SK_MIN((long long)a.x + a.w, (long long)b.x + b.w);
+    long long y1 = SK_MIN((long long)a.y + a.h, (long long)b.y + b.h);
     if (x1 <= x0 || y1 <= y0)
-        return sk_rect_make(x0, y0, 0, 0);
-    return sk_rect_make(x0, y0, x1 - x0, y1 - y0);
+        return sk_rect_make((int)x0, (int)y0, 0, 0);
+    /* No wider than a or b, so within int. */
+    return sk_rect_make((int)x0, (int)y0, (int)(x1 - x0), (int)(y1 - y0));
 }
 
 sk_rect sk_rect_union(sk_rect a, sk_rect b)
@@ -43,9 +47,12 @@ sk_rect sk_rect_union(sk_rect a, sk_rect b)
         return b;
     if (sk_rect_empty(b))
         return a;
-    int x0 = SK_MIN(a.x, b.x), y0 = SK_MIN(a.y, b.y);
-    int x1 = SK_MAX(a.x + a.w, b.x + b.w), y1 = SK_MAX(a.y + a.h, b.y + b.h);
-    return sk_rect_make(x0, y0, x1 - x0, y1 - y0);
+    long long x0 = SK_MIN(a.x, b.x), y0 = SK_MIN(a.y, b.y);
+    long long x1 = SK_MAX((long long)a.x + a.w, (long long)b.x + b.w);
+    long long y1 = SK_MAX((long long)a.y + a.h, (long long)b.y + b.h);
+    /* Wider than INT_MAX stops there. */
+    return sk_rect_make((int)x0, (int)y0, (int)SK_MIN(x1 - x0, (long long)INT32_MAX),
+                        (int)SK_MIN(y1 - y0, (long long)INT32_MAX));
 }
 
 void sk_image_init(sk_image *im, int w, int h)

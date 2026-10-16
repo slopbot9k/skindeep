@@ -45,4 +45,9 @@
     X(monitor)                                                               \
     X(dashboard)                                                             \
     X(foreign)                                                               \
-    X(headless)
+    X(headless)                                                              \
+    X(gfx_image)                                                             \
+    X(gfx_blend)                                                             \
+    X(gfx_draw)                                                              \
+    X(gfx_path)                                                              \
+    X(gfx_stroke)
