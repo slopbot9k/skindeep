@@ -613,7 +613,9 @@ static int by_top(const void *a, const void *b)
  * active ones at the band its top is in, and leaves after its bottom. */
 static void raster(edge *e, size_t n, sk_rect region, sk_fill_rule rule, const sink *s)
 {
-    qsort(e, n, sizeof *e, by_top);
+    /* glibc's qsort takes no null array, even for no elements. */
+    if (n)
+        qsort(e, n, sizeof *e, by_top);
     size_t *active = sk_xreallocarray(NULL, n ? n : 1, sizeof *active);
     for (int x = 0; x < region.w; x += MAX_DIM) {
         band b = {0};
