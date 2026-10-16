@@ -243,7 +243,7 @@ static void rig_init(rig *r, bool mac, sk_mouse_protocol p, sk_mouse_encoding en
     sk_term_mouse_init(&r->m);
     r->m.mac = mac;
     r->modes = (sk_term_input_modes){.mouse = p, .mouse_encoding = enc};
-    r->out = (sk_buf){0};
+    sk_buf_clear(&r->out); /* r starts zeroed; a second init keeps the buffer */
 }
 
 /* The bytes so far, cleared. */
@@ -256,7 +256,7 @@ static const char *take(rig *r, char *buf, size_t cap)
 
 static void test_cells_from_points(void)
 {
-    rig r;
+    rig r = {0};
     char b[256];
     rig_init(&r, false, SK_MOUSE_VT200, SK_MOUSE_ENC_SGR);
     CHECK(sk_term_mouse_down(&r.m, &r.modes, &grid, 0, 0, 1, 0, &r.out));
@@ -278,7 +278,7 @@ static void test_cells_from_points(void)
 
 static void test_protocol_none_takes_nothing(void)
 {
-    rig r;
+    rig r = {0};
     rig_init(&r, false, SK_MOUSE_NONE, SK_MOUSE_ENC_SGR);
     CHECK(!sk_term_mouse_down(&r.m, &r.modes, &grid, 10, 10, 1, 0, &r.out));
     CHECK(!sk_term_mouse_move(&r.m, &r.modes, &grid, 20, 10, true, 0, &r.out));
@@ -291,7 +291,7 @@ static void test_protocol_none_takes_nothing(void)
 /* X10: the press only; its release and drags are the app's. */
 static void test_x10_press_only(void)
 {
-    rig r;
+    rig r = {0};
     char b[256];
     rig_init(&r, false, SK_MOUSE_X10, SK_MOUSE_ENC_DEFAULT);
     CHECK(sk_term_mouse_down(&r.m, &r.modes, &grid, 20, 20, 1, SK_MOD_CTRL, &r.out));
@@ -306,7 +306,7 @@ static void test_x10_press_only(void)
  * grid and only under ANY. */
 static void test_drags_and_moves(void)
 {
-    rig r;
+    rig r = {0};
     char b[512];
     rig_init(&r, false, SK_MOUSE_DRAG, SK_MOUSE_ENC_SGR);
     CHECK(!sk_term_mouse_move(&r.m, &r.modes, &grid, 4, 4, true, 0, &r.out));
@@ -341,7 +341,7 @@ static void test_drags_and_moves(void)
  * app; a fourth button is taken but not reported. */
 static void test_untaken_press(void)
 {
-    rig r;
+    rig r = {0};
     char b[256];
     rig_init(&r, false, SK_MOUSE_DRAG, SK_MOUSE_ENC_SGR);
     CHECK(sk_term_mouse_down(&r.m, &r.modes, &grid, 4, 4, 4, 0, &r.out));
@@ -366,7 +366,7 @@ static void test_untaken_press(void)
  * is reported with its modifier. */
 static void test_shift_selects_on_linux(void)
 {
-    rig r;
+    rig r = {0};
     char b[256];
     rig_init(&r, false, SK_MOUSE_DRAG, SK_MOUSE_ENC_SGR);
     CHECK(!sk_term_mouse_down(&r.m, &r.modes, &grid, 4, 4, 1, SK_MOD_SHIFT, &r.out));
@@ -386,7 +386,7 @@ static void test_shift_selects_on_linux(void)
  * whether there is a report. */
 static void test_wheel_reports(void)
 {
-    rig r;
+    rig r = {0};
     char b[256];
     rig_init(&r, false, SK_MOUSE_VT200, SK_MOUSE_ENC_SGR);
     CHECK(sk_term_mouse_wheel(&r.m, &r.modes, &grid, 4, 4, 1, false, 0, &r.out));
@@ -408,7 +408,7 @@ static void test_wheel_reports(void)
  * under 50 points. 10 points at 17 a cell is 0.176 of a line. */
 static void test_wheel_trackpad(void)
 {
-    rig r;
+    rig r = {0};
     rig_init(&r, false, SK_MOUSE_ANY, SK_MOUSE_ENC_SGR);
     int reports = 0;
     for (int i = 1; i <= 12; i++) {
@@ -434,7 +434,7 @@ static void test_wheel_trackpad(void)
 static void test_wheel_notches_by_platform(void)
 {
     static const bool mac_reports[] = {false, true, true, false, true, true, false, true};
-    rig r;
+    rig r = {0};
     rig_init(&r, true, SK_MOUSE_VT200, SK_MOUSE_ENC_SGR);
     for (size_t i = 0; i < SK_LEN(mac_reports); i++) {
         size_t before = r.out.len;
@@ -455,7 +455,7 @@ static void test_wheel_notches_by_platform(void)
  * event that adds up to a line; the normal screen scrolls its view. */
 static void test_wheel_without_reports(void)
 {
-    rig r;
+    rig r = {0};
     char b[256];
     rig_init(&r, false, SK_MOUSE_NONE, SK_MOUSE_ENC_DEFAULT);
     CHECK(!sk_term_mouse_wheel(&r.m, &r.modes, &grid, 4, 4, 1, false, 0, &r.out));
