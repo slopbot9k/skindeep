@@ -7,7 +7,7 @@
 #include "../core/loop.h"
 #include "../platform/pty.h"
 #include "clitab.h"
-#include "runtime.h"
+#include "launch.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -238,26 +238,6 @@ static void restore(headless *h)
     h->raw = false;
 }
 
-/* SKINNED_RELAY, else the skinned-relay beside this program: the file
- * itself, past any link to it, as bin/skinned's readlink -f found it. */
-static char *relay_path(const sk_envp *env, const char *self)
-{
-    const char *given = sk_envp_get(env, "SKINNED_RELAY");
-    if (given && *given)
-        return sk_xstrdup(given);
-    char *found = strchr(self, '/') ? sk_xstrdup(self) : sk_resolve_command(self, sk_envp_get(env, "PATH"));
-    char *me = found ? realpath(found, NULL) : NULL;
-    free(found);
-    if (!me)
-        return NULL;
-    char *slash = strrchr(me, '/');
-    if (slash)
-        *slash = 0;
-    char *p = sk_path_join(me, "skinned-relay");
-    free(me);
-    return p;
-}
-
 /* The record the terminal's tests replay (phase 4): a header line, then
  * the tab's bytes, with FILE.resizes beside it. */
 static bool start_record(headless *h, const char *path, int tab, int cols, int rows)
@@ -278,54 +258,22 @@ static bool start_record(headless *h, const char *path, int tab, int cols, int r
     return h->resizes != NULL;
 }
 
-/* <dir>/headless-<pid>.<suffix> */
-static char *named(const char *dir, const char *suffix)
-{
-    sk_buf name = {0};
-    sk_buf_printf(&name, "headless-%ld.%s", (long)getpid(), suffix);
-    char *p = sk_path_join(dir, name.ptr);
-    sk_buf_free(&name);
-    return p;
-}
-
 int sk_headless_run(const sk_options *o, const sk_headless_opts *ho, const sk_envp *env, const char *self)
 {
-    char *file = sk_resolve_command(o->cmd[0], sk_envp_get(env, "PATH"));
-    if (!file) {
-        sk_tell("%s: command not found", o->cmd[0]);
-        return SK_EXIT_NOT_FOUND;
-    }
-    int status = SK_EXIT_APP;
-    sk_env e;
-    sk_env_current(&e);
-    char *state = sk_path_state(&e), *root = sk_path_runtime_base(&e);
-    char *store = sk_runtime_settings_dir(&e);
-    char *run_dir = sk_runtime_create(&e, sk_envp_get(env, "SKINNED_RUNTIME_DIR"));
-    char *metrics = NULL, *log_path = NULL, *relay = NULL;
-    FILE *mf = NULL;
-    int log_fd = -1;
-    if (!state || !root || !store || !run_dir || sk_mkdirs(state, 0700) != 0) {
-        sk_tell("cannot make the app's directories: %s", strerror(errno));
-        goto out;
-    }
-    metrics = ho->metrics ? sk_xstrdup(ho->metrics) : named(state, "jsonl");
-    log_path = named(state, "log");
-    log_fd = open(log_path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0600);
-    mf = fopen(metrics, "a");
-    if (log_fd < 0 || !mf) {
-        sk_tell("cannot write %s: %s", log_fd < 0 ? log_path : metrics, strerror(errno));
-        goto out;
+    sk_launch l;
+    int status = sk_launch_open(&l, o, env, self, "headless");
+    if (status)
+        return status;
+    status = SK_EXIT_APP;
+    char *metrics = ho->metrics ? sk_xstrdup(ho->metrics) : sk_launch_named(&l, "headless", "jsonl");
+    FILE *mf = fopen(metrics, "a");
+    if (!mf) {
+        sk_tell("cannot write %s: %s", metrics, strerror(errno));
+        free(metrics);
+        sk_launch_close(&l);
+        return status;
     }
     fcntl(fileno(mf), F_SETFD, FD_CLOEXEC);
-    sk_log_set_fd(log_fd);
-    relay = relay_path(env, self);
-    /* As process.cwd() throws in app/main.js: a folder that is gone is
-     * not the root's. */
-    char cwd[PATH_MAX];
-    if (!getcwd(cwd, sizeof cwd)) {
-        sk_tell("cannot open the tab: %s", strerror(errno));
-        goto out;
-    }
 
     headless h;
     memset(&h, 0, sizeof h);
@@ -334,10 +282,10 @@ int sk_headless_run(const sk_options *o, const sk_headless_opts *ho, const sk_en
     h.status = SK_EXIT_APP;
     h.record_fd = -1;
     h.cli.loop = h.loop;
-    h.cli.run_dir = run_dir;
-    h.cli.root = root;
-    h.cli.store = store;
-    h.cli.relay = relay;
+    h.cli.run_dir = l.run_dir;
+    h.cli.root = l.root;
+    h.cli.store = l.store;
+    h.cli.relay = l.relay;
     h.cli.statusline = o->statusline;
     h.cli.spawned = on_spawn;
     h.cli.output = on_output;
@@ -353,7 +301,7 @@ int sk_headless_run(const sk_options *o, const sk_headless_opts *ho, const sk_en
     tc.ended = on_ended;
     tc.ud = &h;
     tc.cmd = o->cmd;
-    tc.file = file;
+    tc.file = l.file;
     tc.env = env;
     tc.home = sk_envp_get(env, "HOME");
     h.tabs = sk_tabs_new(&tc);
@@ -364,17 +312,16 @@ int sk_headless_run(const sk_options *o, const sk_headless_opts *ho, const sk_en
     memset(&spec, 0, sizeof spec);
     spec.kind = SK_TAB_CLI;
     spec.cmd = o->cmd;
-    spec.cwd = cwd;
+    spec.cwd = l.cwd;
     char *err = NULL;
     sk_tab *tab = sk_tabs_add(h.tabs, &spec, -1, &err);
     int cols = 80, rows = 24;
     sk_pty_get_size(0, &cols, &rows);
     if (tab && ho->record && !start_record(&h, ho->record, tab->id, cols, rows)) {
         sk_tell("cannot write %s: %s", ho->record, strerror(errno));
-        status = SK_EXIT_APP;
     } else if (tab) {
-        sk_tell("metrics in %s, log in %s", metrics, log_path);
-        sk_log("headless: %s, relay %s", file, relay ? relay : "(none)");
+        sk_tell("metrics in %s, log in %s", metrics, l.log_path);
+        sk_log("headless: %s, relay %s", l.file, l.relay ? l.relay : "(none)");
         raw_mode(&h);
         h.stdin_id = sk_loop_watch(h.loop, 0, POLLIN, on_stdin, &h);
         sk_loop_signal(h.loop, SIGWINCH, on_winch, &h);
@@ -399,23 +346,8 @@ int sk_headless_run(const sk_options *o, const sk_headless_opts *ho, const sk_en
         close(h.record_fd);
     if (h.resizes)
         fclose(h.resizes);
-
-out:
-    if (mf)
-        fclose(mf);
-    if (log_fd >= 0) {
-        sk_log_set_fd(2);
-        close(log_fd);
-    }
-    if (run_dir)
-        sk_runtime_remove(run_dir);
-    free(file);
-    free(state);
-    free(root);
-    free(store);
-    free(run_dir);
+    fclose(mf);
     free(metrics);
-    free(log_path);
-    free(relay);
+    sk_launch_close(&l);
     return status;
 }
