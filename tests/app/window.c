@@ -443,6 +443,68 @@ static void test_closing_the_window_hangs_up(void)
     CHECK_INT(finish(&a, 5000), 128 + SIGHUP);
 }
 
+/* tabs.js: a dragged tab goes before the first other tab whose middle
+ * lies right of the pointer. Three tabs of cat: the first dragged past
+ * the second's middle, not the third's. */
+static void test_a_tab_dragged_along_the_strip(void)
+{
+    app a;
+    const char *cmd[] = {"cat", NULL};
+    if (!start(&a, cmd))
+        return;
+    sk_arena ar;
+    sk_arena_init(&ar, 0);
+    const sk_json *p = NULL;
+    for (int k = 0; k < 2; k++)
+        ok(&a, "{\"op\":\"key\",\"key\":\"t\",\"mods\":" APP_MODS "}");
+    for (uint64_t until = sk_now_ms() + 5000; sk_now_ms() < until; sk_test_sleep_ms(50)) {
+        p = probe(&a, &ar);
+        if (len_of(sk_json_dig(p, "window", "tabs", NULL)) == 3)
+            break;
+    }
+    const sk_json *tabs = sk_json_dig(p, "window", "tabs", NULL);
+    CHECK_INT(len_of(tabs), 3);
+    if (len_of(tabs) == 3) {
+        double one = -1, two = -1, three = -1;
+        sk_json_as_number(sk_json_at(tabs, 0), &one);
+        sk_json_as_number(sk_json_at(tabs, 1), &two);
+        sk_json_as_number(sk_json_at(tabs, 2), &three);
+        /* From the first tab's middle to just past the second's. */
+        const sk_json *r = sk_json_dig(p, "window", "tab_rects", NULL);
+        double x0 = -1, w0 = 0, x1 = -1, w1 = 0;
+        sk_json_as_number(sk_json_at(sk_json_at(r, 0), 0), &x0);
+        sk_json_as_number(sk_json_at(sk_json_at(r, 0), 1), &w0);
+        sk_json_as_number(sk_json_at(sk_json_at(r, 1), 0), &x1);
+        sk_json_as_number(sk_json_at(sk_json_at(r, 1), 1), &w1);
+        CHECK(x0 == 0 && w0 > 0 && x1 > 0 && w1 > 0);
+        double from = x0 + w0 / 2, to = x1 + w1 / 2 + 5;
+        char req[128];
+        snprintf(req, sizeof req, "{\"op\":\"mouse\",\"kind\":\"down\",\"x\":%g,\"y\":34}", from);
+        ok(&a, req);
+        snprintf(req, sizeof req, "{\"op\":\"mouse\",\"kind\":\"move\",\"x\":%g,\"y\":34}", from + 10);
+        ok(&a, req);
+        snprintf(req, sizeof req, "{\"op\":\"mouse\",\"kind\":\"move\",\"x\":%g,\"y\":40}", to);
+        ok(&a, req);
+        snprintf(req, sizeof req, "{\"op\":\"mouse\",\"kind\":\"up\",\"x\":%g,\"y\":40}", to);
+        ok(&a, req);
+        double first = -1;
+        for (uint64_t until = sk_now_ms() + 5000; sk_now_ms() < until; sk_test_sleep_ms(50)) {
+            p = probe(&a, &ar);
+            sk_json_as_number(sk_json_at(sk_json_dig(p, "window", "tabs", NULL), 0), &first);
+            if (first == two)
+                break;
+        }
+        tabs = sk_json_dig(p, "window", "tabs", NULL);
+        double at[3] = {-1, -1, -1};
+        for (size_t i = 0; i < 3; i++)
+            sk_json_as_number(sk_json_at(tabs, i), &at[i]);
+        CHECK(at[0] == two && at[1] == one && at[2] == three);
+    }
+    sk_arena_free(&ar);
+    ok(&a, "{\"op\":\"hangup\"}");
+    CHECK_INT(finish(&a, 5000), 128 + SIGHUP);
+}
+
 /* The probe once its drop-down shows menu, or with menu NULL once it is
  * closed; NULL after ms. */
 static const sk_json *wait_menu(app *a, sk_arena *ar, const char *menu, int ms)
@@ -598,6 +660,7 @@ const sk_test sk_suite_window[] = {
     T(test_a_url_in_the_text_is_a_link),
     T(test_a_tab_dragged_out_gets_its_own_window),
     T(test_closing_the_window_hangs_up),
+    T(test_a_tab_dragged_along_the_strip),
     T(test_the_menus),
     {0},
 };

@@ -46,7 +46,7 @@ extern char **environ;
 #define CLOSE_W 16
 #define MARK_W 7
 #define CHROME_PX 12    /* the strips' font size */
-#define DRAG_PX 4       /* points a press moves before it is a drag */
+#define DRAG_PX 5       /* points a press moves before it is a drag (tabs.js) */
 #define BLINK_MS 600
 #define SYNC_HOLD_MS 1000
 #define POLL_MS 2000    /* session.js's pollMs for the strip */
@@ -1858,11 +1858,14 @@ static bool chord(gwin *w, const sk_key_event *k)
     if (m != app)
         return false;
     switch (k->base) {
+    /* A held chord opens or closes one tab, as tabs.js ignores the
+     * repeats of all but Tab. */
     case 't':
-        post_tab(g, do_new_tab, 0, win);
+        if (!k->repeat)
+            post_tab(g, do_new_tab, 0, win);
         return true;
     case 'w':
-        if (t)
+        if (t && !k->repeat)
             post_tab(g, do_close, t->id, win);
         return true;
     case 'c':
@@ -2121,11 +2124,25 @@ static bool strip_mouse(gwin *w, const sk_event *ev)
         if (!w->dragging && fabs(ev->mouse.x - w->drag_x0) < DRAG_PX)
             return true;
         w->dragging = true;
-        if (ev->mouse.y < IDENTITY_H || ev->mouse.y >= IDENTITY_H + TABS_H)
-            return true;
-        int i = strip_hit(w, ev->mouse.x, IDENTITY_H + 1, &on_close);
-        if (i >= 0 && (size_t)i < w->snap.n && w->snap.tabs[i].id != w->drag_tab)
-            post_tab(g, do_move, w->drag_tab, i);
+        /* tabs.js: the tab goes before the first other tab whose middle
+         * lies right of the pointer, wherever the pointer is. */
+        sk_image *f = sk_window_frame(w->win);
+        sk_rect *rects = sk_xcalloc(w->snap.n + 1, sizeof *rects), *closes = sk_xcalloc(w->snap.n + 1, sizeof *closes);
+        tab_layout(w, f->w, rects, closes);
+        double x = ev->mouse.x * sk_window_scale(w->win);
+        long at = 0, now = -1;
+        for (size_t i = 0; i < w->snap.n; i++) {
+            if (w->snap.tabs[i].id == w->drag_tab) {
+                now = (long)i;
+                continue;
+            }
+            if (x >= rects[i].x + rects[i].w / 2.0)
+                at++;
+        }
+        free(rects);
+        free(closes);
+        if (now >= 0 && at != now)
+            post_tab(g, do_move, w->drag_tab, (int)at);
         return true;
     }
     if (ev->type == SK_EV_MOUSE_UP) {
@@ -2476,6 +2493,23 @@ static void window_json(sk_jw *jw, gwin *w)
     sk_jw_array(jw);
     for (size_t i = 0; i < w->snap.n; i++)
         sk_jw_int(jw, w->snap.tabs[i].id);
+    sk_jw_array_end(jw);
+    /* Each tab's left and width in the strip, in points. */
+    sk_jw_key(jw, SK_STR("tab_rects"));
+    sk_jw_array(jw);
+    if (tabs_shown(w)) {
+        sk_rect *rects = sk_xcalloc(w->snap.n + 1, sizeof *rects), *closes = sk_xcalloc(w->snap.n + 1, sizeof *closes);
+        tab_layout(w, sk_window_frame(w->win)->w, rects, closes);
+        double s = sk_window_scale(w->win);
+        for (size_t i = 0; i < w->snap.n; i++) {
+            sk_jw_array(jw);
+            sk_jw_number(jw, rects[i].x / s);
+            sk_jw_number(jw, rects[i].w / s);
+            sk_jw_array_end(jw);
+        }
+        free(rects);
+        free(closes);
+    }
     sk_jw_array_end(jw);
     sk_jw_object_end(jw);
 }
