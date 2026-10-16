@@ -60,4 +60,10 @@
     X(gfx_blend)                                                             \
     X(gfx_draw)                                                              \
     X(gfx_path)                                                              \
-    X(gfx_stroke)
+    X(gfx_stroke)                                                            \
+    X(width)                                                                 \
+    X(keys)                                                                  \
+    X(keys_mouse)                                                            \
+    X(keys_paste)                                                            \
+    X(links)                                                                 \
+    X(links_buffer)

@@ -1,0 +1,3 @@
+%http://%41.com http://127.1/ http://[1::2::3]/ http://u@/ httpS://x http://a@b@c/
+http://münchen.de/ http://[::ffff:1.2.3.4]/ http://xn--abc-/ http://h.com:65536/
+http:///x http://:80 http://0x7f.0.0.1/ http://1.2.3.4.5/ http://[::1]
