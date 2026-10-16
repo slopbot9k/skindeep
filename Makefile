@@ -2,7 +2,7 @@
 # macOS ships as /usr/bin/make and Linux distributions ship as make, and
 # the system C compiler.
 #
-#   make              build the library and the tests
+#   make              build the library, the tests, skinned-relay and hookdump
 #   make test         run the tests (T=json runs the json suite)
 #   make debug        run the tests under AddressSanitizer and UBSan
 #   make fuzz         build the fuzz targets
@@ -48,13 +48,19 @@ endif
 
 COMPILE = $(CC) $(CSTD) $(WARN) $(DEFS) $(OPT) $(CFLAGS) -MMD -MP
 
-LIB_SRC := $(wildcard src/base/*.c src/core/*.c)
+# Code for one system lives in src/platform/<os>/ (decision 0036).
+PLATFORM := $(if $(filter Darwin,$(OS)),macos,linux)
+
+LIB_SRC := $(wildcard src/base/*.c src/core/*.c src/platform/$(PLATFORM)/*.c) src/relay/relay.c
 LIB_OBJ := $(LIB_SRC:%.c=$(BUILD)/%.o)
 LIB := $(BUILD)/libsk.a
 
-TEST_SRC := $(wildcard tests/*.c tests/base/*.c tests/core/*.c)
+TEST_SRC := $(wildcard tests/*.c tests/base/*.c tests/core/*.c tests/relay/*.c)
 TEST_OBJ := $(TEST_SRC:%.c=$(BUILD)/%.o)
 TEST_BIN := $(BUILD)/tests/run
+
+RELAY := $(BUILD)/skinned-relay
+HOOKDUMP := $(BUILD)/hookdump
 
 FUZZ_TARGETS := json http utf8 base64
 FUZZ_BINS := $(FUZZ_TARGETS:%=$(BUILD)/fuzz-%)
@@ -64,7 +70,7 @@ FUZZ_SECONDS ?= 30
 .PHONY: all test debug fuzz fuzz-run clean
 .SECONDARY:
 
-all: $(LIB) $(TEST_BIN)
+all: $(LIB) $(TEST_BIN) $(RELAY) $(HOOKDUMP)
 
 $(BUILD)/%.o: %.c
 	@mkdir -p $(dir $@)
@@ -80,8 +86,14 @@ $(LIB): $(LIB_OBJ)
 $(TEST_BIN): $(TEST_OBJ) $(LIB)
 	$(CC) $(OPT) $(LDFLAGS) -o $@ $(TEST_OBJ) $(LIB) $(LDLIBS)
 
-test: $(TEST_BIN)
-	./$(TEST_BIN) $(T)
+$(RELAY): $(BUILD)/src/relay/main.o $(LIB)
+	$(CC) $(OPT) $(LDFLAGS) -o $@ $^ $(LDLIBS)
+
+$(HOOKDUMP): $(BUILD)/tools/hookdump.o $(LIB)
+	$(CC) $(OPT) $(LDFLAGS) -o $@ $^ $(LDLIBS)
+
+test: $(TEST_BIN) $(RELAY)
+	SK_RELAY_BIN=$(RELAY) ./$(TEST_BIN) $(T)
 
 debug:
 	$(MAKE) MODE=debug test
@@ -105,4 +117,4 @@ endif
 clean:
 	rm -rf build
 
--include $(LIB_OBJ:.o=.d) $(TEST_OBJ:.o=.d)
+-include $(LIB_OBJ:.o=.d) $(TEST_OBJ:.o=.d) $(BUILD)/src/relay/main.d $(BUILD)/tools/hookdump.d

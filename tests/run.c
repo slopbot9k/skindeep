@@ -4,9 +4,11 @@
 #include "test.h"
 
 #include <dirent.h>
+#include <signal.h>
 #include <stdarg.h>
 #include <stdlib.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 #define SK_SUITE_ENTRY(name) {#name, sk_suite_##name},
@@ -87,6 +89,13 @@ char *sk_test_read(const char *path, size_t *len)
     return b.ptr;
 }
 
+void sk_test_sleep_ms(long ms)
+{
+    struct timespec ts = {ms / 1000, (ms % 1000) * 1000000};
+    while (nanosleep(&ts, &ts) != 0)
+        ;
+}
+
 static bool selected(int argc, char **argv, const char *full)
 {
     if (argc < 2)
@@ -100,6 +109,8 @@ static bool selected(int argc, char **argv, const char *full)
 int main(int argc, char **argv)
 {
     int run = 0, failed = 0;
+    /* As the relays do: a peer that went away is an error, not a death. */
+    signal(SIGPIPE, SIG_IGN);
     for (size_t s = 0; s < SK_LEN(suites); s++) {
         for (const sk_test *t = suites[s].tests; t->name; t++) {
             const char *short_name = strncmp(t->name, "test_", 5) == 0 ? t->name + 5 : t->name;

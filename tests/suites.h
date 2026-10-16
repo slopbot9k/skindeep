@@ -10,4 +10,5 @@
     X(base64)                                                                \
     X(http)                                                                  \
     X(paths)                                                                 \
-    X(loop)
+    X(loop)                                                                  \
+    X(relay)

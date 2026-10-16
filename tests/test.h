@@ -26,6 +26,7 @@ void sk_test_fail(const char *file, int line, const char *fmt, ...) SK_PRINTF(3,
 const char *sk_test_tmpdir(void);
 /* The whole file, NUL-terminated, or NULL. */
 char *sk_test_read(const char *path, size_t *len);
+void sk_test_sleep_ms(long ms);
 
 #define CHECK(c)                                                             \
     do {                                                                     \

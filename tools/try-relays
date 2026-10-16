@@ -1,0 +1,52 @@
+#!/bin/sh
+# Tries the C relays on a real Claude Code session before the app exists
+# (phase 1 of decision 0036). Run `make` first, then:
+#
+#   tools/try-relays [claude arguments...]
+#
+# It starts hookdump as the window, writes a settings file whose hooks and
+# statusline run build/release/skinned-relay, as the app's would, and runs
+# claude with it and your arguments. Every post the relays made is then in
+# the posts.log it names at the end. Your own statusline is not chained
+# during the trial.
+set -eu
+
+here=$(cd "$(dirname "$0")/.." && pwd)
+relay=$here/build/release/skinned-relay
+dump=$here/build/release/hookdump
+if [ ! -x "$relay" ] || [ ! -x "$dump" ]; then
+    echo "try-relays: run make first" >&2
+    exit 2
+fi
+
+root=$(mktemp -d "${TMPDIR:-/tmp}/sk-relays.XXXXXX")
+log=$root/posts.log
+settings=$root/settings.json
+
+# The events app/metrics/claude/settings.js hooks.
+events="PreToolUse PostToolUse PostToolUseFailure SubagentStart SubagentStop UserPromptSubmit Stop PreCompact PostCompact SessionStart Notification"
+hook="'$relay' hook '$root'"
+{
+    printf '{\n "hooks": {\n'
+    first=1
+    for e in $events; do
+        [ $first -eq 1 ] || printf ',\n'
+        first=0
+        printf '  "%s": [{"hooks": [{"type": "command", "command": "%s", "timeout": 1}]}]' "$e" "$hook"
+    done
+    printf '\n },\n "statusLine": {"type": "command", "command": "%s", "padding": 0}\n}\n' \
+        "'$relay' statusline '$root' -"
+} > "$settings"
+
+# hookdump links root/pids/<this shell's pid>: claude runs below it.
+"$dump" "$root" $$ > "$log" 2>&1 &
+dump_pid=$!
+trap 'kill $dump_pid 2>/dev/null; wait $dump_pid 2>/dev/null || true' EXIT INT TERM
+sleep 1
+
+status=0
+claude --settings "$settings" "$@" || status=$?
+printf '\ntry-relays: claude exited %s. The posts the relays made: %s\n' "$status" "$log"
+printf 'try-relays: hooks %s, statuslines %s\n' \
+    "$(grep -c '^POST /hook ' "$log" || true)" "$(grep -c '^POST /statusline ' "$log" || true)"
+exit "$status"

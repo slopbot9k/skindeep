@@ -4,15 +4,9 @@
 #include <poll.h>
 #include <pthread.h>
 #include <signal.h>
-#include <time.h>
 #include <unistd.h>
 
-static void sleep_ms(long ms)
-{
-    struct timespec ts = {ms / 1000, (ms % 1000) * 1000000};
-    while (nanosleep(&ts, &ts) != 0)
-        ;
-}
+#define sleep_ms sk_test_sleep_ms
 
 typedef struct {
     int count;
