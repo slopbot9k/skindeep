@@ -695,6 +695,13 @@ static void ui_snapshot(void *ud)
     gui *g = pair[0];
     snapshot *s = pair[1];
     free(pair);
+    /* No tab left is the app's end, which quits on its own: the windows
+     * stay as they were until then. */
+    if (!s->n) {
+        free(s->wins);
+        free(s);
+        return;
+    }
     for (size_t i = 0; i < g->wins.len;) {
         gwin *w = g->wins.ptr[i];
         bool kept = false;
