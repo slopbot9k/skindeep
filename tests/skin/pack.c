@@ -24,6 +24,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+#include <strings.h>
 
 /* ---- Styles compared field by field ---- */
 
@@ -775,6 +776,44 @@ static bool small_pack(unsigned what, sk_buf *out)
         }                                                                                                              \
     } while (0)
 
+/* The writer refuses dir, saying want, file and all. */
+static void writer_refuses(const char *dir, const char *rel, const char *want)
+{
+    sk_front f;
+    sk_diags d = {0};
+    sk_buf out = {0};
+    unsigned char hash[32] = {0};
+    CHECK(sk_front_run(&f, dir, &d));
+    CHECK(!sk_pack_write(&f, hash, &out, &d));
+    sk_buf line = {0};
+    sk_buf_printf(&line, "%s/%s: (file): %s", dir, rel, want);
+    bool said = false;
+    for (size_t i = 0; i < d.items.len; i++)
+        said = said || !strncmp(d.items.ptr[i], line.ptr, line.len);
+    if (!said)
+        sk_test_fail(__FILE__, __LINE__, "no \"%s\" among %zu messages", line.ptr, d.items.len);
+    sk_buf_free(&line);
+    sk_buf_free(&out);
+    sk_diags_free(&d);
+    sk_front_free(&f);
+}
+
+static void test_writer_refusals(void)
+{
+    const char *dir = small_skin(SMALL_FONT | SMALL_SOUND);
+    sk_test_write(dir, "t.ttf", "not a font at all");
+    writer_refuses(dir, "t.ttf", "");
+    dir = small_skin(SMALL_FONT);
+    sk_test_write(dir, "p.png", "not a picture");
+    writer_refuses(dir, "p.png", "is not a PNG or a JPEG");
+    dir = small_skin(SMALL_FONT | SMALL_SOUND);
+    sk_test_write(dir, "s.wav", "RIFF....WAVEnothing");
+    writer_refuses(dir, "s.wav", "is a WAV file without its fmt and data chunks");
+    dir = small_skin(SMALL_FONT);
+    sk_test_write(dir, "m.svg", "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"0\" height=\"0\"/>");
+    writer_refuses(dir, "m.svg", "is an SVG of 0 x 0");
+}
+
 /* ---- Packs taken apart and put together ---- */
 
 typedef struct {
@@ -1433,5 +1472,6 @@ const sk_test sk_suite_skin_pack[] = {
     T(test_phosphor),      T(test_all_widgets),    T(test_same_bytes),    T(test_shipped),
     T(test_small),         T(test_header_checks),  T(test_section_checks), T(test_style_checks),
     T(test_media_checks),  T(test_layer_checks),   T(test_newer_minor),   T(test_seeds),
+    T(test_writer_refusals),
     {0},
 };

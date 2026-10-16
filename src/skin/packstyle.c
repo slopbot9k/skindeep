@@ -550,27 +550,26 @@ static bool in_range(float v, int range)
     }
 }
 
+/* The readers write their value whether or not they succeed, 0 when
+ * the payload ends. */
 static bool get_u8(cur *k, uint8_t *v)
 {
     const uint8_t *p = take(k, 1);
-    if (p)
-        *v = p[0];
+    *v = p ? p[0] : 0;
     return p != NULL;
 }
 
 static bool get_u16(cur *k, uint16_t *v)
 {
     const uint8_t *p = take(k, 2);
-    if (p)
-        *v = sk_le16(p);
+    *v = p ? sk_le16(p) : 0;
     return p != NULL;
 }
 
 static bool get_u32(cur *k, uint32_t *v)
 {
     const uint8_t *p = take(k, 4);
-    if (p)
-        *v = sk_le32(p);
+    *v = p ? sk_le32(p) : 0;
     return p != NULL;
 }
 
@@ -593,9 +592,9 @@ static bool get_bool(cur *k, bool *v)
 static bool get_f32(cur *k, int range, const char *what, float *v)
 {
     const uint8_t *p = take(k, 4);
+    *v = p ? sk_lef32(p) : 0;
     if (!p)
         return false;
-    *v = sk_lef32(p);
     return in_range(*v, range) || bad(k, "%s %g is out of its range", what, (double)*v);
 }
 
