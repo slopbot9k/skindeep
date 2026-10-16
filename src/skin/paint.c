@@ -871,9 +871,8 @@ static void emit_line(void *data, double s, double e)
 }
 
 /* A path's coverage filled under m, in colour. */
-static void fill_path(painter *P, canvas *cv, const sk_path *p, const sk_xform *m, sk_frect user_bounds, sk_px c)
+static void fill_path(canvas *cv, const sk_path *p, const sk_xform *m, sk_frect user_bounds, sk_px c)
 {
-    (void)P;
     if (!c)
         return;
     sk_rect r = sk_rect_intersect(pt_round_out(sk_frect_map(m, user_bounds)), cv->clip);
@@ -921,7 +920,7 @@ static void svg_shape(painter *P, canvas *cv, uint32_t i, float alpha)
         bounds = (sk_frect){g->v[0] - g->v[2], g->v[1] - g->v[2], 2 * g->v[2], 2 * g->v[2]};
     }
     if (s->fill_kind == SK_PAINT_COLOR && g->kind != SK_SVG_LINE)
-        fill_path(P, cv, p, &m, bounds, pt_color(s->fill, alpha));
+        fill_path(cv, p, &m, bounds, pt_color(s->fill, alpha));
     float sw = sk_layout_len(&s->stroke_width, 100);
     if (s->stroke_kind == SK_PAINT_COLOR && sw > 0) {
         sk_path *src = p;
@@ -938,7 +937,7 @@ static void svg_shape(painter *P, canvas *cv, uint32_t i, float alpha)
         sk_path_stroke(out, src, sw, cap_of(s->linecap), join_of(s->linejoin), 4);
         float pad = sw * 2 + 1;
         sk_frect sb = {bounds.x - pad, bounds.y - pad, bounds.w + 2 * pad, bounds.h + 2 * pad};
-        fill_path(P, cv, out, &m, sb, pt_color(s->stroke, alpha));
+        fill_path(cv, out, &m, sb, pt_color(s->stroke, alpha));
         sk_path_free(out);
         if (dashed)
             sk_path_free(dashed);
@@ -1033,7 +1032,7 @@ static void paint_own(painter *P, canvas *cv, uint32_t i)
     pt_border(P, cv, i);
 }
 
-static void paint_context(painter *P, canvas *cv, uint32_t e, uint32_t root);
+static void paint_context(painter *P, canvas *cv, uint32_t e);
 static void paint_svg_node(painter *P, canvas *cv, uint32_t i);
 
 static void paint_flow(painter *P, canvas *cv, uint32_t x, uint32_t root)
@@ -1076,7 +1075,7 @@ static void paint_entry(painter *P, canvas *cv, uint32_t root, uint32_t e)
         clip_box(P, cv, chain[--n]);
     if (!sk_rect_empty(cv->clip)) {
         if (makes_context(P, e, root)) {
-            paint_context(P, cv, e, root);
+            paint_context(P, cv, e);
         } else {
             paint_own(P, cv, e);
             paint_flow(P, cv, e, root);
@@ -1120,6 +1119,23 @@ static bool svg_needs_upright(const painter *P, uint32_t i)
 
 static void svg_inner(painter *P, canvas *cv, uint32_t i);
 
+/* Whether a box of ctx's stacking context, below x, blends with what
+ * is under it: CSS makes every stacking context an isolated group, so
+ * ctx must then be painted apart for the blend to stop at it. */
+static bool blends_inside(const painter *P, uint32_t ctx, uint32_t x)
+{
+    for (uint32_t c = P->nodes[x].first; c != SK_PACK_NONE; c = P->nodes[c].next) {
+        const sk_lbox *b = &P->l->boxes[c];
+        if (!b->generated || b->svg_content)
+            continue;
+        if (P->nodes[c].style->mix_blend != SK_MIX_NORMAL)
+            return true;
+        if (!makes_context(P, c, ctx) && blends_inside(P, ctx, c))
+            return true;
+    }
+    return false;
+}
+
 /* Draws box e's content, group effects applied: inner paints it. */
 static void with_effects(painter *P, canvas *cv, uint32_t e, void (*inner)(painter *, canvas *, uint32_t))
 {
@@ -1130,7 +1146,8 @@ static void with_effects(painter *P, canvas *cv, uint32_t e, void (*inner)(paint
     sk_xform m = pt_map(P, cv, e);
     bool turned = !pt_square_map(&m) && (!b->svg_content || svg_needs_upright(P, e));
     bool filtered = s->nfilter && !filters_idle(s);
-    bool group = s->opacity < 1 || filtered || s->nclip || s->mix_blend != SK_MIX_NORMAL || turned;
+    bool isolated = !b->svg_content && (s->isolate || blends_inside(P, e, e));
+    bool group = s->opacity < 1 || filtered || s->nclip || s->mix_blend != SK_MIX_NORMAL || turned || isolated;
     if (!group) {
         inner(P, cv, e);
         return;
@@ -1225,9 +1242,8 @@ static void with_effects(painter *P, canvas *cv, uint32_t e, void (*inner)(paint
     sk_image_free(&im);
 }
 
-static void paint_context(painter *P, canvas *cv, uint32_t e, uint32_t root)
+static void paint_context(painter *P, canvas *cv, uint32_t e)
 {
-    (void)root;
     with_effects(P, cv, e, paint_inner);
 }
 

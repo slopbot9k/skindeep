@@ -772,8 +772,7 @@ static void place_svg(lay *L, uint32_t i, const sk_xform *xf, uint32_t clipper)
         sk_lbox *b = &L->l->boxes[c];
         b->node = c;
         b->svg_content = true;
-        b->generated = generated(L, c) || (L->nodes[c].style && L->nodes[c].style->display != SK_DISPLAY_NONE &&
-                                            L->nodes[c].kind > SK_EL_SVG && L->nodes[c].kind < SK_EL_BEFORE);
+        b->generated = generated(L, c);
         if (!b->generated)
             continue;
         b->cb = i;

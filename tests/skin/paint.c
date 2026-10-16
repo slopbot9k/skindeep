@@ -236,7 +236,8 @@ static void test_groups(void)
     sk_tskin s;
     TSKIN(&s,
           "[" RECT("op", 0, 0, 40, 40) ", " RECT("br", 50, 0, 20, 20) ", " RECT("gr", 80, 0, 20, 20) ", " RECT(
-              "ds", 110, 0, 20, 20) ", " RECT("cp", 0, 50, 40, 40) ", " RECT("mx", 50, 50, 20, 20) "]",
+              "ds", 110, 0, 20, 20) ", " RECT("cp", 0, 50, 40, 40) ", " RECT("mx", 50, 50, 20, 20) ", " RECT(
+              "under", 80, 50, 20, 20) ", " RECT("iso", 80, 50, 20, 20) "]",
           NULL,
           ".op { opacity: 0.5 }\n"
           ".op::before, .op::after { content: \"\"; position: absolute; top: 0; bottom: 0; width: 30px; background: #f00 }\n"
@@ -246,10 +247,15 @@ static void test_groups(void)
           ".ds { background: #f00; filter: drop-shadow(10px 0 0 #00f) }\n"
           ".cp { background: #0f0; clip-path: polygon(0 0, 100% 0, 0 100%) }\n"
           ".mx { background: #ff0 }\n"
-          ".mx::after { content: \"\"; position: absolute; inset: 0; background: #0ff; mix-blend-mode: multiply }\n",
+          ".mx::after { content: \"\"; position: absolute; inset: 0; background: #0ff; mix-blend-mode: multiply }\n"
+          ".under { background: #ff0 } .iso { z-index: 1 }\n"
+          ".iso::after { content: \"\"; position: absolute; inset: 0; background: #0ff; mix-blend-mode: multiply }\n",
           NULL);
     sk_image im;
     sk_tskin_paint(&s, (sk_frect){0, 0, 150, 100}, 1, &im);
+    /* A stacking context isolates a blend: nothing of its own under
+     * the cyan, so cyan it stays. */
+    CHECK_COLOR(pixel(&im, 90, 60), 0xff00ffffu, 0);
     /* Opacity groups: where the two overlap, still half. */
     CHECK_WITHIN(alpha(pixel(&im, 20, 20)), 128, 1);
     CHECK_WITHIN(alpha(pixel(&im, 5, 20)), 128, 1);

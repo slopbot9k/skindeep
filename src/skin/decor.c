@@ -148,8 +148,10 @@ static void build_lut(grad *gr, const sk_css_gradient *g, float len, float dev_l
         float d = (k + 1 < n ? t[k + 1] : t[k]) - t[k];
         float f = d > 0 ? (tt - t[k]) / d : 1;
         f = fminf(fmaxf(f, 0), 1);
-        if (tt >= t[n - 1])
-            f = 1, premul_f(g->stops[n - 1].color, b);
+        if (tt >= t[n - 1]) {
+            f = 1;
+            premul_f(g->stops[n - 1].color, b);
+        }
         for (int q = 0; q < 4; q++)
             c[q] = a[q] + (b[q] - a[q]) * f;
         gr->lut[i] = pack_f(c);

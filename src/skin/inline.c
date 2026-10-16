@@ -407,6 +407,7 @@ static float lay_line(lay *L, uint32_t b, atom *a, size_t s, size_t e, float cw,
         lw += a[k].kind == A_BOX ? margin_w(L, a[k].node) : a[k].kind == A_GLYPH ? a[k].adv : 0;
     /* An overflowing line ends in an ellipsis where the container says so. */
     atom ell;
+    memset(&ell, 0, sizeof ell);
     bool cut = false;
     if (lw > cw + 0.01f && bs->text_overflow == SK_TO_ELLIPSIS && bs->overflow_x != SK_OVERFLOW_VISIBLE) {
         ell = ellipsis(L, b);
