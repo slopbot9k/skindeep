@@ -15,4 +15,11 @@
     X(bus)                                                                    \
     X(tail)                                                                   \
     X(carry)                                                                  \
+    X(argv)                                                                   \
+    X(options)                                                                \
+    X(identity)                                                               \
+    X(runtime)                                                                \
+    X(appsettings)                                                            \
+    X(background)                                                             \
+    X(tabs)                                                                   \
     X(agent)
