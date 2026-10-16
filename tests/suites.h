@@ -51,4 +51,8 @@
     X(fontset)                                                               \
     X(glyphcache)                                                            \
     X(textrun)                                                               \
-    X(ui_macos)
+    X(ui_macos)                                                              \
+    X(x11)                                                                   \
+    X(x11_keys)                                                              \
+    X(x11_ui)                                                                \
+    X(ui_x11)

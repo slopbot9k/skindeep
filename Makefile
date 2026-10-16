@@ -87,7 +87,7 @@ FUZZ_SECONDS ?= 30
 .PHONY: all test debug fuzz fuzz-run clean macdemo windemo
 .SECONDARY:
 
-all: $(LIB) $(TEST_BIN) $(RELAY) $(HOOKDUMP) $(SKINNED) $(BUILD)/qoi2png
+all: $(LIB) $(TEST_BIN) $(RELAY) $(HOOKDUMP) $(SKINNED) $(BUILD)/qoi2png $(BUILD)/windemo
 
 $(BUILD)/%.o: %.c
 	@mkdir -p $(dir $@)
