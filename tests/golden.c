@@ -1,5 +1,6 @@
 #include "golden.h"
 
+#include "../src/base/paths.h"
 #include "test.h"
 
 #include <stdlib.h>

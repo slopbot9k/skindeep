@@ -1325,6 +1325,32 @@ static void test_the_clipboard_holds_text(void)
     close_ui();
 }
 
+/* New tab...'s folder picker as it is made, never shown here: it takes
+ * one folder and no file, hidden folders when asked, its title, and the
+ * folder it starts in. */
+static void test_the_folder_panel_chooses_one_folder(void)
+{
+    if (!open_ui())
+        return;
+    sk_picker_opts o = {"Other profile", "/usr", true};
+    id panel = sk_macos_folder_panel(&o);
+    CHECK(panel != nil);
+    if (panel) {
+        CHECK(sk_msg_bool(panel, "canChooseDirectories"));
+        CHECK(!sk_msg_bool(panel, "canChooseFiles"));
+        CHECK(!sk_msg_bool(panel, "allowsMultipleSelection"));
+        CHECK(!sk_msg_bool(panel, "canCreateDirectories"));
+        CHECK(sk_msg_bool(panel, "showsHiddenFiles"));
+        CHECK_STR(sk_utf8(sk_msg(panel, "message")), "Other profile");
+        id url = sk_msg(panel, "directoryURL");
+        CHECK_STR(url ? sk_utf8(sk_msg(url, "path")) : NULL, "/usr");
+    }
+    sk_picker_opts plain = {"Folder", NULL, false};
+    panel = sk_macos_folder_panel(&plain);
+    CHECK(panel != nil && !sk_msg_bool(panel, "showsHiddenFiles"));
+    close_ui();
+}
+
 const sk_test sk_suite_ui_macos[] = {
     T(test_a_presented_frame_reads_back_exactly),
     T(test_frames_at_scale_one_and_two),
@@ -1346,6 +1372,7 @@ const sk_test sk_suite_ui_macos[] = {
     T(test_quit_from_another_thread_ends_the_run),
     T(test_open_only_on_the_main_thread),
     T(test_the_clipboard_holds_text),
+    T(test_the_folder_panel_chooses_one_folder),
     {0},
 };
 
