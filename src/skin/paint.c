@@ -726,10 +726,13 @@ static void draw_run(painter *P, canvas *cv, const sk_lrun *run, const sk_xform 
         float sigma = fmaxf(0, sh->blur) / 2 * k;
         int reach = sk_blur_reach(sigma);
         float dx = sh->x * k, dy = sh->y * k;
+        /* As much as can blur into the clip, no more. */
         sk_rect r = run_rect(run, m, dx, dy, reach);
         sk_rect vis = sk_rect_intersect(r, cv->clip);
         if (sk_rect_empty(vis))
             continue;
+        r = sk_rect_intersect(r, sk_rect_make(cv->clip.x - reach, cv->clip.y - reach, cv->clip.w + 2 * reach,
+                                              cv->clip.h + 2 * reach));
         uint8_t *cov = run_cover(P, run, m, dx, dy, r);
         sk_blur_a8(cov, r.w, r.h, r.w, sigma);
         pt_shader sh_ = {c, NULL, NULL};
@@ -739,8 +742,8 @@ static void draw_run(painter *P, canvas *cv, const sk_lrun *run, const sk_xform 
     sk_px c = pt_color(color, alpha);
     if (!c)
         return;
-    sk_rect r = run_rect(run, m, 0, 0, 0);
-    if (sk_rect_empty(sk_rect_intersect(r, cv->clip)))
+    sk_rect r = sk_rect_intersect(run_rect(run, m, 0, 0, 0), cv->clip);
+    if (sk_rect_empty(r))
         return;
     uint8_t *cov = run_cover(P, run, m, 0, 0, r);
     pt_shader sh_ = {c, NULL, NULL};
@@ -1144,9 +1147,19 @@ static void with_effects(painter *P, canvas *cv, uint32_t e, void (*inner)(paint
     if (turned) {
         sk_frect lf = b->ink;
         lf = (sk_frect){lf.x * k, lf.y * k, lf.w * k, lf.h * k};
-        at = pt_round_out(lf);
+        /* No more of it than the clip, mapped back upright, shows. */
+        sk_xform minv;
+        if (!sk_xform_invert(&m, &minv))
+            return;
+        sk_xform up = {k, 0, 0, k, 0, 0};
+        up = sk_xform_mul(&up, &minv);
+        sk_frect seen = sk_frect_map(&up, (sk_frect){(float)cv->clip.x, (float)cv->clip.y, (float)cv->clip.w,
+                                                     (float)cv->clip.h});
+        float pad = 3 * k * (b->ink.w > 0 ? 1 : 0) + (float)SK_MIN(sk_blur_reach(SK_BLUR_MAX_SIGMA), 64);
+        seen = (sk_frect){seen.x - pad, seen.y - pad, seen.w + 2 * pad, seen.h + 2 * pad};
+        at = pt_round_out(sk_frect_intersect(lf, seen));
         sk_xform inv;
-        if (sk_rect_empty(at) || !sk_xform_invert(&b->xform, &inv) || (double)at.w * at.h > 1e8)
+        if (sk_rect_empty(at) || !sk_xform_invert(&b->xform, &inv) || (double)at.w * at.h > (double)(1 << 24))
             return;
         sk_xform st = {k, 0, 0, k, (float)-at.x, (float)-at.y};
         base = sk_xform_mul(&st, &inv);
@@ -1154,14 +1167,20 @@ static void with_effects(painter *P, canvas *cv, uint32_t e, void (*inner)(paint
         to_canvas = sk_xform_mul(&m, &un);
     } else {
         sk_frect dev = sk_frect_map(&m, b->ink);
-        float reach = 0;
-        for (uint16_t f = 0; f < s->nfilter; f++)
-            if (s->filter[f].kind == SK_FX_BLUR || s->filter[f].kind == SK_FX_DROP_SHADOW)
-                reach += 3 * k * (s->filter[f].kind == SK_FX_BLUR ? s->filter[f].amount
-                                                                    : s->filter[f].shadow.blur + fabsf(s->filter[f].shadow.x) + fabsf(s->filter[f].shadow.y));
+        /* What lies outside the clip yet blurs or casts a shadow into
+         * it, each blur as far as its capped sigma spreads it. */
+        int reach = 0;
+        for (uint16_t f = 0; f < s->nfilter; f++) {
+            const sk_css_filter *fx = &s->filter[f];
+            if (fx->kind == SK_FX_BLUR)
+                reach += sk_blur_reach(fmaxf(0, fx->amount) * k);
+            else if (fx->kind == SK_FX_DROP_SHADOW)
+                reach += sk_blur_reach(fmaxf(0, fx->shadow.blur) / 2 * k) +
+                         (int)fminf(4096, ceilf((fabsf(fx->shadow.x) + fabsf(fx->shadow.y)) * k));
+        }
+        reach = SK_MIN(reach, 8192);
         sk_rect lim = cv->clip;
-        lim = sk_rect_make(lim.x - (int)reach - 1, lim.y - (int)reach - 1, lim.w + 2 * (int)reach + 2,
-                           lim.h + 2 * (int)reach + 2);
+        lim = sk_rect_make(lim.x - reach - 1, lim.y - reach - 1, lim.w + 2 * reach + 2, lim.h + 2 * reach + 2);
         at = sk_rect_intersect(pt_round_out(dev), lim);
         if (sk_rect_empty(at))
             return;

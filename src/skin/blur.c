@@ -191,6 +191,7 @@ static void blur_plane(uint32_t *v, uint32_t *tmp, int w, int h, float sigma)
 
 void sk_blur_a8(uint8_t *a, int w, int h, int stride, float sigma)
 {
+    sigma = fminf(sigma, SK_BLUR_MAX_SIGMA);
     if (!(sigma > 0.01f) || w <= 0 || h <= 0)
         return;
     size_t n = (size_t)w * (size_t)h;
@@ -210,6 +211,7 @@ void sk_blur_a8(uint8_t *a, int w, int h, int stride, float sigma)
 
 void sk_blur_image(sk_image *im, float sigma)
 {
+    sigma = fminf(sigma, SK_BLUR_MAX_SIGMA);
     if (!(sigma > 0.01f) || im->w <= 0 || im->h <= 0)
         return;
     int w = im->w, h = im->h;
@@ -247,6 +249,7 @@ void sk_blur_image(sk_image *im, float sigma)
 
 int sk_blur_reach(float sigma)
 {
+    sigma = fminf(sigma, SK_BLUR_MAX_SIGMA);
     if (!(sigma > 0.01f))
         return 0;
     if (sigma < 2)

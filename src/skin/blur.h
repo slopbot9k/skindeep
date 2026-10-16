@@ -7,6 +7,10 @@
 
 #include "../gfx/image.h"
 
+/* Skia's own limit: a larger sigma blurs as this one, so no blur spreads
+ * a pixel further than about 1600 pixels. */
+#define SK_BLUR_MAX_SIGMA 532.0f
+
 /* An 8-bit coverage mask of w by h, in place. */
 void sk_blur_a8(uint8_t *a, int w, int h, int stride, float sigma);
 /* A premultiplied image, every channel, in place. */

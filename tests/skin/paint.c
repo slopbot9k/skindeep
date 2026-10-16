@@ -311,6 +311,25 @@ static void test_svg_arcs_and_dashes(void)
     sk_tskin_close(&s);
 }
 
+/* Values far past any skin's: a shadow blurred and spread across the
+ * whole area, text of 3000px, a transform that flattens a box. Painted
+ * all the same, in bounded memory. */
+static void test_extreme_values(void)
+{
+    sk_tskin s;
+    TSKIN(&s, "[" RECT("x", 10, 10, 50, 50) ", " RECT("y", 100, 10, 50, 50) ", " RECT("z", 200, 10, 50, 50) "]",
+          NULL,
+          ".x { box-shadow: 0 0 100000px 100000px #f00, inset 0 0 90000px #00f; filter: blur(5000px) }\n"
+          ".y { font-size: 3000px; text-shadow: 0 0 9000px #0f0 } .y::after { content: \"WWWW\" }\n"
+          ".z { background: #fff; transform: scale(0, 1) rotate(45deg) }\n",
+          NULL);
+    sk_image im;
+    sk_tskin_paint(&s, (sk_frect){0, 0, 300, 100}, 2, &im);
+    CHECK_INT(im.w, 600);
+    sk_image_free(&im);
+    sk_tskin_close(&s);
+}
+
 static const char *FEATURES =
     "[" RECT("f1", 10, 10, 120, 60) ", " RECT("f2", 150, 10, 120, 60) ", " RECT("f3", 10, 90, 120, 60) ", " RECT(
         "f4", 150, 90, 120, 60) "]";
@@ -352,6 +371,7 @@ const sk_test sk_suite_skin_paint[] = {
     T(test_groups),
     T(test_clips_order_and_turns),
     T(test_svg_arcs_and_dashes),
+    T(test_extreme_values),
     T(test_golden_features),
     {0},
 };

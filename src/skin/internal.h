@@ -42,7 +42,14 @@ typedef struct {
     const sk_lfonts *fonts;
     lstate *st;
     uint32_t depth; /* nesting of layout calls, to stop a runaway tree */
+    /* Each node reached once from the root, no deeper than
+     * LAY_MAX_TREE: what may have a box. */
+    uint8_t *reached;
 } lay;
+
+/* No tree is laid out deeper than this: the skins' trees are a dozen
+ * deep, and every pass over a tree recurses. */
+#define LAY_MAX_TREE 200
 
 /* ---- layout.c ---- */
 

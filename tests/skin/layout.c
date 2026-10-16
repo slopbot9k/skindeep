@@ -3,6 +3,7 @@
  * their heights, ellipsis, floats, flex and grid, an svg's viewBox,
  * transforms, the clip a box is under. Each case compiles a skin of
  * its own and reads the boxes laid out. */
+#include "../../skinc/props.h"
 #include "../test.h"
 #include "util.h"
 
@@ -373,7 +374,49 @@ static void test_transform_about_origin(void)
     sk_tskin_close(&s);
 }
 
+/* A tree far deeper than any skin's, built by hand: laid out and
+ * painted, its depth cut at 200, no pass recursing past it. */
+static void test_deep_tree(void)
+{
+    enum { N = 5000 };
+    sk_css_style st;
+    sk_style_initial(&st, (sk_css_color){0, 0, 0, 1});
+    st.display = SK_DISPLAY_BLOCK;
+    st.padding[SK_LEFT] = (sk_css_len){1, 0, SK_LEN_PX};
+    st.bg_color = (sk_css_color){1, 0, 0, 0.01f};
+    sk_css_style root = st;
+    root.position = SK_POS_ABSOLUTE;
+    root.width = (sk_css_len){300, 0, SK_LEN_PX};
+    root.height = (sk_css_len){100, 0, SK_LEN_PX};
+    sk_lnode *nodes = sk_xcalloc(N, sizeof *nodes);
+    for (uint32_t i = 0; i < N; i++) {
+        nodes[i].parent = i ? i - 1 : SK_PACK_NONE;
+        nodes[i].first = i + 1 < N ? i + 1 : SK_PACK_NONE;
+        nodes[i].next = SK_PACK_NONE;
+        nodes[i].kind = SK_EL_DIV;
+        nodes[i].style = i ? &st : &root;
+        nodes[i].text = i == N - 1 ? "deep" : NULL;
+    }
+    sk_layout l;
+    sk_layout_run(&l, nodes, N, 0, 1000, 678, NULL);
+    CHECK(l.boxes[0].generated);
+    CHECK(l.boxes[200].generated);
+    CHECK(!l.boxes[201].generated);
+    CHECK_NEAR(l.boxes[200].border.x, 200);
+    sk_image im;
+    sk_image_init(&im, 300, 100);
+    sk_glyph_cache *gc = sk_glyph_cache_new(1u << 20);
+    sk_paint_env env = {&l, NULL, NULL, gc};
+    sk_paint(&im, &env, 0, 1, 0, 0);
+    CHECK(sk_image_row(&im, 50)[150] != 0);
+    sk_glyph_cache_free(gc);
+    sk_image_free(&im);
+    sk_layout_free(&l);
+    free(nodes);
+}
+
 const sk_test sk_suite_skin_layout[] = {
+    T(test_deep_tree),
     T(test_rects_and_box_sizing),
     T(test_absolute_insets_and_translate),
     T(test_shrink_to_fit_and_limits),

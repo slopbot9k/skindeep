@@ -33,7 +33,9 @@
 
 /* One element, in document order: its children are first, first->next
  * and so on, a ::before first among them and an ::after last, as
- * sk_pack_el keeps them. */
+ * sk_pack_el keeps them. The nodes must make a tree, every index below
+ * the count or SK_PACK_NONE, as a pack's loader checks; nodes deeper
+ * than 200 below the root get no box. */
 typedef struct {
     uint32_t parent, first, next; /* SK_PACK_NONE when absent */
     uint8_t kind, role;           /* sk_el_kind, sk_role */

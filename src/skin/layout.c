@@ -264,7 +264,7 @@ static bool generated(const lay *L, uint32_t i)
 {
     const sk_lnode *n = &L->nodes[i];
     const sk_css_style *s = n->style;
-    if (!s || s->display == SK_DISPLAY_NONE)
+    if (!s || s->display == SK_DISPLAY_NONE || !L->reached[i])
         return false;
     if ((n->kind == SK_EL_BEFORE || n->kind == SK_EL_AFTER) && s->content_none)
         return false;
@@ -1003,6 +1003,37 @@ const sk_font *sk_layout_face(const sk_lfonts *fonts, const sk_css_style *s)
     return f ? f : sk_font_embedded(SK_FONT_SANS);
 }
 
+/* Marks the nodes reached from root, each once, down to LAY_MAX_TREE:
+ * without recursion, so neither a deep tree nor a loop of indexes
+ * reaches the passes that recurse. */
+static void reach_tree(lay *L, uint32_t root)
+{
+    uint32_t n = L->l->n;
+    L->reached = sk_xcalloc(n ? n : 1, 1);
+    uint8_t *seen = sk_xcalloc(n ? n : 1, 1);
+    uint32_t *stack = sk_xreallocarray(NULL, n ? n : 1, sizeof *stack);
+    uint16_t *depth = sk_xreallocarray(NULL, n ? n : 1, sizeof *depth);
+    size_t top = 0;
+    stack[top] = root;
+    depth[root] = 0;
+    seen[root] = 1;
+    top++;
+    while (top) {
+        uint32_t i = stack[--top];
+        L->reached[i] = 1;
+        if (depth[i] >= LAY_MAX_TREE)
+            continue;
+        for (uint32_t c = L->nodes[i].first; c < n && !seen[c]; c = L->nodes[c].next) {
+            seen[c] = 1;
+            depth[c] = (uint16_t)(depth[i] + 1);
+            stack[top++] = c;
+        }
+    }
+    free(seen);
+    free(stack);
+    free(depth);
+}
+
 void sk_layout_run(sk_layout *l, const sk_lnode *nodes, uint32_t n, uint32_t root, float w, float h,
                    const sk_lfonts *fonts)
 {
@@ -1022,9 +1053,10 @@ void sk_layout_run(sk_layout *l, const sk_lnode *nodes, uint32_t n, uint32_t roo
     }
     if (root >= n)
         return;
-    lay L = {l, nodes, fonts, sk_xcalloc(n, sizeof(lstate)), 0};
+    lay L = {l, nodes, fonts, sk_xcalloc(n, sizeof(lstate)), 0, NULL};
     for (uint32_t i = 0; i < n; i++)
         L.st[i].baseline = NAN;
+    reach_tree(&L, root);
     if (generated(&L, root)) {
         /* The stage is an absolute box against the skin area. */
         sk_frect area = {0, 0, w, h};
@@ -1040,6 +1072,7 @@ void sk_layout_run(sk_layout *l, const sk_lnode *nodes, uint32_t n, uint32_t roo
         sk_vec_free(&L.st[i].glyphs);
     }
     free(L.st);
+    free(L.reached);
 }
 
 void sk_layout_free(sk_layout *l)

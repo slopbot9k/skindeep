@@ -69,6 +69,21 @@ static sk_glyph_ref lookup(const sk_font *face, uint8_t synth, uint32_t cp, bool
     return r;
 }
 
+/* Whether a character the style's face lacks comes from DejaVu Sans
+ * Mono first: its face is the mono one, or its stack names monospace,
+ * as a browser falls back along the stack to its monospace face. */
+static bool prefers_mono(const sk_css_style *s)
+{
+    if (s->font < 4)
+        return true;
+    for (uint16_t i = 0; i < s->nfont_family; i++) {
+        const char *f = s->font_family[i];
+        if (f && (!strcmp(f, "monospace") || !strcmp(f, "ui-monospace")))
+            return true;
+    }
+    return false;
+}
+
 void lay_line_metrics(const lay *L, uint32_t i, float *ascent, float *descent, float *line_height)
 {
     const sk_css_style *s = lay_style(L, i);
@@ -95,7 +110,7 @@ static void add_text(lay *L, atoms *A, uint32_t owner, const char *text, size_t 
 {
     const sk_css_style *s = lay_style(L, owner);
     const sk_font *face = sk_layout_face(L->fonts, s);
-    bool mono = s->font < 4;
+    bool mono = prefers_mono(s);
     uint8_t ws = s->white_space;
     float px = s->font_size, ls = s->letter_spacing;
     if (!isfinite(ls))
@@ -348,7 +363,7 @@ static atom ellipsis(lay *L, uint32_t b)
     a.kind = A_GLYPH;
     a.node = b;
     a.px = s->font_size;
-    a.ref = lookup(sk_layout_face(L->fonts, s), s->font_synth, 0x2026, s->font < 4);
+    a.ref = lookup(sk_layout_face(L->fonts, s), s->font_synth, 0x2026, prefers_mono(s));
     a.adv = sk_font_advance(a.ref.font, a.ref.glyph, a.px) + (isfinite(s->letter_spacing) ? s->letter_spacing : 0);
     return a;
 }
