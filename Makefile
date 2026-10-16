@@ -29,10 +29,12 @@ DEFS += -D_DARWIN_C_SOURCE
 endif
 LDLIBS := -lpthread -lm
 # What a program with windows links besides (platform/ui.h): AppKit and
-# CoreGraphics through the Objective-C runtime on macOS; nothing on
-# Linux, where X11 is a socket. The relays link none of it.
+# CoreGraphics through the Objective-C runtime on macOS, and AudioToolbox
+# for the sound output (platform/audio.h); nothing on Linux, where X11
+# is a socket and sound a player child. The relays link none of it.
 ifeq ($(OS),Darwin)
-UI_LIBS := -framework AppKit -framework QuartzCore -framework CoreGraphics -framework CoreFoundation -lobjc
+UI_LIBS := -framework AppKit -framework QuartzCore -framework CoreGraphics -framework CoreFoundation \
+    -framework AudioToolbox -lobjc
 endif
 SANITIZE := -fsanitize=address,undefined -fno-sanitize-recover=undefined
 
@@ -62,7 +64,8 @@ PLATFORM := $(if $(filter Darwin,$(OS)),macos,linux)
 # run against a fake server, on every system; only Linux opens windows
 # with it.
 LIB_SRC := $(wildcard src/base/*.c src/core/*.c src/agents/*.c src/agents/*/*.c src/app/*.c src/sessions/*.c \
-    src/gfx/*.c src/text/*.c src/term/*.c src/ui/*.c src/vendor/*.c src/platform/x11/*.c src/platform/$(PLATFORM)/*.c) src/relay/relay.c
+    src/gfx/*.c src/text/*.c src/term/*.c src/ui/*.c src/audio/*.c src/vendor/*.c src/platform/x11/*.c \
+    src/platform/$(PLATFORM)/*.c) src/relay/relay.c
 # The embedded DejaVu, in sk_embedded_font's order (text/text.h).
 FONTS := $(addprefix third_party/dejavu/,DejaVuSansMono.ttf DejaVuSansMono-Bold.ttf DejaVuSansMono-Oblique.ttf \
     DejaVuSansMono-BoldOblique.ttf DejaVuSans.ttf DejaVuSans-Bold.ttf)
