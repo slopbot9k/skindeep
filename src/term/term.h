@@ -101,6 +101,12 @@ typedef struct {
 
 /* Fills out[0..cols) from viewport row y. */
 void sk_term_row(sk_term *t, int y, sk_term_cell *out);
+/* Fills out[0..cols) from buffer line `line`, counted from the first of
+ * the scrollback (viewport row y is line top + y, top as
+ * sk_term_viewport gives it), sets *cols and whether the line is wrapped
+ * on from the one before, as LinkComputer reads lines.get(i).isWrapped.
+ * False past the lines, which a full ring wraps as lines.get does. */
+bool sk_term_line(sk_term *t, int line, sk_term_cell *out, int *cols, bool *wrapped);
 /* As xterm.js's getUnderlineStyle: none unless SK_FG_UNDERLINE, then the
  * extended style, dashed for a link. */
 sk_underline sk_term_cell_underline(const sk_term_cell *c);

@@ -390,11 +390,34 @@ static void lines_set_max(sk_lines *r, int max)
     r->len = keep;
 }
 
+/* A line leaves the ring. */
+static void drop(sk_lines *r, sk_line *l)
+{
+    if (l && l == r->held)
+        r->held_dropped = true;
+    else
+        sk_line_free(l);
+}
+
+void sk_lines_hold(sk_lines *r, sk_line *l)
+{
+    r->held = l;
+    r->held_dropped = false;
+}
+
+void sk_lines_release(sk_lines *r)
+{
+    if (r->held_dropped)
+        sk_line_free(r->held);
+    r->held = NULL;
+    r->held_dropped = false;
+}
+
 void sk_lines_set(sk_lines *r, int i, sk_line *l)
 {
     sk_line **s = slot(r, i);
     if (*s && *s != l)
-        sk_line_free(*s);
+        drop(r, *s);
     *s = l;
 }
 
@@ -402,7 +425,7 @@ void sk_lines_push(sk_lines *r, sk_line *l)
 {
     if (r->len == r->max) {
         sk_line **s = slot(r, 0);
-        sk_line_free(*s);
+        drop(r, *s);
         *s = l;
         r->start = (r->start + 1) % r->max;
         emit(r, SK_LINES_TRIM, 0, 1);
@@ -423,32 +446,31 @@ static sk_line *lines_pop(sk_lines *r)
 
 void sk_lines_insert(sk_lines *r, int i, sk_line *l)
 {
-    if (i > r->len)
-        i = r->len;
-    /* Full, it is inserted and the first line trimmed: the same as
-     * trimming first and inserting a line higher. */
-    bool full = r->len == r->max;
-    int at = i;
-    if (full) {
-        if (i == 0) {
-            sk_line_free(l);
-            emit(r, SK_LINES_INSERT, i, 1);
-            emit(r, SK_LINES_TRIM, 0, 1);
-            return;
-        }
-        sk_line_free(*slot(r, 0));
-        *slot(r, 0) = NULL;
+    if (r->len == r->max) {
+        /* CircularList.splice into a full ring, move for move: the first
+         * move up wraps onto the first line, which is lost; past the end
+         * nothing moves and the line lost is the one at i, wrapped. Then
+         * the trim moves the start on. Inserted at 0, the last line so
+         * comes first and the new one last; past the end, the first line
+         * comes last. */
+        sk_line *lost = *slot(r, i < r->len ? r->len : i);
+        for (int k = r->len - 1; k >= i; k--)
+            *slot(r, k + 1) = *slot(r, k);
+        *slot(r, i) = l;
+        drop(r, lost);
+        emit(r, SK_LINES_INSERT, i, 1);
         r->start = (r->start + 1) % r->max;
-        r->len--;
-        at--;
+        emit(r, SK_LINES_TRIM, 0, 1);
+        return;
     }
+    /* Past the end of a ring with room, JavaScript would expose a slot
+     * the list no longer holds; the line goes at the end instead. */
+    int at = SK_MIN(i, r->len);
     for (int k = r->len; k > at; k--)
         *slot(r, k) = *slot(r, k - 1);
     *slot(r, at) = l;
     r->len++;
     emit(r, SK_LINES_INSERT, i, 1);
-    if (full)
-        emit(r, SK_LINES_TRIM, 0, 1);
 }
 
 void sk_lines_remove(sk_lines *r, int i)
@@ -456,7 +478,7 @@ void sk_lines_remove(sk_lines *r, int i)
     if (!r->len)
         return;
     int at = SK_MIN(i, r->len - 1);
-    sk_line_free(*slot(r, at));
+    drop(r, *slot(r, at));
     for (int k = at; k < r->len - 1; k++)
         *slot(r, k) = *slot(r, k + 1);
     *slot(r, r->len - 1) = NULL;
@@ -469,7 +491,7 @@ void sk_lines_trim_start(sk_lines *r, int n)
     if (n > r->len)
         n = r->len;
     for (int k = 0; k < n; k++) {
-        sk_line_free(*slot(r, k));
+        drop(r, *slot(r, k));
         *slot(r, k) = NULL;
     }
     r->start = (r->start + n) % r->max;
@@ -481,7 +503,7 @@ void sk_lines_shift_up(sk_lines *r, int i, int n)
 {
     if (n <= 0)
         return;
-    sk_line_free(*slot(r, i));
+    drop(r, *slot(r, i));
     for (int k = i; k < i + n - 1; k++)
         *slot(r, k) = *slot(r, k + 1);
     *slot(r, i + n - 1) = NULL;
@@ -492,7 +514,7 @@ void sk_lines_shift_down(sk_lines *r, int i, int n)
     if (n <= 0)
         return;
     if (i + n < r->len)
-        sk_line_free(*slot(r, i + n));
+        drop(r, *slot(r, i + n));
     else
         r->len = SK_MIN(i + n + 1, r->max);
     for (int k = i + n; k > i; k--)
@@ -991,4 +1013,9 @@ void sk_buffer_resize(sk_buffer *b, int new_cols, int new_rows)
     }
     b->cols = new_cols;
     b->rows = new_rows;
+    /* Grown from a screen that ran past its lines, xterm.js's buffer can
+     * be left with rows that have no line at all, and it throws at the
+     * first write to one; blank lines fill them here. */
+    while (r->len > 0 && r->len < r->max && r->len < b->ybase + new_rows)
+        sk_lines_push(r, sk_line_new(new_cols, &null_cell, false));
 }

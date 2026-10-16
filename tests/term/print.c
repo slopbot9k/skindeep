@@ -58,6 +58,37 @@ static void test_scroll(void)
     tt_close(&x);
 }
 
+static void test_line_cells(void)
+{
+    /* Lines by their index in the buffer, scrollback first, with the
+     * flag that says each goes on from the line before. */
+    tt x;
+    tt_open(&x, 4, 2);
+    tt_feed(&x, "ab\r\n\x1b[1mcdefg");
+    sk_term_cell cells[4];
+    int cols = 0;
+    bool wrapped = true;
+    CHECK(sk_term_line(x.t, 0, cells, &cols, &wrapped));
+    CHECK_INT(cols, 4);
+    CHECK(!wrapped);
+    CHECK_INT((int)cells[1].cp, 'b');
+    CHECK_INT((int)cells[2].cp, 0);
+    CHECK(sk_term_line(x.t, 2, cells, &cols, &wrapped));
+    CHECK(wrapped);
+    CHECK_INT((int)cells[0].cp, 'g');
+    CHECK(cells[0].fg & SK_FG_BOLD);
+    int top, base, lines;
+    sk_term_viewport(x.t, &top, &base, &lines);
+    sk_term_cell row[4];
+    sk_term_row(x.t, 1, row);
+    CHECK(sk_term_line(x.t, top + 1, cells, &cols, &wrapped));
+    CHECK(memcmp(row, cells, sizeof row) == 0);
+    CHECK(!sk_term_line(x.t, 3, cells, &cols, &wrapped));
+    CHECK(!wrapped);
+    CHECK(!sk_term_line(x.t, -1, cells, &cols, &wrapped));
+    tt_close(&x);
+}
+
 static void test_wide(void)
 {
     tt x;
@@ -302,6 +333,7 @@ const sk_test sk_suite_term_print[] = {
     T(test_plain),
     T(test_pending_wrap),
     T(test_scroll),
+    T(test_line_cells),
     T(test_wide),
     T(test_wide_at_line_end),
     T(test_wide_overwritten),

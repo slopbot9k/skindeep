@@ -184,6 +184,52 @@ static void test_alt_resize(void)
     tt_close(&x);
 }
 
+static void test_alt_ring_past_lines(void)
+{
+    /* The alternate buffer keeps the larger ring it had when it shrank
+     * empty; scrolled in, then grown with the cursor high, it pushes into
+     * that full ring and its screen runs one row past its lines, the
+     * last row reading the first line round the ring. A wrap on that row
+     * inserts past the end of the full ring, as CircularList.splice does
+     * it, which comes out as a plain scroll. */
+    tt x;
+    tt_open(&x, 10, 8);
+    sk_term_resize(x.t, 10, 7);
+    tt_feed(&x, "\x1b[?1049h\x1b[7;1H\n\x1b[H");
+    sk_term_resize(x.t, 10, 8);
+    int top, base, lines;
+    sk_term_viewport(x.t, &top, &base, &lines);
+    CHECK_INT(base, 1);
+    CHECK_INT(lines, 8);
+    tt_feed(&x, "L1\r\nL2\r\nL3\r\nL4\r\nL5\r\nL6\r\nL7\r\nL8\x1b[8;10Hxy");
+    CHECK_ROWS(x.t, "L2\nL3\nL4\nL5\nL6\nL7\nL8       x\ny");
+    CHECK_CURSOR(x.t, 1, 7);
+    tt_close(&x);
+}
+
+static void test_alt_ring_grown_short(void)
+{
+    /* Grown again with the cursor low, the ring is rebuilt from its first
+     * line, the screen moves up a row and one line is pushed, a line
+     * short of the rows: xterm.js would throw writing to the last. A
+     * blank line fills it. */
+    tt x;
+    tt_open(&x, 10, 8);
+    sk_term_resize(x.t, 10, 7);
+    tt_feed(&x, "\x1b[?1049h\x1b[7;1H\n\x1b[H");
+    sk_term_resize(x.t, 10, 8);
+    tt_feed(&x, "L1\r\nL2\r\nL3\r\nL4\r\nL5\r\nL6\r\nL7\r\nL8");
+    sk_term_resize(x.t, 10, 10);
+    int top, base, lines;
+    sk_term_viewport(x.t, &top, &base, &lines);
+    CHECK_INT(base, 0);
+    CHECK_INT(lines, 10);
+    CHECK_CURSOR(x.t, 2, 8);
+    tt_feed(&x, "\x1b[10;1Hz");
+    CHECK_ROWS(x.t, "L8\nL1\nL2\nL3\nL4\nL5\nL6\nL7\n\nz");
+    tt_close(&x);
+}
+
 static void test_minimum_size(void)
 {
     tt x;
@@ -212,6 +258,8 @@ const sk_test sk_suite_term_reflow[] = {
     T(test_scrolled_up_full_buffer),
     T(test_region_scroll_full),
     T(test_alt_resize),
+    T(test_alt_ring_past_lines),
+    T(test_alt_ring_grown_short),
     T(test_minimum_size),
     {0},
 };

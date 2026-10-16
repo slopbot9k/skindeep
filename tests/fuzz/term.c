@@ -9,6 +9,7 @@
 #include "../../src/term/screen.h"
 #include "fuzz.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -27,44 +28,46 @@ const char *const sk_fuzz_dict[] = {
     "\xFE\x01", "\xFE\x02", "\xFE\x03", "\xFE\x04", NULL,
 };
 
+/* The broken invariant, named before the abort the driver catches. */
+static void need(bool ok, const char *what)
+{
+    if (ok)
+        return;
+    fprintf(stderr, "fuzz-term: %s\n", what);
+    abort();
+}
+
 static void check(sk_term *t)
 {
     sk_buffer *bufs[2] = {&t->normal, &t->alt};
     for (int k = 0; k < 2; k++) {
         sk_buffer *b = bufs[k];
         sk_lines *r = &b->lines;
-        if (r->len < 0 || r->len > r->max)
-            abort();
-        if (b->cols != t->cols || b->rows != t->rows)
-            abort();
-        if (b->scroll_top < 0 || b->scroll_top > b->scroll_bottom || b->scroll_bottom >= t->rows)
-            abort();
+        need(r->len >= 0 && r->len <= r->max, "ring length");
+        need(b->cols == t->cols && b->rows == t->rows, "buffer size");
+        need(b->scroll_top >= 0 && b->scroll_top <= b->scroll_bottom && b->scroll_bottom < t->rows, "scroll region");
         for (int i = 0; i < r->len; i++) {
             sk_line *l = sk_lines_get(r, i);
-            if (!l)
-                abort();
+            need(l != NULL, "hole in the ring");
             /* The alternate buffer keeps cells past a narrowing. */
-            if (b == &t->normal ? l->len != t->cols : l->len < t->cols)
-                abort();
+            need(b == &t->normal ? l->len == t->cols : l->len >= t->cols, "line width");
             for (int x = 0; x < l->len; x++) {
                 uint32_t c = l->cells[x].content;
                 bool combined = c & SK_CELL_COMBINED;
-                if (combined != (l->comb && l->comb[x]))
-                    abort();
-                if ((c >> SK_CELL_WIDTH_SHIFT) > 2)
-                    abort();
+                need(combined == (l->comb && l->comb[x]), "combined text");
+                need((c >> SK_CELL_WIDTH_SHIFT) <= 2, "cell width");
             }
         }
     }
     sk_buffer *b = t->active;
-    if (b->lines.len < t->rows)
-        abort();
-    if (b->x < 0 || b->x > t->cols + 1 || b->y < 0 || b->y >= t->rows)
-        abort();
-    if (b->ybase < 0 || b->ybase + t->rows > b->lines.len || b->ydisp < 0 || b->ydisp > b->ybase)
-        abort();
-    if (t->alt.lines.len && t->active != &t->alt)
-        abort();
+    need(b->lines.len >= t->rows, "fewer lines than rows");
+    need(b->x >= 0 && b->x <= t->cols + 1 && b->y >= 0 && b->y < t->rows, "cursor");
+    /* The screen may run past the lines only in a full ring, whose
+     * indexes wrap: the alternate buffer keeps a larger ring when it
+     * shrinks empty, as xterm.js's does, and outgrows it later. */
+    need(b->ybase >= 0 && b->ydisp >= 0 && b->ydisp <= b->ybase, "viewport");
+    need(b->ybase + t->rows <= b->lines.len || b->lines.len == b->lines.max, "screen past the lines");
+    need(!t->alt.lines.len || t->active == &t->alt, "alternate buffer left full");
 }
 
 static void on_reply(void *ud, const char *data, size_t len)

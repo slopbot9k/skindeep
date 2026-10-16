@@ -499,7 +499,10 @@ static void print(void *ud, const uint32_t *data, size_t n)
             add_line_to_link(t, cur->x.url, b->ybase + b->y);
         if (b->x + width - old_width > cols) {
             if (t->wraparound) {
+                /* The scroll may drop the old row; it is still read and
+                 * cleared, as InputHandler.print's oldRow is. */
                 sk_line *old_row = row;
+                sk_lines_hold(&b->lines, old_row);
                 int old_col = b->x - old_width;
                 b->x = old_width;
                 b->y++;
@@ -517,6 +520,7 @@ static void print(void *ud, const uint32_t *data, size_t n)
                 while (old_col < cols)
                     put(old_row, old_col++, 0, 1, cur);
                 sk_line_touch(old_row);
+                sk_lines_release(&b->lines);
             } else {
                 b->x = cols - 1;
                 if (width == 2)
@@ -1972,11 +1976,8 @@ void sk_term_size(sk_term *t, int *cols, int *rows)
     sk_term_unlock(t);
 }
 
-void sk_term_row(sk_term *t, int y, sk_term_cell *out)
+static void line_cells(sk_term *t, const sk_line *l, sk_term_cell *out)
 {
-    sk_term_lock(t);
-    sk_buffer *b = t->active;
-    sk_line *l = sk_screen_line_at(b, b->ydisp + y);
     for (int x = 0; x < t->cols; x++) {
         sk_term_cell *c = &out[x];
         memset(c, 0, sizeof *c);
@@ -1999,7 +2000,26 @@ void sk_term_row(sk_term *t, int y, sk_term_cell *out)
             c->link = l->ext[x].url;
         }
     }
+}
+
+void sk_term_row(sk_term *t, int y, sk_term_cell *out)
+{
+    sk_term_lock(t);
+    sk_buffer *b = t->active;
+    line_cells(t, sk_screen_line_at(b, b->ydisp + y), out);
     sk_term_unlock(t);
+}
+
+bool sk_term_line(sk_term *t, int line, sk_term_cell *out, int *cols, bool *wrapped)
+{
+    sk_term_lock(t);
+    sk_line *l = sk_screen_line_at(t->active, line);
+    *cols = t->cols;
+    *wrapped = l && l->wrapped;
+    if (l)
+        line_cells(t, l, out);
+    sk_term_unlock(t);
+    return l != NULL;
 }
 
 sk_underline sk_term_cell_underline(const sk_term_cell *c)
