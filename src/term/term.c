@@ -499,7 +499,10 @@ static void print(void *ud, const uint32_t *data, size_t n)
             add_line_to_link(t, cur->x.url, b->ybase + b->y);
         if (b->x + width - old_width > cols) {
             if (t->wraparound) {
+                /* The scroll may drop the old row; it is still read and
+                 * cleared, as InputHandler.print's oldRow is. */
                 sk_line *old_row = row;
+                sk_lines_hold(&b->lines, old_row);
                 int old_col = b->x - old_width;
                 b->x = old_width;
                 b->y++;
@@ -517,6 +520,7 @@ static void print(void *ud, const uint32_t *data, size_t n)
                 while (old_col < cols)
                     put(old_row, old_col++, 0, 1, cur);
                 sk_line_touch(old_row);
+                sk_lines_release(&b->lines);
             } else {
                 b->x = cols - 1;
                 if (width == 2)

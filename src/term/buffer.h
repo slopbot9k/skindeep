@@ -93,12 +93,15 @@ typedef struct {
 } sk_lines_listener;
 
 /* The ring of lines: xterm.js's CircularList. A line dropped from it is
- * freed. */
+ * freed, unless it is the held one: JavaScript keeps a line alive while
+ * print still holds it, and the hold does the same. */
 typedef struct {
     sk_line **v;
     int max, start, len;
     int id; /* 0 the normal buffer, 1 the alternate */
     const sk_lines_listener *listen;
+    sk_line *held;
+    bool held_dropped;
 } sk_lines;
 
 static inline sk_line *sk_lines_get(const sk_lines *r, int i)
@@ -137,6 +140,9 @@ int sk_buffer_prev_stop(const sk_buffer *b, int x);
 sk_line *sk_buffer_blank(const sk_buffer *b, const sk_cell_data *fill, bool wrapped);
 
 /* The ring operations the screen uses, with xterm.js's events. */
+void sk_lines_hold(sk_lines *r, sk_line *l);
+/* Ends the hold, freeing the held line if it was dropped meanwhile. */
+void sk_lines_release(sk_lines *r);
 void sk_lines_set(sk_lines *r, int i, sk_line *l);
 void sk_lines_push(sk_lines *r, sk_line *l);
 void sk_lines_insert(sk_lines *r, int i, sk_line *l);
