@@ -96,6 +96,12 @@ typedef struct {
     bool closed;
 } sk_vc_sub;
 
+struct sk_vc_square {
+    sk_color color;
+    int k;
+    float x, y, w;
+};
+
 /* A path in pixels: subpaths of points, and the box they lie in. */
 typedef struct {
     SK_VEC(sk_vc_pt) pts;
@@ -118,6 +124,12 @@ typedef struct {
     /* Scratch: paths for gfx, a coverage mask. */
     sk_path *path, *outline;
     SK_VEC(uint8_t) cover;
+    /* The squares of sk_vc_batch: each a colour, an alpha in
+     * twentieths and a square in points; and the coverage they sum to,
+     * the image's size, zero between flushes. */
+    SK_VEC(struct sk_vc_square) squares;
+    uint16_t *sum;
+    size_t sum_n;
     /* Text, made on first use. */
     sk_fontset *fonts;
     sk_glyph_cache *glyphs;
@@ -199,6 +211,17 @@ void sk_vc_stroke_rect(sk_vc *vc, double x, double y, double w, double h, const 
  * squares of a frame: the transform is taken to be a scale and a
  * translation. */
 void sk_vc_square(sk_vc *vc, double x, double y, double w, double h, sk_color c, double alpha);
+/* Squares batched by colour and alpha in twentieths, each batch filled
+ * as one path at the end, as gravity3d.js and carbon.js batch them: a
+ * pixel two squares of a batch cover is covered once, their coverage
+ * summed up to a whole pixel, as a path's is. sk_vc_batch adds a square
+ * w on a side centred at (x, y); alpha 0 or less adds nothing.
+ * sk_vc_flush fills every batch, in the order its colour first came and
+ * then by alpha, with the canvas's operation and globalAlpha times the
+ * batch's, and empties them. */
+void sk_vc_batch(sk_vc *vc, sk_color c, double alpha, double x, double y, double w);
+void sk_vc_flush(sk_vc *vc);
+
 /* The whole image filled with c, every pixel replaced, ignoring the
  * transform and the clip: a canvas cleared to a colour. */
 void sk_vc_clear(sk_vc *vc, sk_color c);
@@ -218,8 +241,9 @@ static inline void sk_vc_align_text(sk_vc *vc, sk_vc_align a, sk_vc_baseline b)
     vc->st.align = a;
     vc->st.baseline = b;
 }
-/* measureText: the advance, and the ink's box about the pen as
- * actualBoundingBox*, all in points. */
+/* measureText: the advance, and the ink's box about the point the text
+ * would be drawn at, by the alignment and the baseline, as
+ * actualBoundingBox* are, all in points. */
 typedef struct {
     double width, left, right, ascent, descent;
 } sk_vc_metrics;

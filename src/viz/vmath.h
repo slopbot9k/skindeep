@@ -26,6 +26,8 @@
 
 #include "../base/base.h"
 
+#include <math.h>
+
 #define SK_PI 3.14159265358979323846
 #define SK_TAU 6.28318530717958647692
 
@@ -48,7 +50,10 @@ double sk_vm_tanh(double x);
 double sk_vm_cbrt(double x);
 
 /* JavaScript's Math.round: halves round up, toward +infinity. */
-double sk_vm_round(double x);
+static inline double sk_vm_round(double x)
+{
+    return floor(x + 0.5);
+}
 /* x clamped to lo..hi; NaN gives lo. */
 static inline double sk_vm_clamp(double x, double lo, double hi)
 {

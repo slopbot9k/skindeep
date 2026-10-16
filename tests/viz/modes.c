@@ -133,6 +133,42 @@ static void test_gravity(void)
     shot_pointer("gravity", 80, t, SK_LEN(t), "viz_gravity_throw", 2);
 }
 
+/* A drag paints a barrier the packets scatter off; a move with the
+ * button up paints nothing. */
+static void test_quantum(void)
+{
+    shots("quantum", 2);
+    static const touch t[] = {{20, SK_VIZ_DOWN, 60, 40, true},  {24, SK_VIZ_MOVE, 62, 80, true},
+                              {28, SK_VIZ_MOVE, 64, 110, true}, {30, SK_VIZ_UP, 64, 110, false},
+                              {32, SK_VIZ_MOVE, 150, 30, false}, {40, SK_VIZ_DOWN, 190, 120, true},
+                              {41, SK_VIZ_UP, 190, 120, false}};
+    shot_pointer("quantum", 150, t, SK_LEN(t), "viz_quantum_barrier", 2);
+}
+
+/* A drag turns the camera, which holds 4 s; a click throws a moon. */
+static void test_gravity3d(void)
+{
+    shots("gravity3d", 2);
+    static const touch t[] = {{30, SK_VIZ_DOWN, 100, 60, true},  {40, SK_VIZ_MOVE, 160, 90, true},
+                              {50, SK_VIZ_UP, 160, 90, false},   {60, SK_VIZ_DOWN, 70, 40, true},
+                              {61, SK_VIZ_UP, 71, 40, false}};
+    shot_pointer("gravity3d", 120, t, SK_LEN(t), "viz_gravity3d_turn", 2);
+}
+
+/* The wide pane's labels; a click on the level diagram lifts the drawn
+ * atom to the level under it, a click on the atom shines a lamp, a drag
+ * on the atom turns the camera. */
+static void test_carbon(void)
+{
+    shots("carbon", 2);
+    shot("carbon", 0, 300, 600, 380, 1, "viz_carbon_wide", 2);
+    static const touch t[] = {{60, SK_VIZ_DOWN, 200, 70, true},  {61, SK_VIZ_UP, 200, 70, false},
+                              {90, SK_VIZ_DOWN, 40, 80, true},   {91, SK_VIZ_UP, 40, 80, false},
+                              {100, SK_VIZ_DOWN, 50, 80, true},  {110, SK_VIZ_MOVE, 90, 100, true},
+                              {112, SK_VIZ_UP, 90, 100, false}};
+    shot_pointer("carbon", 130, t, SK_LEN(t), "viz_carbon_click", 2);
+}
+
 /* Two runs of every mode draw the same pixels. */
 static void test_deterministic(void)
 {
@@ -159,4 +195,5 @@ static void test_deterministic(void)
 
 const sk_test sk_suite_viz_modes[] = {T(test_scope), T(test_analyzer), T(test_fire),          T(test_superscope),
                                       T(test_dotplane), T(test_fern), T(test_go),              T(test_zoom),
-                                      T(test_gravity),  T(test_deterministic), {0}};
+                                      T(test_gravity),  T(test_quantum), T(test_gravity3d), T(test_carbon),
+                                      T(test_deterministic), {0}};

@@ -35,7 +35,7 @@ struct sk_vmode {
 };
 
 extern const sk_vmode_class sk_vmode_scope, sk_vmode_analyzer, sk_vmode_fire, sk_vmode_superscope, sk_vmode_dotplane,
-    sk_vmode_go, sk_vmode_fern, sk_vmode_zoom, sk_vmode_gravity;
+    sk_vmode_go, sk_vmode_fern, sk_vmode_zoom, sk_vmode_gravity, sk_vmode_gravity3d, sk_vmode_quantum, sk_vmode_carbon;
 
 /* The events since the mode's last frame, oldest first, in m->ev. */
 static inline size_t sk_vmode_events(sk_vmode *m, const sk_synth *s)

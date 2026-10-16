@@ -326,11 +326,6 @@ double sk_vm_asin(double x)
     return sk_vm_atan2(x, sqrt((1 - x) * (1 + x)));
 }
 
-double sk_vm_round(double x)
-{
-    return floor(x + 0.5);
-}
-
 /* ---- Random numbers ---- */
 
 static uint64_t splitmix(uint64_t *s)

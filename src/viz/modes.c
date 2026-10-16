@@ -36,6 +36,9 @@ static const sk_vmode_class *class_of(int mode)
         [11] = &sk_vmode_go,
         [12] = &sk_vmode_zoom,
         [13] = &sk_vmode_gravity,
+        [14] = &sk_vmode_gravity3d,
+        [15] = &sk_vmode_quantum,
+        [16] = &sk_vmode_carbon,
     };
     return mode >= 0 && mode < SK_VIZ_MODES ? classes[mode] : NULL;
 }

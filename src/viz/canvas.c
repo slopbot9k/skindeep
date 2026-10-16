@@ -393,6 +393,8 @@ void sk_vc_free(sk_vc *vc)
     sk_path_free(vc->outline);
     path_free(&vc->p);
     path_free(&vc->aside);
+    sk_vec_free(&vc->squares);
+    free(vc->sum);
     sk_vec_free(&vc->cover);
     if (vc->glyphs)
         sk_glyph_cache_free(vc->glyphs);
@@ -833,12 +835,15 @@ static void paint(sk_vc *vc, sk_rect r, const uint8_t *cov, int stride, const sk
         int py = r.y + y;
         for (int x = x0; x < x1;) {
             int e = x;
-            if (k[x] == 255) {
+            if (!k[x]) {
+                while (e < x1 && !k[e])
+                    e++;
+            } else if (k[x] == 255) {
                 while (e < x1 && k[e] == 255)
                     e++;
                 run(&sh, d + x, r.x + x, py, e - x, A, op, tmp);
             } else {
-                while (e < x1 && k[e] != 255)
+                while (e < x1 && k[e] != 255 && k[e])
                     e++;
                 if (A != 255)
                     for (int i = x; i < e; i++)
@@ -1236,6 +1241,114 @@ void sk_vc_square(sk_vc *vc, double x, double y, double w, double h, sk_color c,
     }
 }
 
+void sk_vc_batch(sk_vc *vc, sk_color c, double alpha, double x, double y, double w)
+{
+    double k = SK_MIN(20, sk_vm_round(alpha * 20));
+    if (!(k > 0) || !(w > 0) || !isfinite(x) || !isfinite(y))
+        return;
+    struct sk_vc_square s = {c, (int)k, (float)(x - w / 2), (float)(y - w / 2), (float)w};
+    sk_vec_push(&vc->squares, s);
+}
+
+/* The squares' order of filling: their colour's first coming, then
+ * alpha, then their own order. */
+typedef struct {
+    uint32_t rank;
+    uint32_t i;
+} square_key;
+
+static int by_key(const void *a, const void *b)
+{
+    const square_key *x = a, *y = b;
+    if (x->rank != y->rank)
+        return x->rank < y->rank ? -1 : 1;
+    return (x->i > y->i) - (x->i < y->i);
+}
+
+void sk_vc_flush(sk_vc *vc)
+{
+    size_t n = vc->squares.len;
+    if (!n)
+        return;
+    size_t npx = (size_t)vc->im->w * (size_t)vc->im->h;
+    if (vc->sum_n != npx) {
+        free(vc->sum);
+        vc->sum = sk_xcalloc(npx ? npx : 1, sizeof *vc->sum);
+        vc->sum_n = npx;
+    }
+    const struct sk_vc_square *sq = vc->squares.ptr;
+    square_key *keys = sk_xreallocarray(NULL, n, sizeof *keys);
+    SK_VEC(sk_color) colors = {0};
+    for (size_t i = 0; i < n; i++) {
+        size_t c = 0;
+        while (c < colors.len && colors.ptr[c] != sq[i].color)
+            c++;
+        if (c == colors.len)
+            sk_vec_push(&colors, sq[i].color);
+        keys[i] = (square_key){(uint32_t)(c * 32 + (size_t)sq[i].k), (uint32_t)i};
+    }
+    qsort(keys, n, sizeof *keys, by_key);
+    const sk_vc_xform *m = &vc->st.m;
+    sk_rect clip = sk_rect_intersect(vc->st.clip, sk_image_bounds(vc->im));
+    SK_VEC(uint32_t) touched = {0};
+    for (size_t b0 = 0; b0 < n;) {
+        size_t b1 = b0;
+        while (b1 < n && keys[b1].rank == keys[b0].rank)
+            b1++;
+        touched.len = 0;
+        for (size_t j = b0; j < b1; j++) {
+            const struct sk_vc_square *s = &sq[keys[j].i];
+            double x0 = m->a * s->x + m->e, x1 = m->a * (s->x + s->w) + m->e;
+            double y0 = m->d * s->y + m->f, y1 = m->d * (s->y + s->w) + m->f;
+            if (x0 > x1) {
+                double t = x0;
+                x0 = x1;
+                x1 = t;
+            }
+            if (y0 > y1) {
+                double t = y0;
+                y0 = y1;
+                y1 = t;
+            }
+            int ix0 = (int)SK_MAX(clip.x, floor(SK_MAX(x0, -1e6))), ix1 = (int)SK_MIN(clip.x + clip.w, ceil(SK_MIN(x1, 1e6)));
+            int iy0 = (int)SK_MAX(clip.y, floor(SK_MAX(y0, -1e6))), iy1 = (int)SK_MIN(clip.y + clip.h, ceil(SK_MIN(y1, 1e6)));
+            for (int y = iy0; y < iy1; y++) {
+                double cy = SK_MIN(y1, y + 1.0) - SK_MAX(y0, (double)y);
+                for (int x = ix0; x < ix1; x++) {
+                    double cx = SK_MIN(x1, x + 1.0) - SK_MAX(x0, (double)x);
+                    uint32_t cov = (uint32_t)floor(SK_MIN(cx * cy, 1.0) * 255 + 0.5);
+                    if (!cov)
+                        continue;
+                    size_t at = (size_t)y * (size_t)vc->im->w + (size_t)x;
+                    if (!vc->sum[at])
+                        sk_vec_push(&touched, (uint32_t)at);
+                    vc->sum[at] = (uint16_t)SK_MIN(65535u, vc->sum[at] + cov);
+                }
+            }
+        }
+        const struct sk_vc_square *s = &sq[keys[b0].i];
+        sk_px p = sk_premul(s->color);
+        uint32_t A = byte(s->k / 20.0 * 255);
+        for (size_t t = 0; t < touched.len; t++) {
+            uint32_t at = touched.ptr[t];
+            uint32_t k = mul8(SK_MIN(255u, vc->sum[at]), A);
+            vc->sum[at] = 0;
+            if (vc->st.mask)
+                k = mul8(k, vc->st.mask[at]);
+            sk_px *d = sk_image_row(vc->im, (int)(at / (uint32_t)vc->im->w)) + at % (uint32_t)vc->im->w;
+            if (k)
+                *d = blend(vc->st.op, scale_px(p, k), *d);
+        }
+        b0 = b1;
+    }
+    sk_vec_free(&touched);
+    sk_vec_free(&colors);
+    free(keys);
+    vc->squares.len = 0;
+    /* The JavaScript flush leaves globalAlpha at 1. */
+    vc->st.alpha = 1;
+}
+
 void sk_vc_clear(sk_vc *vc, sk_color c)
 {
     sk_fill_rect(vc->im, sk_image_bounds(vc->im), c, SK_BLEND_SRC, NULL);
@@ -1299,13 +1412,22 @@ void sk_vc_measure(sk_vc *vc, const char *s, sk_vc_metrics *out)
         }
         pen += sk_font_advance(ref.font, ref.glyph, px);
     }
+    /* About the point text is drawn at: the pen starts left of it by
+     * the alignment's share of the width, and the baseline lies below
+     * it by the baseline's offset. */
+    double shift = vc->st.align == SK_VC_CENTER ? pen / 2 : vc->st.align == SK_VC_RIGHT ? pen : 0, drop = 0;
+    if (vc->st.baseline != SK_VC_ALPHABETIC) {
+        sk_font_vmetrics vm;
+        sk_font_vmetrics_at(sk_fontset_primary(vc->fonts, SK_STYLE_REGULAR), px, &vm);
+        drop = vc->st.baseline == SK_VC_MIDDLE ? (vm.ascent - vm.descent) / 2 : vm.ascent;
+    }
     out->width = pen / k;
     if (hi > lo) {
-        out->left = -lo / k;
-        out->right = hi / k;
+        out->left = (shift - lo) / k;
+        out->right = (hi - shift) / k;
     }
-    out->ascent = up / k;
-    out->descent = down / k;
+    out->ascent = (up - drop) / k;
+    out->descent = (down + drop) / k;
 }
 
 /* Where the pen starts for t at (x, y), by the alignment and the

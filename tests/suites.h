@@ -102,4 +102,5 @@
     X(viz_layout)                                                            \
     X(viz_canvas)                                                            \
     X(viz_rules)                                                             \
+    X(viz_physics)                                                           \
     X(viz_modes)
