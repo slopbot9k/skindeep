@@ -1,7 +1,7 @@
 /* A shipped skin drawn whole, as tools/skinshot and the skin golden
  * tests draw it: compiled by skinc's front end, laid out at its
  * window's size in its default state (every variable 0), painted at a
- * scale with its images decoded by stb_image. */
+ * scale with its images decoded by skinc's decoders. */
 #ifndef SK_TOOLS_SHOT_H
 #define SK_TOOLS_SHOT_H
 

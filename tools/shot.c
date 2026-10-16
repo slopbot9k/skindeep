@@ -1,10 +1,23 @@
 #include "shot.h"
 
+#include "../skinc/media.h"
 #include "../skinc/splits.h"
-#include "imgdecode.h"
+#include "../src/sessions/files.h"
 
 #include <math.h>
 #include <string.h>
+
+/* The file at path decoded by skinc's own decoders, as the pack writer
+ * decodes it. */
+static bool decode(const char *path, sk_image *out)
+{
+    sk_buf data = {0}, err = {0};
+    bool ok = sk_files_read(path, (size_t)64 << 20, &data) &&
+              sk_media_image((const uint8_t *)data.ptr, data.len, 0, out, &err);
+    sk_buf_free(&data);
+    sk_buf_free(&err);
+    return ok;
+}
 
 static const sk_image *decoded(sk_shot *s, uint32_t i)
 {
@@ -13,7 +26,7 @@ static const sk_image *decoded(sk_shot *s, uint32_t i)
     if (!s->tried[i]) {
         s->tried[i] = 1;
         const char *p = s->tree.images.ptr[i];
-        if (p && strncmp(p, "data:", 5) != 0 && sk_tool_decode(p, &s->decoded[i]))
+        if (p && strncmp(p, "data:", 5) != 0 && decode(p, &s->decoded[i]))
             s->tried[i] = 2;
     }
     return s->tried[i] == 2 ? &s->decoded[i] : NULL;

@@ -87,9 +87,8 @@ TEST_OBJ := $(TEST_SRC:%.c=$(BUILD)/%.o)
 TEST_BIN := $(BUILD)/tests/run
 
 # A shipped skin drawn whole (tools/shot.c), for skinshot and the skin
-# goldens, its images decoded by stb_image until skinc's own decoders
-# are in the library.
-SHOT_OBJ := $(BUILD)/tools/shot.o $(BUILD)/tools/imgdecode.o
+# goldens, its images decoded by skinc's decoders.
+SHOT_OBJ := $(BUILD)/tools/shot.o
 
 RELAY := $(BUILD)/skinned-relay
 HOOKDUMP := $(BUILD)/hookdump
@@ -195,7 +194,6 @@ $(BUILD)/milkshot: $(BUILD)/tools/milkshot.o $(LIB)
 
 # A shipped skin laid out and painted at 1x and 2x, to look at beside the
 # Electron app's screenshots; not part of all.
-$(BUILD)/tools/imgdecode.o: WARN := -w
 skinshot: $(BUILD)/skinshot
 $(BUILD)/skinshot: $(BUILD)/tools/skinshot.o $(SHOT_OBJ) $(SKINC_LIB) $(LIB)
 	$(CC) $(OPT) $(LDFLAGS) -o $@ $^ $(LDLIBS)
