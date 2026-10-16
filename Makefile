@@ -100,7 +100,7 @@ FUZZ_BINS := $(FUZZ_TARGETS:%=$(BUILD)/fuzz-%)
 FUZZ_DRIVER := $(BUILD)/tests/fuzz/driver.o
 FUZZ_SECONDS ?= 30
 
-.PHONY: all test debug fuzz fuzz-run clean macdemo windemo milkshot skinshot
+.PHONY: all test debug fuzz fuzz-run clean macdemo windemo milkshot skinshot vizshot
 .SECONDARY:
 
 all: $(LIB) $(TEST_BIN) $(RELAY) $(HOOKDUMP) $(SKINNED) $(SKINC) $(BUILD)/qoi2png $(BUILD)/windemo
@@ -200,6 +200,12 @@ skinshot: $(BUILD)/skinshot
 $(BUILD)/skinshot: $(BUILD)/tools/skinshot.o $(SHOT_OBJ) $(SKINC_LIB) $(LIB)
 	$(CC) $(OPT) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
+# A visualizer mode run on the scripted session, its last frame as QOI,
+# or timed with -b: make vizshot. Not part of all.
+vizshot: $(BUILD)/vizshot
+$(BUILD)/vizshot: $(BUILD)/tools/vizshot.o $(LIB)
+	$(CC) $(OPT) $(LDFLAGS) -o $@ $^ $(LDLIBS)
+
 test: $(TEST_BIN) $(RELAY) $(SKINNED) $(SKINC)
 	SK_RELAY_BIN=$(RELAY) SK_SKINNED_BIN=$(SKINNED) SK_SKINC_BIN=$(SKINC) ./$(TEST_BIN) $(T)
 
@@ -227,5 +233,5 @@ clean:
 
 -include $(LIB_OBJ:.o=.d) $(TEST_OBJ:.o=.d) $(SKINC_OBJ:.o=.d) $(BUILD)/skinc-objs/main.d $(BUILD)/src/relay/main.d $(BUILD)/tools/hookdump.d \
     $(BUILD)/src/main/skinned.d \
-    $(BUILD)/tools/qoi2png.d $(BUILD)/tools/macdemo.d $(BUILD)/tools/windemo.d $(BUILD)/tools/gfxbench.d \
+    $(BUILD)/tools/qoi2png.d $(BUILD)/tools/macdemo.d $(BUILD)/tools/windemo.d $(BUILD)/tools/gfxbench.d $(BUILD)/tools/vizshot.d \
     $(wildcard $(BUILD)/tests/fuzz/*.d)

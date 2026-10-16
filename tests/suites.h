@@ -116,4 +116,11 @@
     X(skin_blur)                                                             \
     X(skin_skins)                                                            \
     X(menu)                                                                  \
-    X(lastskin)
+    X(lastskin)                                                              \
+    X(viz_math)                                                              \
+    X(viz_synth)                                                             \
+    X(viz_layout)                                                            \
+    X(viz_canvas)                                                            \
+    X(viz_rules)                                                             \
+    X(viz_physics)                                                           \
+    X(viz_modes)
