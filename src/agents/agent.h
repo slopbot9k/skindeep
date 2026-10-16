@@ -61,7 +61,9 @@ typedef struct {
     /* For a session the app did not start (decision 0027), its start in
      * ms on the seam's clock, else 0. */
     uint64_t launched;
-    /* The seam's clock in ms; NULL is sk_now_ms. Tests give their own. */
+    /* The seam's clock in ms; NULL is sk_now_ms. Tests give their own.
+     * It is monotonic, not the wall clock: code that compares with file
+     * times, such as Codex discovery, converts at the point of use. */
     uint64_t (*now)(void);
 } sk_agent_ctx;
 

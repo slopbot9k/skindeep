@@ -65,7 +65,7 @@ static void local_tm(double ms, struct tm *tm)
 
 /* The local date dir `back` days before now. */
 typedef struct {
-    char s[16];
+    char s[40]; /* room for any int, so gcc sees no truncation */
 } day_t;
 
 static day_t day(int back)
