@@ -1,0 +1,827 @@
+/* The window layer over X11 (platform/x11/xui.c) against the fake server
+ * on any system: windows and their properties, frames presented in
+ * chunks and read back, resizes, keys, the mouse, closing, the clipboard
+ * both ways with INCR, timers, tasks from other threads, and a lost
+ * connection. */
+#include "../../src/base/log.h"
+#include "../../src/core/loop.h"
+#include "../../src/platform/x11/x11.h"
+#include "../../src/platform/x11/xui.h"
+#include "../test.h"
+#include "x11_fake.h"
+
+#include <fcntl.h>
+#include <pthread.h>
+#include <unistd.h>
+
+#define MAX_EVENTS 128
+
+static struct {
+    sk_event ev[MAX_EVENTS];
+    size_t n;
+    char *clips[8]; /* what each clipboard read gave */
+    int clip_calls;
+} rec;
+
+static void forget(void)
+{
+    for (size_t i = 0; i < SK_LEN(rec.clips); i++)
+        free(rec.clips[i]);
+    memset(&rec, 0, sizeof rec);
+}
+
+static void on_event(void *ud, const sk_event *e)
+{
+    (void)ud;
+    if (rec.n < MAX_EVENTS)
+        rec.ev[rec.n++] = *e;
+}
+
+static sk_xfake *start(const sk_xfake_opts *o)
+{
+    forget();
+    sk_xfake *f = sk_xfake_start(o);
+    char *err = NULL;
+    if (!sk_xui_open(sk_xfake_display(f), "skinned-test", on_event, NULL, &err)) {
+        sk_test_fail(__FILE__, __LINE__, "open: %s", err ? err : "?");
+        free(err);
+        sk_xfake_stop(f);
+        return NULL;
+    }
+    return f;
+}
+
+static void finish(sk_xfake *f)
+{
+    sk_xui_close();
+    sk_xfake_stop(f);
+    forget();
+}
+
+static sk_window *window(int w, int h, bool hidden)
+{
+    sk_window_opts o = {"t", w, h, 0, 0, NULL, hidden};
+    char *err = NULL;
+    sk_window *win = sk_xui_window_new(&o, &err);
+    if (!win) {
+        sk_test_fail(__FILE__, __LINE__, "window: %s", err ? err : "?");
+        free(err);
+    }
+    return win;
+}
+
+static size_t count_of(sk_event_type type)
+{
+    size_t n = 0;
+    for (size_t i = 0; i < rec.n; i++)
+        n += rec.ev[i].type == type;
+    return n;
+}
+
+static const sk_event *nth_of(sk_event_type type, size_t nth)
+{
+    for (size_t i = 0; i < rec.n; i++)
+        if (rec.ev[i].type == type && nth-- == 0)
+            return &rec.ev[i];
+    return NULL;
+}
+
+/* Runs the UI loop until n events of type came, or ms passed. */
+static const sk_event *wait_for(sk_event_type type, size_t n, int ms)
+{
+    uint64_t end = sk_now_ms() + (uint64_t)ms;
+    while (count_of(type) < n && sk_now_ms() < end)
+        sk_xui_once(5);
+    return nth_of(type, n - 1);
+}
+
+static void run_ms(int ms)
+{
+    uint64_t end = sk_now_ms() + (uint64_t)ms;
+    while (sk_now_ms() < end)
+        sk_xui_once(5);
+}
+
+static bool wait_request(sk_xfake *f, int major, size_t n)
+{
+    uint64_t end = sk_now_ms() + 2000;
+    while (sk_xfake_count(f, major, -1) < n && sk_now_ms() < end)
+        sk_xui_once(5);
+    return sk_xfake_count(f, major, -1) >= n;
+}
+
+static void pattern(sk_image *im, uint32_t seed)
+{
+    for (int y = 0; y < im->h; y++)
+        for (int x = 0; x < im->w; x++)
+            sk_image_row(im, y)[x] = 0xff000000u | ((uint32_t)(x * 3 + seed) & 255) << 16 |
+                                     ((uint32_t)(y * 5) & 255) << 8 | ((uint32_t)(x + y) & 255);
+}
+
+static bool same(const sk_image *a, const sk_image *b)
+{
+    if (a->w != b->w || a->h != b->h)
+        return false;
+    for (int y = 0; y < a->h; y++)
+        if (memcmp(sk_image_row(a, y), sk_image_row(b, y), (size_t)a->w * 4))
+            return false;
+    return true;
+}
+
+static void key_event(sk_xfake *f, uint8_t type, uint32_t win, uint8_t code, uint32_t time,
+                      uint16_t state)
+{
+    uint8_t ev[32] = {type, code};
+    sk_x11_set32(ev + 4, time);
+    sk_x11_set32(ev + 8, SK_XFAKE_ROOT);
+    sk_x11_set32(ev + 12, win);
+    sk_x11_set16(ev + 28, state);
+    ev[30] = 1;
+    sk_xfake_event(f, ev);
+}
+
+static void pointer_event(sk_xfake *f, uint8_t type, uint32_t win, uint8_t button, int x, int y,
+                          uint32_t time, uint16_t state)
+{
+    uint8_t ev[32] = {type, button};
+    sk_x11_set32(ev + 4, time);
+    sk_x11_set32(ev + 8, SK_XFAKE_ROOT);
+    sk_x11_set32(ev + 12, win);
+    sk_x11_set16(ev + 24, (uint32_t)x);
+    sk_x11_set16(ev + 26, (uint32_t)y);
+    sk_x11_set16(ev + 28, state);
+    /* Enter and Leave's mode, Normal; the others' same-screen. */
+    ev[30] = type == SK_X11_ENTER_NOTIFY || type == SK_X11_LEAVE_NOTIFY ? 0 : 1;
+    sk_xfake_event(f, ev);
+}
+
+static uint32_t created_id(sk_xfake *f, int major, size_t nth)
+{
+    size_t len;
+    uint8_t *r = sk_xfake_request(f, major, -1, nth, &len);
+    uint32_t id = r && len >= 8 ? sk_x11_get32(r + 4) : 0;
+    free(r);
+    return id;
+}
+
+static void test_open_and_a_window_s_properties(void)
+{
+    sk_xfake_opts o = {.resources = "Xft.dpi:\t192\n", .big_requests = true};
+    sk_xfake *f = start(&o);
+    if (!f)
+        return;
+    CHECK_INT(sk_xfake_count(f, 98, -1), 2);
+    CHECK_INT(sk_xfake_count(f, 130, -1), 1);
+    CHECK_INT(sk_xfake_count(f, 101, -1), 1);
+    CHECK_INT(sk_xfake_count(f, 119, -1), 1);
+    CHECK_INT(sk_xfake_count(f, 16, -1), 12);
+    sk_window_opts wo = {"h\xc3\xa9llo", 40, 30, 20, 10, &rec, true};
+    char *err = NULL;
+    sk_window *w = sk_xui_window_new(&wo, &err);
+    CHECK(w != NULL);
+    if (!w) {
+        free(err);
+        finish(f);
+        return;
+    }
+    CHECK(sk_xui_window_ud(w) == &rec);
+    CHECK(sk_xui_window_scale(w) == 2.0);
+    int pw, ph;
+    sk_xui_window_size(w, &pw, &ph);
+    CHECK_INT(pw, 40);
+    CHECK_INT(ph, 30);
+    CHECK_INT(sk_xui_window_frame(w)->w, 80);
+    CHECK_INT(sk_xui_window_frame(w)->h, 60);
+
+    uint32_t id = sk_xui_window_id(w);
+    size_t len;
+    uint8_t *r = sk_xfake_request(f, 1, -1, 1, &len); /* the first is the selections' window */
+    CHECK(r && sk_x11_get32(r + 4) == id);
+    CHECK(r && r[1] == 24 && sk_x11_get16(r + 16) == 80 && sk_x11_get16(r + 18) == 60);
+    CHECK(r && sk_x11_get32(r + 24) == SK_XFAKE_VISUAL);
+    free(r);
+
+    uint32_t type = 0;
+    char *v = (char *)sk_xfake_property(f, id, sk_xfake_atom(f, "_NET_WM_NAME"), &len, &type);
+    CHECK(v && len == 6 && !memcmp(v, "h\xc3\xa9llo", 6));
+    CHECK_INT(type, sk_xfake_atom(f, "UTF8_STRING"));
+    free(v);
+    v = (char *)sk_xfake_property(f, id, SK_X11_WM_NAME, &len, &type);
+    CHECK(v && len == 5 && !memcmp(v, "h\xe9llo", 5));
+    CHECK_INT(type, SK_X11_STRING);
+    free(v);
+    v = (char *)sk_xfake_property(f, id, SK_X11_WM_CLASS, &len, &type);
+    CHECK(v && len == 26 && !memcmp(v, "skinned-test\0skinned-test\0", 26));
+    free(v);
+    uint8_t *hints = sk_xfake_property(f, id, SK_X11_WM_NORMAL_HINTS, &len, &type);
+    CHECK(hints && len == 72);
+    CHECK(hints && sk_x11_get32(hints) == 16 && sk_x11_get32(hints + 20) == 40 &&
+          sk_x11_get32(hints + 24) == 20);
+    free(hints);
+    uint8_t *pid = sk_xfake_property(f, id, sk_xfake_atom(f, "_NET_WM_PID"), &len, &type);
+    CHECK(pid && len == 4 && sk_x11_get32(pid) == (uint32_t)getpid());
+    free(pid);
+    uint8_t *protocols = sk_xfake_property(f, id, sk_xfake_atom(f, "WM_PROTOCOLS"), &len, &type);
+    CHECK(protocols && len == 8 &&
+          sk_x11_get32(protocols) == sk_xfake_atom(f, "WM_DELETE_WINDOW") &&
+          sk_x11_get32(protocols + 4) == sk_xfake_atom(f, "_NET_WM_PING"));
+    free(protocols);
+    CHECK(sk_xui_sync());
+    CHECK_INT(sk_xfake_count(f, 8, -1), 0); /* hidden: never mapped */
+    CHECK_INT(sk_xfake_count(f, 53, -1), 1);
+
+    size_t props = sk_xfake_count(f, 18, -1);
+    sk_xui_window_set_title(w, "next");
+    CHECK(wait_request(f, 18, props + 2));
+    v = (char *)sk_xfake_property(f, id, SK_X11_WM_NAME, &len, &type);
+    CHECK(v && len == 4 && !memcmp(v, "next", 4));
+    free(v);
+    sk_xui_window_free(w);
+    CHECK(wait_request(f, 4, 1));
+    finish(f);
+}
+
+static void test_present_and_readback_in_chunks(void)
+{
+    sk_xfake_opts o = {.max_request = 4096};
+    sk_xfake *f = start(&o);
+    if (!f)
+        return;
+    CHECK(!sk_xui_shm());
+    sk_window *w = window(80, 60, true);
+    sk_image *im = sk_xui_window_frame(w);
+    CHECK_INT(im->w, 80);
+    pattern(im, 0);
+    sk_xui_window_present(w, NULL, 0);
+    CHECK(sk_xui_sync());
+    /* 19200 bytes under a maximum of 16384: two requests. */
+    CHECK_INT(sk_xfake_count(f, 72, -1), 2);
+    sk_image back;
+    CHECK(sk_xui_window_readback(w, &back));
+    CHECK(same(im, &back));
+    sk_image_free(&back);
+    int fw = 0, fh = 0;
+    uint32_t *px = sk_xfake_pixels(f, created_id(f, 53, 0), &fw, &fh);
+    CHECK(px && fw == 80 && fh == 60 && !memcmp(px, im->px, 80 * 60 * 4));
+    free(px);
+
+    /* One dirty rectangle, one request of its size; one past the edge is
+     * clipped, an empty one sends nothing. */
+    for (int y = 7; y < 17; y++)
+        for (int x = 5; x < 15; x++)
+            sk_image_row(im, y)[x] = 0xff123456;
+    sk_rect dirty[] = {sk_rect_make(5, 7, 10, 10), sk_rect_make(70, 50, 30, 30),
+                       sk_rect_make(0, 0, 0, 5)};
+    sk_xui_window_present(w, dirty, SK_LEN(dirty));
+    CHECK(sk_xui_sync());
+    CHECK_INT(sk_xfake_count(f, 72, -1), 4);
+    size_t len;
+    uint8_t *r = sk_xfake_request(f, 72, -1, 2, &len);
+    CHECK(r && sk_x11_get16(r + 12) == 10 && sk_x11_get16(r + 14) == 10 &&
+          sk_x11_get16(r + 16) == 5 && sk_x11_get16(r + 18) == 7);
+    free(r);
+    r = sk_xfake_request(f, 72, -1, 3, &len);
+    CHECK(r && sk_x11_get16(r + 12) == 10 && sk_x11_get16(r + 14) == 10 &&
+          sk_x11_get16(r + 16) == 70 && sk_x11_get16(r + 18) == 50);
+    free(r);
+    CHECK(sk_xui_window_readback(w, &back));
+    CHECK(same(im, &back));
+    sk_image_free(&back);
+    finish(f);
+}
+
+static void test_big_frames_go_in_big_requests(void)
+{
+    sk_xfake_opts o = {.big_requests = true};
+    sk_xfake *f = start(&o);
+    if (!f)
+        return;
+    sk_window *w = window(600, 500, true);
+    sk_image *im = sk_xui_window_frame(w);
+    pattern(im, 7);
+    sk_xui_window_present(w, NULL, 0);
+    CHECK(sk_xui_sync());
+    CHECK_INT(sk_xfake_count(f, 72, -1), 2);
+    CHECK(sk_xfake_big_count(f) >= 1);
+    sk_image back;
+    CHECK(sk_xui_window_readback(w, &back));
+    CHECK(same(im, &back));
+    sk_image_free(&back);
+    finish(f);
+}
+
+static void test_a_shown_window_maps_and_redraws_what_is_exposed(void)
+{
+    sk_xfake *f = start(NULL);
+    if (!f)
+        return;
+    sk_window *w = window(50, 40, false);
+    pattern(sk_xui_window_frame(w), 3);
+    CHECK(sk_xui_sync());
+    CHECK_INT(sk_xfake_count(f, 8, -1), 1);
+    CHECK(wait_request(f, 72, 1)); /* the Expose that the mapping brought */
+    sk_image back;
+    CHECK(sk_xui_window_readback(w, &back));
+    CHECK(same(sk_xui_window_frame(w), &back));
+    sk_image_free(&back);
+    finish(f);
+}
+
+static void test_a_resize_brings_a_new_cleared_frame(void)
+{
+    sk_xfake_opts o = {.resources = "Xft.dpi: 192"};
+    sk_xfake *f = start(&o);
+    if (!f)
+        return;
+    sk_window *w = window(40, 30, true);
+    pattern(sk_xui_window_frame(w), 1);
+    sk_xfake_configure(f, sk_xui_window_id(w), 100, 50);
+    const sk_event *e = wait_for(SK_EV_RESIZE, 1, 2000);
+    CHECK(e != NULL);
+    if (e) {
+        CHECK(e->win == w);
+        CHECK_INT(e->size.w, 50);
+        CHECK_INT(e->size.h, 25);
+        CHECK(e->size.scale == 2.0);
+    }
+    sk_image *im = sk_xui_window_frame(w);
+    CHECK_INT(im->w, 100);
+    CHECK_INT(im->h, 50);
+    bool clear = true;
+    for (int y = 0; y < im->h; y++)
+        for (int x = 0; x < im->w; x++)
+            clear = clear && sk_image_row(im, y)[x] == 0;
+    CHECK(clear);
+    int pw, ph;
+    sk_xui_window_size(w, &pw, &ph);
+    CHECK(pw == 50 && ph == 25);
+    CHECK(sk_xui_sync());
+    CHECK_INT(sk_xfake_count(f, 53, -1), 2);
+    CHECK_INT(sk_xfake_count(f, 54, -1), 1);
+    /* The same size again is no resize. */
+    sk_xfake_configure(f, sk_xui_window_id(w), 100, 50);
+    run_ms(50);
+    CHECK_INT(count_of(SK_EV_RESIZE), 1);
+    finish(f);
+}
+
+static void test_keys_and_autorepeat(void)
+{
+    sk_xfake *f = start(NULL);
+    if (!f)
+        return;
+    sk_window *w = window(20, 20, true);
+    uint32_t id = sk_xui_window_id(w);
+    key_event(f, SK_X11_KEY_PRESS, id, 38, 1000, 0);
+    const sk_event *e = wait_for(SK_EV_KEY_DOWN, 1, 2000);
+    CHECK(e && e->win == w && !strcmp(e->key.text, "a") && !e->key.repeat);
+    key_event(f, SK_X11_KEY_PRESS, id, 38, 1010, 1 /* Shift */);
+    e = wait_for(SK_EV_KEY_DOWN, 2, 2000);
+    CHECK(e && !strcmp(e->key.text, "A") && e->key.mods == SK_MOD_SHIFT && e->key.base == 'a');
+    /* The server's autorepeat: a release and a press at the same time. */
+    key_event(f, SK_X11_KEY_RELEASE, id, 38, 1100, 0);
+    key_event(f, SK_X11_KEY_PRESS, id, 38, 1100, 0);
+    e = wait_for(SK_EV_KEY_DOWN, 3, 2000);
+    CHECK(e && e->key.repeat);
+    CHECK_INT(count_of(SK_EV_KEY_UP), 0);
+    key_event(f, SK_X11_KEY_RELEASE, id, 38, 1200, 0);
+    e = wait_for(SK_EV_KEY_UP, 1, 2000);
+    CHECK(e && !strcmp(e->key.text, "a"));
+    key_event(f, SK_X11_KEY_PRESS, id, 36, 1300, 4 /* Control */);
+    e = wait_for(SK_EV_KEY_DOWN, 4, 2000);
+    CHECK(e && e->key.key == SK_KEY_ENTER && e->key.mods == SK_MOD_CTRL && !e->key.repeat);
+    finish(f);
+}
+
+static void test_mouse_clicks_and_the_wheel(void)
+{
+    sk_xfake_opts o = {.resources = "Xft.dpi: 192"};
+    sk_xfake *f = start(&o);
+    if (!f)
+        return;
+    sk_window *w = window(50, 50, true);
+    uint32_t id = sk_xui_window_id(w);
+    pointer_event(f, SK_X11_BUTTON_PRESS, id, 1, 10, 20, 100, 0);
+    pointer_event(f, SK_X11_BUTTON_RELEASE, id, 1, 10, 20, 150, 0);
+    pointer_event(f, SK_X11_BUTTON_PRESS, id, 1, 12, 21, 300, 1);
+    pointer_event(f, SK_X11_BUTTON_PRESS, id, 1, 12, 21, 1000, 0);
+    pointer_event(f, SK_X11_BUTTON_PRESS, id, 3, 12, 21, 1100, 0);
+    const sk_event *e = wait_for(SK_EV_MOUSE_DOWN, 4, 2000);
+    CHECK(e != NULL);
+    e = nth_of(SK_EV_MOUSE_DOWN, 0);
+    CHECK(e && e->mouse.x == 5 && e->mouse.y == 10 && e->mouse.button == 1 &&
+          e->mouse.clicks == 1);
+    e = nth_of(SK_EV_MOUSE_UP, 0);
+    CHECK(e && e->mouse.button == 1 && e->mouse.clicks == 1);
+    e = nth_of(SK_EV_MOUSE_DOWN, 1);
+    CHECK(e && e->mouse.clicks == 2 && e->mouse.mods == SK_MOD_SHIFT);
+    e = nth_of(SK_EV_MOUSE_DOWN, 2);
+    CHECK(e && e->mouse.clicks == 1);
+    e = nth_of(SK_EV_MOUSE_DOWN, 3);
+    CHECK(e && e->mouse.button == 3 && e->mouse.clicks == 1);
+
+    pointer_event(f, SK_X11_BUTTON_PRESS, id, 4, 0, 0, 1200, 0);
+    pointer_event(f, SK_X11_BUTTON_RELEASE, id, 4, 0, 0, 1201, 0);
+    pointer_event(f, SK_X11_BUTTON_PRESS, id, 5, 0, 0, 1202, 0);
+    pointer_event(f, SK_X11_BUTTON_PRESS, id, 7, 0, 0, 1203, 0);
+    wait_for(SK_EV_SCROLL, 3, 2000);
+    CHECK_INT(count_of(SK_EV_SCROLL), 3);
+    e = nth_of(SK_EV_SCROLL, 0);
+    CHECK(e && e->scroll.dy == 1 && e->scroll.dx == 0 && !e->scroll.precise);
+    e = nth_of(SK_EV_SCROLL, 1);
+    CHECK(e && e->scroll.dy == -1);
+    e = nth_of(SK_EV_SCROLL, 2);
+    CHECK(e && e->scroll.dx == -1 && e->scroll.dy == 0);
+
+    pointer_event(f, SK_X11_MOTION_NOTIFY, id, 0, 30, 40, 1300, 0);
+    e = wait_for(SK_EV_MOUSE_MOVE, 1, 2000);
+    CHECK(e && e->mouse.x == 15 && e->mouse.y == 20 && e->mouse.button == 0);
+    pointer_event(f, SK_X11_LEAVE_NOTIFY, id, 0, 30, 40, 1400, 0);
+    CHECK(wait_for(SK_EV_MOUSE_LEAVE, 1, 2000) != NULL);
+    finish(f);
+}
+
+static void client_message(sk_xfake *f, uint32_t win, uint32_t type, uint32_t d0, uint32_t d1)
+{
+    uint8_t ev[32] = {SK_X11_CLIENT_MESSAGE, 32};
+    sk_x11_set32(ev + 4, win);
+    sk_x11_set32(ev + 8, type);
+    sk_x11_set32(ev + 12, d0);
+    sk_x11_set32(ev + 16, d1);
+    sk_xfake_event(f, ev);
+}
+
+static void focus_event(sk_xfake *f, uint8_t type, uint32_t win, uint8_t mode)
+{
+    uint8_t ev[32] = {type, 3 /* NotifyNonlinear */};
+    sk_x11_set32(ev + 4, win);
+    ev[8] = mode;
+    sk_xfake_event(f, ev);
+}
+
+static void test_close_ping_and_focus(void)
+{
+    sk_xfake *f = start(NULL);
+    if (!f)
+        return;
+    sk_window *w = window(20, 20, true);
+    uint32_t id = sk_xui_window_id(w), protocols = sk_xfake_atom(f, "WM_PROTOCOLS");
+    client_message(f, id, protocols, sk_xfake_atom(f, "WM_DELETE_WINDOW"), 0);
+    const sk_event *e = wait_for(SK_EV_CLOSE, 1, 2000);
+    CHECK(e && e->win == w);
+
+    size_t sends = sk_xfake_count(f, 25, -1);
+    client_message(f, id, protocols, sk_xfake_atom(f, "_NET_WM_PING"), 4242);
+    CHECK(wait_request(f, 25, sends + 1));
+    size_t len;
+    uint8_t *r = sk_xfake_request(f, 25, -1, sends, &len);
+    CHECK(r && sk_x11_get32(r + 4) == SK_XFAKE_ROOT);
+    CHECK(r && sk_x11_get32(r + 12 + 4) == SK_XFAKE_ROOT && sk_x11_get32(r + 12 + 16) == 4242);
+    free(r);
+
+    focus_event(f, SK_X11_FOCUS_IN, id, 0);
+    focus_event(f, SK_X11_FOCUS_IN, id, 0);
+    focus_event(f, SK_X11_FOCUS_OUT, id, 1); /* a grab's */
+    focus_event(f, SK_X11_FOCUS_OUT, id, 0);
+    e = wait_for(SK_EV_FOCUS, 2, 2000);
+    run_ms(20);
+    CHECK_INT(count_of(SK_EV_FOCUS), 2);
+    CHECK(nth_of(SK_EV_FOCUS, 0) && nth_of(SK_EV_FOCUS, 0)->focused);
+    CHECK(e && !e->focused);
+
+    size_t before = sk_xfake_count(f, 101, -1);
+    uint8_t mapping[32] = {SK_X11_MAPPING_NOTIFY, 0, 0, 0, 1, 8, 248};
+    sk_xfake_event(f, mapping);
+    CHECK(wait_request(f, 101, before + 1));
+    finish(f);
+}
+
+static void test_cursors(void)
+{
+    sk_xfake *f = start(NULL);
+    if (!f)
+        return;
+    sk_window *w = window(20, 20, true);
+    sk_xui_window_set_cursor(w, SK_CURSOR_IBEAM);
+    CHECK(wait_request(f, 2, 1));
+    CHECK_INT(sk_xfake_count(f, 45, -1), 1);
+    size_t len;
+    uint8_t *r = sk_xfake_request(f, 45, -1, 0, &len);
+    CHECK(r && len == 20 && !memcmp(r + 12, "cursor", 6));
+    free(r);
+    r = sk_xfake_request(f, 94, -1, 0, &len);
+    CHECK(r && sk_x11_get16(r + 16) == 152 && sk_x11_get16(r + 18) == 153);
+    free(r);
+    r = sk_xfake_request(f, 2, -1, 0, &len);
+    CHECK(r && sk_x11_get32(r + 4) == sk_xui_window_id(w) &&
+          sk_x11_get32(r + 8) == SK_X11_CW_CURSOR);
+    free(r);
+    sk_xui_window_set_cursor(w, SK_CURSOR_HIDDEN);
+    sk_xui_window_set_cursor(w, SK_CURSOR_IBEAM);
+    CHECK(wait_request(f, 2, 3));
+    CHECK_INT(sk_xfake_count(f, 93, -1), 1);
+    CHECK_INT(sk_xfake_count(f, 94, -1), 1);
+    CHECK_INT(sk_xfake_count(f, 45, -1), 1);
+    finish(f);
+}
+
+static void got(void *ud, const char *utf8)
+{
+    (void)ud;
+    if (rec.clip_calls < (int)SK_LEN(rec.clips))
+        rec.clips[rec.clip_calls] = utf8 ? sk_xstrdup(utf8) : NULL;
+    rec.clip_calls++;
+}
+
+static bool wait_clip(int calls, int ms)
+{
+    uint64_t end = sk_now_ms() + (uint64_t)ms;
+    while (rec.clip_calls < calls && sk_now_ms() < end)
+        sk_xui_once(5);
+    return rec.clip_calls >= calls;
+}
+
+/* Runs the UI loop until the other client has its answer. */
+static bool answer(sk_xfake *f, char **data, size_t *len, uint32_t *type)
+{
+    uint64_t end = sk_now_ms() + 5000;
+    while (!sk_xfake_answer(f, data, len, type)) {
+        if (sk_now_ms() > end)
+            return false;
+        sk_xui_once(5);
+    }
+    return true;
+}
+
+static void test_the_clipboard_answers_another_client(void)
+{
+    sk_xfake *f = start(NULL);
+    if (!f)
+        return;
+    uint32_t clipboard = sk_xfake_atom(f, "CLIPBOARD"), utf8 = sk_xfake_atom(f, "UTF8_STRING");
+    sk_xui_clipboard_set("h\xc3\xa9llo");
+    CHECK(wait_request(f, 22, 1));
+    char *data = NULL;
+    size_t len = 0;
+    uint32_t type = 0;
+    sk_xfake_ask(f, clipboard, utf8);
+    CHECK(answer(f, &data, &len, &type));
+    CHECK(data && len == 6 && !memcmp(data, "h\xc3\xa9llo", 6));
+    CHECK_INT(type, utf8);
+    free(data);
+    sk_xfake_ask(f, clipboard, SK_X11_STRING);
+    CHECK(answer(f, &data, &len, &type));
+    CHECK_STR(data, "h\xe9llo");
+    CHECK_INT(type, SK_X11_STRING);
+    free(data);
+    sk_xfake_ask(f, clipboard, sk_xfake_atom(f, "TEXT"));
+    CHECK(answer(f, &data, &len, &type));
+    CHECK_STR(data, "h\xc3\xa9llo");
+    free(data);
+    sk_xfake_ask(f, clipboard, sk_xfake_atom(f, "TARGETS"));
+    CHECK(answer(f, &data, &len, &type));
+    CHECK(data && len == 16 && sk_x11_get32((uint8_t *)data + 4) == utf8);
+    CHECK_INT(type, SK_X11_ATOM);
+    free(data);
+    sk_xfake_ask(f, clipboard, sk_xfake_atom(f, "image/png"));
+    CHECK(answer(f, &data, &len, &type));
+    CHECK(data == NULL);
+    /* PRIMARY is its own. */
+    sk_xfake_ask(f, SK_X11_PRIMARY, utf8);
+    CHECK(answer(f, &data, &len, &type));
+    CHECK(data == NULL);
+    sk_xui_primary_set("selected");
+    CHECK(wait_request(f, 22, 2));
+    sk_xfake_ask(f, SK_X11_PRIMARY, utf8);
+    CHECK(answer(f, &data, &len, &type));
+    CHECK_STR(data, "selected");
+    free(data);
+    /* Another owner takes it, and is asked. */
+    sk_xfake_own(f, SK_X11_PRIMARY, "theirs", 0);
+    sk_xui_clipboard_get(true, got, NULL);
+    CHECK(wait_clip(1, 3000));
+    CHECK_STR(rec.clips[0], "theirs");
+    finish(f);
+}
+
+static char *letters(size_t n)
+{
+    char *s = sk_xmalloc(n + 1);
+    for (size_t i = 0; i < n; i++)
+        s[i] = (char)('a' + (i * 7 + i / 26) % 26);
+    s[n] = 0;
+    return s;
+}
+
+static void test_the_clipboard_goes_by_incr_to_another_client(void)
+{
+    sk_xfake *f = start(NULL);
+    if (!f)
+        return;
+    char *text = letters(300000);
+    sk_xui_clipboard_set(text);
+    CHECK(sk_xui_sync());
+    sk_xfake_ask(f, sk_xfake_atom(f, "CLIPBOARD"), sk_xfake_atom(f, "UTF8_STRING"));
+    char *data = NULL;
+    size_t len = 0;
+    uint32_t type = 0;
+    CHECK(answer(f, &data, &len, &type));
+    CHECK(data && len == 300000 && !memcmp(data, text, len));
+    free(data);
+    /* The requestor's window was watched for the transfer, then let go. */
+    bool watched = false, released = false;
+    for (size_t i = 0; i < sk_xfake_count(f, 2, -1); i++) {
+        uint8_t *r = sk_xfake_request(f, 2, -1, i, &len);
+        if (r && sk_x11_get32(r + 4) == SK_XFAKE_REQUESTOR) {
+            watched = watched || sk_x11_get32(r + 12) == SK_X11_PROPERTY_CHANGE_MASK;
+            released = released || sk_x11_get32(r + 12) == 0;
+        }
+        free(r);
+    }
+    CHECK(watched);
+    CHECK(released);
+    free(text);
+    finish(f);
+}
+
+static void test_the_clipboard_from_another_client(void)
+{
+    sk_xfake *f = start(NULL);
+    if (!f)
+        return;
+    uint32_t clipboard = sk_xfake_atom(f, "CLIPBOARD");
+    sk_xfake_own(f, clipboard, "from elsewhere", 0);
+    sk_xui_clipboard_get(false, got, NULL);
+    CHECK(wait_clip(1, 3000));
+    CHECK_STR(rec.clips[0], "from elsewhere");
+    char *text = letters(100000);
+    sk_xfake_own(f, clipboard, text, 4096);
+    sk_xui_clipboard_get(false, got, NULL);
+    CHECK(wait_clip(2, 5000));
+    CHECK(rec.clips[1] && !strcmp(rec.clips[1], text));
+    free(text);
+    /* No owner: nothing, after UTF8_STRING and then STRING were asked. */
+    size_t converts = sk_xfake_count(f, 24, -1);
+    sk_xui_clipboard_get(true, got, NULL);
+    CHECK(wait_clip(3, 3000));
+    CHECK(rec.clips[2] == NULL);
+    CHECK_INT(sk_xfake_count(f, 24, -1), converts + 2);
+    finish(f);
+}
+
+static void test_the_clipboard_round_trip_through_the_server(void)
+{
+    sk_xfake *f = start(NULL);
+    if (!f)
+        return;
+    sk_xui_clipboard_set("mine \xe2\x9c\x93");
+    sk_xui_clipboard_get(false, got, NULL);
+    CHECK(wait_clip(1, 3000));
+    CHECK_STR(rec.clips[0], "mine \xe2\x9c\x93");
+    char *text = letters(300000);
+    sk_xui_clipboard_set(text);
+    sk_xui_primary_set("other");
+    sk_xui_clipboard_get(false, got, NULL);
+    sk_xui_clipboard_get(true, got, NULL);
+    CHECK(wait_clip(2, 5000));
+    CHECK(rec.clips[1] && !strcmp(rec.clips[1], text));
+    CHECK(wait_clip(3, 3000));
+    CHECK_STR(rec.clips[2], "other");
+    free(text);
+    finish(f);
+}
+
+static void test_the_clipboard_gives_up_on_a_silent_owner(void)
+{
+    sk_xfake *f = start(NULL);
+    if (!f)
+        return;
+    sk_xfake_own(f, sk_xfake_atom(f, "CLIPBOARD"), NULL, 0);
+    uint64_t t0 = sk_now_ms();
+    sk_xui_clipboard_get(false, got, NULL);
+    CHECK(wait_clip(1, 5000));
+    uint64_t took = sk_now_ms() - t0;
+    CHECK(rec.clips[0] == NULL);
+    CHECK(took >= 1900 && took < 4000);
+    finish(f);
+}
+
+static struct {
+    int once, repeat, posted;
+    char order[8];
+    pthread_t ui;
+    bool on_ui;
+    int repeat_id;
+} tk;
+
+static void once_task(void *ud)
+{
+    (void)ud;
+    tk.once++;
+}
+
+static void repeat_task(void *ud)
+{
+    (void)ud;
+    if (++tk.repeat == 3)
+        sk_xui_cancel(tk.repeat_id);
+}
+
+static void posted_task(void *ud)
+{
+    tk.order[tk.posted++] = *(const char *)ud;
+    tk.on_ui = pthread_equal(pthread_self(), tk.ui) != 0;
+}
+
+static void *poster(void *arg)
+{
+    (void)arg;
+    sk_test_sleep_ms(30);
+    sk_xui_post(posted_task, "a");
+    sk_xui_post(posted_task, "b");
+    sk_xui_post(posted_task, "c");
+    sk_xui_quit();
+    return NULL;
+}
+
+static void test_timers_tasks_and_quit(void)
+{
+    sk_xfake *f = start(NULL);
+    if (!f)
+        return;
+    memset(&tk, 0, sizeof tk);
+    tk.ui = pthread_self();
+    sk_xui_timer(10, 0, once_task, NULL);
+    tk.repeat_id = sk_xui_timer(5, 5, repeat_task, NULL);
+    int cancelled = sk_xui_timer(10, 0, once_task, NULL);
+    sk_xui_cancel(cancelled);
+    run_ms(80);
+    CHECK_INT(tk.once, 1);
+    CHECK_INT(tk.repeat, 3);
+    pthread_t th;
+    CHECK(pthread_create(&th, NULL, poster, NULL) == 0);
+    CHECK(sk_xui_run());
+    pthread_join(th, NULL);
+    CHECK_INT(tk.posted, 3);
+    CHECK(!memcmp(tk.order, "abc", 3));
+    CHECK(tk.on_ui);
+    finish(f);
+}
+
+static void test_frames_come_at_most_every_16_ms(void)
+{
+    sk_xfake *f = start(NULL);
+    if (!f)
+        return;
+    sk_window *w = window(20, 20, true);
+    sk_xui_window_request_frame(w);
+    sk_xui_window_request_frame(w);
+    CHECK(wait_for(SK_EV_FRAME, 1, 1000) != NULL);
+    uint64_t first = sk_now_ms();
+    run_ms(5);
+    CHECK_INT(count_of(SK_EV_FRAME), 1);
+    sk_xui_window_request_frame(w);
+    CHECK(wait_for(SK_EV_FRAME, 2, 1000) != NULL);
+    CHECK(sk_now_ms() - first >= 10);
+    CHECK_INT(count_of(SK_EV_FRAME), 2);
+    finish(f);
+}
+
+static void test_a_lost_connection_ends_the_run(void)
+{
+    sk_xfake *f = start(NULL);
+    if (!f)
+        return;
+    window(20, 20, true);
+    sk_xfake_stop(f);
+    int quiet = open("/dev/null", O_WRONLY);
+    sk_log_set_fd(quiet);
+    uint64_t t0 = sk_now_ms();
+    CHECK(!sk_xui_run());
+    CHECK(sk_now_ms() - t0 < 2000);
+    sk_log_set_fd(2);
+    close(quiet);
+    sk_xui_close();
+    forget();
+}
+
+const sk_test sk_suite_x11_ui[] = {
+    T(test_open_and_a_window_s_properties),
+    T(test_present_and_readback_in_chunks),
+    T(test_big_frames_go_in_big_requests),
+    T(test_a_shown_window_maps_and_redraws_what_is_exposed),
+    T(test_a_resize_brings_a_new_cleared_frame),
+    T(test_keys_and_autorepeat),
+    T(test_mouse_clicks_and_the_wheel),
+    T(test_close_ping_and_focus),
+    T(test_cursors),
+    T(test_the_clipboard_answers_another_client),
+    T(test_the_clipboard_goes_by_incr_to_another_client),
+    T(test_the_clipboard_from_another_client),
+    T(test_the_clipboard_round_trip_through_the_server),
+    T(test_the_clipboard_gives_up_on_a_silent_owner),
+    T(test_timers_tasks_and_quit),
+    T(test_frames_come_at_most_every_16_ms),
+    T(test_a_lost_connection_ends_the_run),
+    {0},
+};

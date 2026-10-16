@@ -45,4 +45,8 @@
     X(monitor)                                                               \
     X(dashboard)                                                             \
     X(foreign)                                                               \
-    X(headless)
+    X(headless)                                                              \
+    X(x11)                                                                   \
+    X(x11_keys)                                                              \
+    X(x11_ui)                                                                \
+    X(ui_x11)

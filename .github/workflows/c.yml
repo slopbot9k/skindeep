@@ -18,8 +18,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {os: ubuntu-latest, cc: gcc}
-          - {os: ubuntu-latest, cc: clang}
+          # Linux runs the tests under Xvfb, so the window tests have a
+          # display; macOS has no X server and skips them.
+          - {os: ubuntu-latest, cc: gcc, xvfb: 'xvfb-run -a -s "-screen 0 1280x1024x24"'}
+          - {os: ubuntu-latest, cc: clang, xvfb: 'xvfb-run -a -s "-screen 0 1280x1024x24"'}
           - {os: macos-latest, cc: cc}
     runs-on: ${{ matrix.os }}
     name: ${{ matrix.os }} ${{ matrix.cc }}
@@ -35,6 +37,9 @@ jobs:
           git checkout -q FETCH_HEAD
       - name: Compiler
         run: ${{ matrix.cc }} --version
+      - name: Xvfb
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y xvfb
       # A failing step's last lines go out as an annotation as well: the
       # API serves annotations of a public repository to anyone, the log
       # only to a signed-in user.
@@ -42,7 +47,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          if ! make test CC=${{ matrix.cc }} 2>&1 | tee out.log; then
+          if ! ${{ matrix.xvfb }} make test CC=${{ matrix.cc }} 2>&1 | tee out.log; then
             echo "::error title=tests::$(tr -d '\r' < out.log | grep -v -E '^(cc|gcc|clang|ar|make)( |\[)' | tail -n 30 | cut -c1-200 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"
             exit 1
           fi
@@ -50,7 +55,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          if ! make debug CC=${{ matrix.cc }} 2>&1 | tee out.log; then
+          if ! ${{ matrix.xvfb }} make debug CC=${{ matrix.cc }} 2>&1 | tee out.log; then
             echo "::error title=sanitizers::$(tr -d '\r' < out.log | grep -v -E '^(cc|gcc|clang|ar|make)( |\[)' | tail -n 30 | cut -c1-200 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"
             exit 1
           fi
