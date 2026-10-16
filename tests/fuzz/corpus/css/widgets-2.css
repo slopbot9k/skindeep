@@ -1,0 +1,37 @@
+.w-bar .seg.on { background: var(--fill); box-shadow: 0 0 4px var(--glow); }
+
+.w-led { flex-direction: row; gap: 6px; }
+.w-led .lamp { width: 12px; height: 12px; border-radius: 50%; background: var(--off); flex: none; }
+.w-led .lamp.on { background: var(--on); box-shadow: 0 0 8px var(--on); }
+
+.w-readout { align-items: flex-start; }
+.w-readout .value { font-size: 18px; }
+
+.w-sprite .sheet { flex: 1 1 auto; width: 100%; min-height: 0; background-repeat: no-repeat; image-rendering: pixelated; }
+
+.w-list { align-items: stretch; justify-content: flex-start; overflow: hidden; }
+.w-list.nodata { display: none; }
+.w-list .items { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow: hidden; }
+.w-list .item { display: flex; flex: none; gap: 6px; align-items: baseline; white-space: nowrap; overflow: hidden; }
+.w-list .item .mark { flex: none; }
+.w-list .item .text { overflow: hidden; text-overflow: ellipsis; }
+.w-list .item.doing { color: var(--fill); }
+.w-list .item.done { opacity: 0.55; }
+.w-list .item.done .text { text-decoration: line-through; }
+
+/* The list's toggle (decision 0034): shown while the list has an item,
+   the list hidden while the tab shows what it replaces. */
+.skin.checklist-off .w-list { display: none; }
+.w-toggle { flex-direction: row; gap: 4px; display: none; }
+.skin.checklist .w-toggle, .skin.checklist-off .w-toggle { display: flex; }
+.w-toggle .option { cursor: pointer; white-space: nowrap; opacity: 0.6; }
+.w-toggle .option:hover { opacity: 1; }
+.w-toggle .option.on { cursor: default; opacity: 1; }
+
+/* The usage limits (decision 0011): one meter per limit, sharing the
+   rect, so an absent limit leaves no gap. */
+.w-limits { align-items: stretch; justify-content: stretch; gap: 4px; }
+.w-limits.across { flex-direction: row; }
+.w-limits.nodata { display: none; }
+.w-limits > .w { position: relative; flex: 1 1 0; min-width: 0; min-height: 0; }
+.w-limits > .w .label { overflow: hidden; text-overflow: ellipsis; max-width: 100%; }

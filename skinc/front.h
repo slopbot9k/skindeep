@@ -134,14 +134,24 @@ typedef struct {
     sk_diags css_diags;          /* the stylesheet's syntax errors, given after validate.js's */
     SK_VEC(const char *) spans;  /* the span-<x> classes the sheets name */
     size_t states;               /* table entries in all */
+    size_t max_states;           /* the most in all; 0 is SK_FRONT_MAX_STATES */
+    bool states_said;            /* the cap was reported */
+    const char *css_text;        /* in place of the stylesheet's file, when set */
+    size_t css_len;
     size_t cascades;
     sk_diags *d;
     void *dedupe;                /* style text to index */
 } sk_front;
 
+/* A skin reaches at most this many states in all. */
+#define SK_FRONT_MAX_STATES 65536u
+
 /* Checks the skin at dir and computes its styles. False with messages
  * in d for a skin that fails. f is ready for sk_front_free either way. */
 bool sk_front_run(sk_front *f, const char *dir, sk_diags *d);
+/* The same with the stylesheet's text given, as a fuzz target or an
+ * editor gives it, and a cap on the states (0 for the default). */
+bool sk_front_run_text(sk_front *f, const char *dir, const char *css, size_t n, size_t max_states, sk_diags *d);
 void sk_front_free(sk_front *f);
 
 /* The summary skinc prints; verbose adds every element's states and

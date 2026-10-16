@@ -864,6 +864,17 @@ static void states(sk_front *f, sk_el *el, sk_el *origin, input_vec *found)
     size_t total = 1;
     for (size_t i = 0; i < in.len; i++)
         total *= in.ptr[i].radix;
+    /* The cap on the states in all: past it, an element takes its
+     * default state alone, and the skin is refused. */
+    size_t cap = f->max_states ? f->max_states : SK_FRONT_MAX_STATES;
+    if (f->states + SK_MIN(total, (size_t)SK_PACK_MAX_STATES) > cap) {
+        if (!f->states_said)
+            sk_diag(f->d, f->css_shown ? f->css_shown : "skin.css", "(states)",
+                    "the skin reaches more than %zu states in all", cap);
+        f->states_said = true;
+        in.len = 0;
+        total = 1;
+    }
     if (in.len > SK_PACK_MAX_INPUTS || total > SK_PACK_MAX_STATES) {
         sk_buf b = {0};
         describe(&b, f, el);

@@ -54,6 +54,9 @@ static void test_parse_and_print(void)
     CHECK_STR(sel(":not(.a, #b):is(.c):where(d)", NULL), ":not(.a, #b):is(.c):where(d)");
     CHECK_STR(sel(".s:has(> .a, + .b)", NULL), ".s:has(> .a, + .b)");
     CHECK_STR(sel("li:first-child:last-child:only-child", NULL), "li:first-child:last-child:only-child");
+    /* Names print escaped, so they read back the same (found by fuzz-css). */
+    CHECK_STR(sel("a\\.b.\\31 x#-\\32", NULL), "a\\.b.\\31 x#-\\32 ");
+    CHECK_STR(sel(".\\-", NULL), ".\\-");
 }
 
 static void test_specificity(void)

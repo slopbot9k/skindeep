@@ -41,7 +41,16 @@ static void check_css(void *data, const char *path, const char *shown, sk_diags 
 {
     sk_front *f = data;
     size_t n = 0;
-    char *text = slurp(path, &n);
+    char *text = NULL;
+    if (f->css_text) {
+        n = f->css_len;
+        text = sk_xmalloc(n + 1);
+        if (n)
+            memcpy(text, f->css_text, n);
+        text[n] = 0;
+    } else {
+        text = slurp(path, &n);
+    }
     if (!text)
         return;
     f->css_shown = sk_xstrdup(shown);
@@ -280,9 +289,8 @@ static void internal_sheet(sk_css_sheet *sheet, const char *name, const char *te
     sk_diags_free(&d);
 }
 
-bool sk_front_run(sk_front *f, const char *dir, sk_diags *d)
+static bool run(sk_front *f, const char *dir, sk_diags *d)
 {
-    memset(f, 0, sizeof *f);
     sk_arena_init(&f->arena, 0);
     f->d = d;
     size_t before = d->items.len;
@@ -313,6 +321,21 @@ bool sk_front_run(sk_front *f, const char *dir, sk_diags *d)
     sk_tree_build(f);
     sk_cascade_run(f);
     return d->items.len == before;
+}
+
+bool sk_front_run(sk_front *f, const char *dir, sk_diags *d)
+{
+    memset(f, 0, sizeof *f);
+    return run(f, dir, d);
+}
+
+bool sk_front_run_text(sk_front *f, const char *dir, const char *css, size_t n, size_t max_states, sk_diags *d)
+{
+    memset(f, 0, sizeof *f);
+    f->css_text = css ? css : "";
+    f->css_len = css ? n : 0;
+    f->max_states = max_states;
+    return run(f, dir, d);
 }
 
 void sk_front_free(sk_front *f)

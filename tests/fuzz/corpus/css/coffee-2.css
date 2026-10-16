@@ -1,0 +1,48 @@
+
+/* The lava lamp on its shelf: wax pooled and dark while idle, glowing
+   and rising while the agent works. */
+.shelf { border-radius: 2px; background: url(images/counter.jpg) 0 0 / 200px 200px, #9a6638; background-blend-mode: multiply;
+  box-shadow: inset 0 1px 0 rgba(255, 220, 170, 0.4), 0 4px 6px rgba(0, 0, 0, 0.6); }
+.lava { display: block; }
+.lava.nodata { opacity: 1; }
+.lava::after { content: ""; position: absolute; inset: 0; background: url(images/lava.png) 0 0 / 68px 150px no-repeat; }
+.lava:has(.lamp.on)::before { content: ""; position: absolute; left: -90px; right: -40px; top: -10px; bottom: -20px;
+  background: radial-gradient(ellipse 50% 50% at 62% 45%, rgba(255, 110, 90, 0.32), rgba(255, 110, 90, 0) 100%); }
+.lava .lamp, .lava .lamp.on { position: absolute; left: 14px; top: 30px; width: 40px; height: 74px; border-radius: 0; box-shadow: none;
+  clip-path: polygon(7px 0, 33px 0, 40px 50px, 37px 74px, 3px 74px, 0 50px);
+  background: radial-gradient(ellipse 70% 16% at 50% 100%, #7a2a4a 85%, rgba(122, 42, 74, 0) 100%), linear-gradient(#5c3c24, #48301c 60%, #50321e); }
+.lava .lamp::before, .lava .lamp::after { content: ""; position: absolute; border-radius: 48% 52% 44% 56% / 56% 50% 50% 44%; background: #7a2a4a; }
+.lava .lamp::before { left: 9px; bottom: 6px; width: 15px; height: 12px; }
+.lava .lamp::after { left: 22px; bottom: 4px; width: 10px; height: 9px; }
+.lava .lamp.on { background: radial-gradient(ellipse 70% 16% at 50% 100%, #ff3f8e 85%, rgba(255, 63, 142, 0) 100%),
+  radial-gradient(ellipse 90% 70% at 50% 100%, #fff3b0, #ffb54a 45%, #ff8040 100%); }
+.lava .lamp.on::before, .lava .lamp.on::after { background: radial-gradient(circle at 38% 32%, #ff9ac6, #f0287a 70%); filter: blur(0.4px); }
+.lava .lamp.on::before { animation: rise 7s ease-in-out infinite; }
+.lava .lamp.on::after { animation: rise 9.5s ease-in-out -4s infinite; }
+@keyframes rise {
+  0% { transform: translateY(0) scale(1, 1); }
+  45% { transform: translateY(-50px) scale(0.85, 1.25); }
+  55% { transform: translateY(-54px) scale(1.05, 0.9); }
+  100% { transform: translateY(0) scale(1, 1); } }
+.lava .label { position: absolute; left: -12px; right: -12px; top: 150px; text-align: center; font: 10px/14px Shrikhand, cursive;
+  letter-spacing: 1px; text-transform: none; color: #5a3420; transition: color 0.4s, text-shadow 0.4s; }
+.lava .lamp.on + .label { color: #ffd6b0; text-shadow: 0 0 4px #ff7a3c, 0 0 10px #ff4f6a; }
+
+/* The cabinet: a turntable, a tube amp, a cubby of LPs. */
+.cabinet { border-radius: 4px; background: url(images/counter.jpg) 0 0 / 280px 280px, #7a4c2c; background-blend-mode: multiply;
+  box-shadow: inset 0 0 0 1px rgba(255, 210, 160, 0.25), inset 0 0 12px rgba(0, 0, 0, 0.5), 0 6px 16px rgba(0, 0, 0, 0.6); }
+.deck { border-radius: 6px; background: url(images/deck.png) 0 0 / 284px 200px no-repeat; box-shadow: 0 3px 8px rgba(0, 0, 0, 0.6); }
+.amp { border-radius: 5px; background: url(images/amp.png) 0 0 / 284px 168px no-repeat; box-shadow: 0 3px 8px rgba(0, 0, 0, 0.6); }
+.lps { border-radius: 2px; background: #1a100b url(images/lps.png) left bottom / 284px 210px no-repeat;
+  box-shadow: inset 0 10px 14px rgba(0, 0, 0, 0.75); }
+
+/* The record turns while the terminal prints. */
+.spin { display: block; }
+.spin.nodata { opacity: 1; }
+.spin .label { display: none; }
+.spin .lamp, .spin .lamp.on { position: absolute; left: 16px; top: 16px; width: 140px; height: 140px; border-radius: 50%;
+  background: url(images/record.png) 0 0 / 140px 140px; box-shadow: 0 2px 5px rgba(0, 0, 0, 0.7);
+  animation: turn 1.8s linear infinite; animation-play-state: paused; }
+.spin .lamp.on { animation-play-state: running; }
+@keyframes turn { to { transform: rotate(360deg); } }
+

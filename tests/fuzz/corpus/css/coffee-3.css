@@ -1,0 +1,44 @@
+/* The context rings the platter, the compact threshold a red mark. The
+   tonearm rides above. */
+.platter { display: block; }
+.platter .dial { position: absolute; inset: 0; width: 172px; height: 172px; }
+.platter .track { stroke: rgba(255, 220, 160, 0.16); }
+.platter .fill { stroke: #f0a040; filter: drop-shadow(0 0 2px rgba(255, 170, 60, 0.8)); }
+.platter .mark { stroke: #ff4a3a; stroke-width: 2; }
+.platter text.value { font-family: "Amatic SC", cursive; font-weight: bold; font-size: 14px; fill: #2a1206; }
+.platter .label { position: absolute; left: 184px; top: 138px; width: 80px; height: 14px; text-align: center;
+  font: 9px/14px "Cutive Mono", monospace; letter-spacing: 2px; color: #e8e4dc; }
+.platter::after { content: ""; position: absolute; left: -12px; top: -14px; width: 284px; height: 200px;
+  background: url(images/tonearm.png) 0 0 / 284px 200px no-repeat; }
+
+/* The amp's VU meter reads tokens per second, its knob the CPU. */
+.vu { display: block; }
+.vu .dial { position: absolute; inset: 0; width: 160px; height: 120px; }
+.vu .needle { stroke: #1a1410; stroke-width: 1.3; }
+.vu .pivot { fill: #2a2018; }
+.vu .label { display: none; }
+.vu .value { position: absolute; right: 9px; bottom: 5px; font: 13px/13px "Cutive Mono", monospace; color: #6a2e14; }
+.vu::after { content: ""; position: absolute; inset: 0; border-radius: 3px;
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.16) 0%, rgba(255, 255, 255, 0) 38%), radial-gradient(ellipse at 50% 120%, rgba(0, 0, 0, 0) 50%, rgba(40, 20, 0, 0.35) 100%); }
+.cpu { justify-content: flex-start; gap: 0; color: #2a2420; }
+.cpu .knob-box { flex: none; width: 76px; height: 76px; }
+.cpu .knob-image { filter: drop-shadow(0 3px 3px rgba(0, 0, 0, 0.55)); }
+.cpu .label { margin-top: 2px; font: 10px/14px "Cutive Mono", monospace; letter-spacing: 2px; text-transform: uppercase; }
+.cpu .value { font: 13px/16px "Cutive Mono", monospace; }
+
+/* The window onto the terminal: painted teal wood. */
+.sash { border-radius: 3px; background: url(images/counter.jpg) 0 0 / 240px 240px, #4f8f86; background-blend-mode: multiply;
+  box-shadow: inset 0 0 0 1px rgba(200, 255, 240, 0.22), inset 0 0 10px rgba(0, 0, 0, 0.6), 0 5px 14px rgba(0, 0, 0, 0.6); }
+
+/* The table under its block-print cloth. */
+.tabletop { background: url(images/counter.jpg) 0 0 / 300px 300px, #c08a52; background-blend-mode: multiply;
+  box-shadow: inset 0 2px 0 rgba(255, 220, 170, 0.35), inset 0 14px 18px rgba(0, 0, 0, 0.35); }
+.cloth { border-radius: 0 0 3px 3px;
+  background: linear-gradient(#e8a848 0 3px, #5a1e12 3px 5px, rgba(0, 0, 0, 0) 5px) 0 0 / 100% 100% no-repeat,
+    radial-gradient(circle, #f0bc52 1.8px, rgba(0, 0, 0, 0) 2.3px) 0 6px / 22px 22px,
+    radial-gradient(circle, rgba(0, 0, 0, 0) 3px, #22385a 3.5px, #22385a 5.5px, rgba(0, 0, 0, 0) 6px) 11px 17px / 22px 22px,
+    linear-gradient(rgba(0, 0, 0, 0.22), rgba(0, 0, 0, 0) 30%, rgba(0, 0, 0, 0.3)),
+    #9a3e24;
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.6); }
+.cloth::after { content: ""; position: absolute; left: 0; right: 0; bottom: -6px; height: 6px;
+  background: repeating-linear-gradient(90deg, #d89a3e 0 2px, rgba(0, 0, 0, 0) 2px 5px); }

@@ -6,6 +6,8 @@
  * else is refused with the line it is on. */
 #include "css.h"
 
+#include "../src/base/utf8.h"
+
 #include <limits.h>
 #include <string.h>
 
@@ -534,6 +536,35 @@ sk_selector_list *sk_selectors_parse(sk_arena *a, const sk_cv *cv, size_t n, uin
 
 /* ---- Printing ---- */
 
+/* An identifier as CSSOM serializes one, escaped so it reads back the
+ * same. */
+static void ident(sk_buf *out, sk_str s)
+{
+    size_t i = 0;
+    int index = 0;
+    uint32_t first = 0;
+    while (i < s.len) {
+        uint32_t c;
+        i += sk_utf8_decode(s.ptr + i, s.len - i, &c, NULL);
+        if (index == 0)
+            first = c;
+        bool digit = c >= '0' && c <= '9';
+        if (c == 0) {
+            sk_buf_append_c(out, "\xEF\xBF\xBD");
+        } else if ((c >= 1 && c <= 0x1F) || c == 0x7F || (index == 0 && digit) || (index == 1 && digit && first == '-')) {
+            sk_buf_printf(out, "\\%x ", (unsigned)c);
+        } else if (index == 0 && c == '-' && i >= s.len) {
+            sk_buf_append_c(out, "\\-");
+        } else if (c >= 0x80 || c == '-' || c == '_' || digit || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) {
+            sk_utf8_append(out, c);
+        } else {
+            sk_buf_putc(out, '\\');
+            sk_utf8_append(out, c);
+        }
+        index++;
+    }
+}
+
 static void print_list(sk_buf *out, const sk_selector_list *l)
 {
     for (size_t i = 0; l && i < l->n; i++) {
@@ -557,18 +588,18 @@ void sk_selector_print(sk_buf *out, const sk_selector *s)
             const sk_simple *x = &c->simples[j];
             switch (x->kind) {
             case SK_SEL_TYPE:
-                sk_buf_append_str(out, x->name);
+                ident(out, x->name);
                 break;
             case SK_SEL_UNIVERSAL:
                 sk_buf_putc(out, '*');
                 break;
             case SK_SEL_CLASS:
                 sk_buf_putc(out, '.');
-                sk_buf_append_str(out, x->name);
+                ident(out, x->name);
                 break;
             case SK_SEL_ID:
                 sk_buf_putc(out, '#');
-                sk_buf_append_str(out, x->name);
+                ident(out, x->name);
                 break;
             case SK_SEL_HOVER:
                 sk_buf_append_c(out, ":hover");

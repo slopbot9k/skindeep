@@ -1,0 +1,43 @@
+.press, .jar { filter: drop-shadow(0 3px 2px rgba(0, 0, 0, 0.5)); }
+.plant { background: url(images/plant.png) 0 0 / 86px 120px no-repeat; filter: drop-shadow(0 3px 2px rgba(0, 0, 0, 0.45)); }
+.typewriter { background: url(images/typewriter.png) 0 0 / 168px 96px no-repeat; }
+
+/* Masking tape labels on the press, the jars and the mugs' plank. */
+.tape .label { position: absolute; z-index: 1; left: 50%; top: 50%; transform: translate(-50%, -50%) rotate(-4deg); padding: 1px 5px;
+  background: rgba(236, 224, 190, 0.94); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+  font: bold 15px/15px "Amatic SC", cursive; letter-spacing: 1px; text-transform: none; color: #3a2a1c; }
+
+/* The French press: coffee under a bloom of crema. */
+.press { display: block; }
+.press::after { content: ""; position: absolute; inset: 0; background: url(images/press.png) 0 0 / 70px 118px no-repeat; }
+.press .track { position: absolute; left: 12px; top: 28px; width: 40px; height: 74px; flex: none; background: rgba(255, 240, 220, 0.07); }
+.press .fill { background: linear-gradient(#c8925a 0 3px, #3e1e0c 3px, #22100a); box-shadow: none; }
+.press .label { top: 62%; }
+
+/* Mason jars of cold brew. */
+.jar { display: block; }
+.jar::after { content: ""; position: absolute; inset: 0; background: url(images/jar.png) 0 0 / 56px 100px no-repeat; }
+.jar .track { position: absolute; left: 8px; top: 22px; width: 40px; height: 72px; flex: none; border-radius: 3px 3px 9px 9px;
+  background: rgba(255, 255, 255, 0.06); }
+.jar .fill { border-radius: 0 0 9px 9px; box-shadow: none;
+  background: linear-gradient(rgba(226, 150, 70, 0.95) 0 2px, rgba(126, 60, 22, 0.92) 2px, rgba(66, 28, 10, 0.95)); }
+.jar .label { top: 60%; }
+/* The time to a limit's reset, a second strip of tape. */
+.jar .resets { position: absolute; z-index: 1; left: 50%; top: 86%; transform: translate(-50%, -50%) rotate(3deg); padding: 1px 4px;
+  background: rgba(236, 224, 190, 0.94); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.45); opacity: 1;
+  font: bold 13px/13px "Amatic SC", cursive; letter-spacing: 1px; color: #3a2a1c; }
+.jar .resets .word { display: none; }
+/* Every usage limit (decision 0011): a jar a limit, each standing in the
+   middle of its share of the table. Four jars stand smaller. */
+.jars { gap: 0; }
+.jars .jar::after { background-position: 50% 100%; }
+.jars .jar .track { left: calc(50% - 20px); top: auto; bottom: 6px; }
+.jars .jar .label { top: calc(100% - 40px); max-width: none; overflow: visible; }
+.jars.n-4 .jar .label, .jars.n-5 .jar .label, .jars.n-6 .jar .label { font-size: 14px; letter-spacing: 0; }
+.jars .jar .resets { top: calc(100% - 14px); }
+.jars.n-4 .jar, .jars.n-5 .jar, .jars.n-6 .jar { transform: scale(0.75); transform-origin: 50% 100%; }
+
+/* Mismatched mugs on a plank, one for each subagent. */
+.mugs { justify-content: flex-start; }
+.mugs .sheet { flex: none; width: 186px; height: 84px; image-rendering: auto; }
+.mugs .label { top: 92px; }
