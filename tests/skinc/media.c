@@ -196,6 +196,24 @@ static void test_png_forms(void)
     CHECK_PX(im, 3, 0, SK_RGB(0, 0, 0));
     sk_image_free(&im);
     free(png);
+    /* An empty IDAT before the data, as the fuzzer made one, decodes
+     * as the PNG without it: stb_image never sees it. */
+    png = sk_test_png(5, 3, 6, 8, false, rgba[0], 20, NULL, 0, NULL, 0, &n);
+    size_t at = 8;
+    while (at + 8 <= n && memcmp(png + at + 4, "IDAT", 4))
+        at += 12 + ((size_t)png[at] << 24 | (size_t)png[at + 1] << 16 | (size_t)png[at + 2] << 8 | png[at + 3]);
+    CHECK(at + 8 <= n);
+    uint8_t *with = malloc(n + 12);
+    memcpy(with, png, at);
+    memcpy(with + at, "\0\0\0\0IDAT\0\0\0\0", 12);
+    memcpy(with + at + 12, png + at, n - at);
+    im = decoded(with, n + 12);
+    sk_image plain = decoded(png, n);
+    CHECK(im.w == plain.w && im.h == plain.h && !memcmp(im.px, plain.px, (size_t)im.w * (size_t)im.h * 4));
+    sk_image_free(&im);
+    sk_image_free(&plain);
+    free(with);
+    free(png);
 }
 
 /* An Exif segment saying orientation o, after a JPEG's SOI: the APP1

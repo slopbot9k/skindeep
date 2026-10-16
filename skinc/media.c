@@ -103,12 +103,17 @@ static bool jpeg_segment(const uint8_t *d, size_t n, size_t *at, uint8_t *marker
     return false;
 }
 
-/* A PNG with each PLTE chunk of fewer than 256 entries made 256, the
- * new ones opaque black, or NULL when it has none. stb_image keeps its
- * palette on the stack, uninitialized past the entries the file gives,
- * and reads an index past them from there. It checks no CRC, so the
- * new chunks keep the old ones' places and carry none. */
-static uint8_t *full_palette(const uint8_t *d, size_t n, size_t *out_n)
+/* A PNG as stb_image can be given it, or NULL when it needs no change:
+ * - each PLTE chunk of fewer than 256 entries made 256, the new ones
+ *   opaque black. stb_image keeps its palette on the stack,
+ *   uninitialized past the entries the file gives, and reads an index
+ *   past them from there;
+ * - each empty IDAT chunk dropped. Before any data, stb_image adds its
+ *   offset to its still-null buffer for one (undefined in C), and an
+ *   empty chunk adds nothing to the image.
+ * It checks no CRC, so the new chunks keep the old ones' places and
+ * carry none. */
+static uint8_t *png_fixed(const uint8_t *d, size_t n, size_t *out_n)
 {
     sk_buf out = {0};
     size_t done = 0;
@@ -116,7 +121,10 @@ static uint8_t *full_palette(const uint8_t *d, size_t n, size_t *out_n)
         size_t len = be32(d + at);
         if (len > n - at - 12)
             break;
-        if (!memcmp(d + at + 4, "PLTE", 4) && len < 768 && len % 3 == 0) {
+        if (!memcmp(d + at + 4, "IDAT", 4) && len == 0) {
+            sk_buf_append(&out, d + done, at - done);
+            done = at + 12;
+        } else if (!memcmp(d + at + 4, "PLTE", 4) && len < 768 && len % 3 == 0) {
             static const uint8_t head[8] = {0, 0, 3, 0, 'P', 'L', 'T', 'E'};
             sk_buf_append(&out, d + done, at - done);
             sk_buf_append(&out, head, 8);
@@ -279,7 +287,7 @@ bool sk_media_image(const uint8_t *data, size_t n, size_t max_pixels, sk_image *
     if (type != SK_MEDIA_PNG && type != SK_MEDIA_JPEG)
         return say(err, "is not a PNG or a JPEG");
     size_t padded_n = 0;
-    uint8_t *padded = type == SK_MEDIA_PNG ? full_palette(data, n, &padded_n) : NULL;
+    uint8_t *padded = type == SK_MEDIA_PNG ? png_fixed(data, n, &padded_n) : NULL;
     bool ok = padded ? decode(padded, padded_n, type, max_pixels, out, err) : decode(data, n, type, max_pixels, out, err);
     free(padded);
     return ok;
