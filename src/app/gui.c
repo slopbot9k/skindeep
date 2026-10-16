@@ -18,7 +18,9 @@
 #include "identity.h"
 #include "lastskin.h"
 #include "launch.h"
+#include "chooser.h"
 #include "menu.h"
+#include "newtab.h"
 #include "monitor.h"
 #include "runtime.h"
 
@@ -180,6 +182,8 @@ typedef struct {
     sk_menu *menu;
     double button[4];
     int sessions_timer;
+    /* New tab... (decision 0025), above everything while it is open. */
+    sk_chooser *chooser;
 } gwin;
 
 /* A problem of this launch, for Housekeeping (decision 0022). */
@@ -205,6 +209,7 @@ struct gui {
     sk_monitor_config mon;
     sk_dashboard_config dash;
     sk_boards *boards;
+    sk_newtab_config newtab;
     char *profiles_dir, *settings_file, *last_dir;
     sk_appsettings settings;
     SK_VEC(problem) problems;
@@ -881,8 +886,7 @@ static void file_rows(gui *g, row_vec *v)
     sk_tabs_menu tm;
     sk_tabs_menu_state(g->tabs, &tm);
     row_item(v, "New tab", ACT_NEW_TAB, SK_ROW_CLOSES, KEYS_NEW);
-    /* The chooser of decision 0025 is not in this build yet. */
-    row_item(v, "New tab...", ACT_CHOOSER, SK_ROW_CLOSES, NULL)->disabled = true;
+    row_item(v, "New tab...", ACT_CHOOSER, SK_ROW_CLOSES, NULL);
     row_item(v, "Close tab", ACT_CLOSE_TAB, SK_ROW_CLOSES, KEYS_CLOSE);
     /* Reopen and Duplicate resume or fork the session, else start a new
      * one. */
@@ -977,6 +981,66 @@ static void viz_rows(row_vec *v)
     row_add(v, SK_ROW_FLYOUT, "Visualization mode");
     row_add(v, SK_ROW_FLYOUT, "Visualization input");
     row_item(v, "Mute skin sounds", ACT_TOGGLE_SOUND, SK_ROW_CLOSES, NULL)->disabled = true;
+}
+
+/* ---- New tab... on the core thread ---- */
+
+typedef struct {
+    gui *g;
+    int win;
+    sk_newtab_state st;
+    sk_newtab_pick pick;
+    char *err;
+} chooser_msg;
+
+static void chooser_msg_free(chooser_msg *m)
+{
+    sk_newtab_state_free(&m->st);
+    sk_newtab_pick_free(&m->pick);
+    free(m->err);
+    free(m);
+}
+
+static void ui_chooser_open(void *ud);
+static void ui_chooser_answer(void *ud);
+static void ui_chooser_forgot(void *ud);
+
+/* chooserState for window win, the home scanned again: the dialog opens
+ * on it. */
+static void chooser_offer(gui *g, int win)
+{
+    chooser_msg *m = sk_xcalloc(1, sizeof *m);
+    m->g = g;
+    m->win = win;
+    sk_tabs_touch(g->tabs, win);
+    sk_newtab_offer(&g->newtab, win, true, &m->st);
+    sk_ui_post(ui_chooser_open, m);
+}
+
+static void do_chooser_offer(void *ud)
+{
+    tab_msg *m = ud;
+    chooser_offer(m->g, m->win);
+    free(m);
+}
+
+/* chooserOpen: the tab opened, or why not for the dialog to show. */
+static void do_chooser_open(void *ud)
+{
+    chooser_msg *m = ud;
+    sk_tabs_touch(m->g->tabs, m->win);
+    if (sk_newtab_open(&m->g->newtab, m->win, &m->pick, &m->err) != 0 && !m->err)
+        m->err = sk_xstrdup("the tab could not be opened");
+    sk_ui_post(ui_chooser_answer, m);
+}
+
+/* chooser:forget, then the offer again from the same scan. */
+static void do_chooser_forget(void *ud)
+{
+    chooser_msg *m = ud;
+    sk_newtab_forget(&m->g->newtab, m->pick.agent, m->pick.profile);
+    sk_newtab_offer(&m->g->newtab, m->win, false, &m->st);
+    sk_ui_post(ui_chooser_forgot, m);
 }
 
 typedef struct {
@@ -1088,6 +1152,9 @@ static void do_action(void *ud)
         do_new_tab(t);
         break;
     }
+    case ACT_CHOOSER:
+        chooser_offer(g, m->win);
+        break;
     case ACT_CLOSE_TAB: {
         sk_tab *a = sk_tabs_active_of(g->tabs, m->win);
         if (a)
@@ -1325,6 +1392,7 @@ static void gwin_free(gwin *w)
     if (w->sessions_timer)
         sk_ui_cancel(w->sessions_timer);
     sk_menu_free(w->menu);
+    sk_chooser_free(w->chooser);
     free_snap_win(&w->snap);
     free(w->link_uri);
     free(w->preedit);
@@ -1550,6 +1618,147 @@ static void menu_press(gwin *w, const sk_menu_press *p)
         sk_loop_post(w->g->loop, do_action, m);
     }
     menu_changed(w);
+}
+
+/* ---- New tab... ---- */
+
+static bool chooser_up(gwin *w)
+{
+    return w->chooser && sk_chooser_is_open(w->chooser);
+}
+
+static void on_chooser_changed(void *ud)
+{
+    gwin *w = ud;
+    if (chooser_up(w))
+        sk_window_set_cursor(w->win, sk_chooser_cursor(w->chooser));
+    redraw(w);
+}
+
+/* The window's dialog, made when it is first asked for: the core's loop,
+ * which runs Linux's folder picker, comes after the first window. */
+static sk_chooser *chooser_of(gwin *w)
+{
+    if (!w->chooser) {
+        sk_chooser_config c;
+        memset(&c, 0, sizeof c);
+        c.win = w->win;
+        c.loop = w->g->loop;
+        c.changed = on_chooser_changed;
+        c.ud = w;
+        w->chooser = sk_chooser_new(&c);
+    }
+    return w->chooser;
+}
+
+/* window.Chooser.open: the core's offer first. */
+static void chooser_ask(gwin *w)
+{
+    post_tab(w->g, do_chooser_offer, 0, w->snap.id);
+}
+
+/* The dialog closed: the terminal has the keys again. */
+static void chooser_closed(gwin *w)
+{
+    focus_term(w);
+    sk_window_set_cursor(w->win, SK_CURSOR_IBEAM);
+    w->ime_x = w->ime_y = -1;
+    redraw(w);
+}
+
+static void ui_chooser_open(void *ud)
+{
+    chooser_msg *m = ud;
+    gwin *w = gwin_of(m->g, m->win);
+    if (w) {
+        sk_chooser_open(chooser_of(w), &m->st);
+        /* The command line has the focus, not the terminal. */
+        sk_term *t = active_term(w);
+        if (t)
+            sk_term_set_focus(t, false);
+        on_chooser_changed(w);
+    }
+    chooser_msg_free(m);
+}
+
+static void ui_chooser_answer(void *ud)
+{
+    chooser_msg *m = ud;
+    gwin *w = gwin_of(m->g, m->win);
+    if (w && chooser_up(w)) {
+        if (m->err) {
+            sk_chooser_fail(w->chooser, m->err);
+            redraw(w);
+        } else {
+            sk_chooser_close(w->chooser);
+            chooser_closed(w);
+        }
+    }
+    chooser_msg_free(m);
+}
+
+static void ui_chooser_forgot(void *ud)
+{
+    chooser_msg *m = ud;
+    gwin *w = gwin_of(m->g, m->win);
+    if (w && chooser_up(w)) {
+        sk_chooser_forgot(w->chooser, &m->st);
+        redraw(w);
+    }
+    chooser_msg_free(m);
+}
+
+/* What the dialog asked for after an event: its pick to the core, its
+ * close, its pointer and its input method's place. */
+static void chooser_result(gwin *w, sk_chooser_result r)
+{
+    if (r.act == SK_CHOOSER_OPEN || r.act == SK_CHOOSER_FORGET) {
+        chooser_msg *m = sk_xcalloc(1, sizeof *m);
+        m->g = w->g;
+        m->win = w->snap.id;
+        sk_chooser_pick(w->chooser, &m->pick);
+        sk_loop_post(w->g->loop, r.act == SK_CHOOSER_OPEN ? do_chooser_open : do_chooser_forget, m);
+    } else if (r.act == SK_CHOOSER_CLOSED) {
+        chooser_closed(w);
+        return;
+    }
+    if (chooser_up(w)) {
+        sk_window_set_cursor(w->win, sk_chooser_cursor(w->chooser));
+        int x, y, cw, ch;
+        if (sk_chooser_ime_rect(w->chooser, &x, &y, &cw, &ch))
+            sk_window_set_ime_rect(w->win, x, y, cw, ch);
+    }
+    if (r.redraw || r.act != SK_CHOOSER_NONE)
+        redraw(w);
+}
+
+/* While the dialog is open it takes the keys, the pointer and the input
+ * method's text, as the page's modal class kept them from the terminal
+ * and the chords. True for an event it took. */
+static bool chooser_event(gwin *w, const sk_event *ev)
+{
+    if (!chooser_up(w))
+        return false;
+    switch (ev->type) {
+    case SK_EV_KEY_DOWN:
+        chooser_result(w, sk_chooser_key(w->chooser, &ev->key));
+        return true;
+    case SK_EV_MOUSE_DOWN:
+    case SK_EV_MOUSE_UP:
+    case SK_EV_MOUSE_MOVE:
+    case SK_EV_MOUSE_LEAVE:
+    case SK_EV_SCROLL:
+        chooser_result(w, sk_chooser_mouse(w->chooser, ev));
+        return true;
+    case SK_EV_TEXT:
+        chooser_result(w, sk_chooser_text(w->chooser, ev->text ? ev->text : ""));
+        return true;
+    case SK_EV_PREEDIT:
+        chooser_result(w, sk_chooser_preedit(w->chooser, ev->text ? ev->text : ""));
+        return true;
+    default:
+        return false;
+    }
 }
 
 /* ---- The dashboard's pane ---- */
@@ -1843,8 +2052,8 @@ static void draw(gwin *w)
     size_t nd = 0;
     /* The drop-down and its shadow lie over what is below: while it is
      * open, each frame is drawn whole and it goes on top. */
-    bool menu = sk_menu_open(w->menu);
-    if (menu)
+    bool menu = sk_menu_open(w->menu), chooser = chooser_up(w);
+    if (menu || chooser)
         w->all = true;
     if (w->all) {
         draw_chrome(w, f);
@@ -1921,7 +2130,7 @@ static void draw(gwin *w)
         /* The candidate window goes beside the cursor. */
         double s = sk_window_scale(w->win);
         int ix = (int)lround(cx / s), iy = (int)lround((cy + a.y) / s);
-        if (ix != w->ime_x || iy != w->ime_y) {
+        if (!chooser && (ix != w->ime_x || iy != w->ime_y)) {
             w->ime_x = ix;
             w->ime_y = iy;
             sk_window_set_ime_rect(w->win, ix, iy, (int)lround(cw / s), (int)lround(ch / s));
@@ -1938,6 +2147,12 @@ static void draw(gwin *w)
     if (menu) {
         sk_menu_style st = menu_style(w);
         sk_menu_draw(w->menu, f, &st);
+    }
+    /* New tab... darkens everything below the identity strip. */
+    if (chooser) {
+        sk_chooser_style st = {g->sans, g->mono, g->cache, sk_window_scale(w->win)};
+        int top = px(w, IDENTITY_H);
+        sk_chooser_draw(w->chooser, f, sk_rect_make(0, top, f->w, SK_MAX(0, f->h - top)), &st);
     }
     if (w->all)
         sk_window_present(w->win, NULL, 0);
@@ -2252,8 +2467,9 @@ static bool track_hover(gwin *w, double x, double y)
 }
 
 /* The strip's press, drag and release: a press picks a tab, a middle
- * click or its close box closes it, + opens a tab, a drag moves it, and
- * a release outside the window pops it out (decision 0023). */
+ * click or its close box closes it, + opens the New tab... chooser
+ * (decision 0025), a drag moves it, and a release outside the window
+ * pops it out (decision 0023). */
 static bool strip_mouse(gwin *w, const sk_event *ev)
 {
     gui *g = w->g;
@@ -2264,7 +2480,8 @@ static bool strip_mouse(gwin *w, const sk_event *ev)
         if (i < 0)
             return true;
         if ((size_t)i == w->snap.n) {
-            post_tab(g, do_new_tab, 0, win);
+            if (ev->mouse.button == 1)
+                chooser_ask(w);
         } else if (ev->mouse.button == 2 || (on_close && ev->mouse.button == 1)) {
             post_tab(g, do_close, w->snap.tabs[i].id, win);
         } else if (ev->mouse.button == 1) {
@@ -2490,7 +2707,7 @@ static void on_event(void *ud, const sk_event *ev)
 {
     gui *g = ud;
     gwin *w = ev->win ? sk_window_ud(ev->win) : NULL;
-    if (!w)
+    if (!w || chooser_event(w, ev))
         return;
     switch (ev->type) {
     case SK_EV_CLOSE:
@@ -2718,6 +2935,27 @@ static void probe(gui *g, gwin *w, ctl_msg *m)
         sk_menu_state(w->menu, &jw);
     else
         sk_jw_null(&jw);
+    /* New tab..., and where its controls are. */
+    sk_jw_key(&jw, SK_STR("chooser"));
+    if (w && w->chooser) {
+        sk_chooser_json(w->chooser, &jw);
+        sk_jw_key(&jw, SK_STR("chooser_boxes"));
+        sk_jw_object(&jw);
+        static const char *const boxes[] = {"line", "folder", "profile", "cancel", "open", "error"};
+        for (size_t i = 0; i < SK_LEN(boxes); i++) {
+            double box[4];
+            if (!sk_chooser_box(w->chooser, boxes[i], box))
+                continue;
+            sk_jw_key(&jw, sk_str_c(boxes[i]));
+            sk_jw_array(&jw);
+            for (int k = 0; k < 4; k++)
+                sk_jw_number(&jw, box[k]);
+            sk_jw_array_end(&jw);
+        }
+        sk_jw_object_end(&jw);
+    } else {
+        sk_jw_null(&jw);
+    }
     /* The dashboard's pane, when it is the active tab's. */
     sk_jw_key(&jw, SK_STR("dashboard"));
     sk_dashview *dv = w ? active_dview(w) : NULL;
@@ -3056,6 +3294,16 @@ int sk_gui_run(const sk_options *o, const sk_envp *env, const char *self)
     g->dash.send = dash_send;
     g->dash.log = log_line;
     g->dash.ud = g;
+    /* New tab... (decision 0025). */
+    g->newtab.tabs = g->tabs;
+    g->newtab.foreign = g->foreign;
+    g->newtab.cmd = o->cmd;
+    g->newtab.env = env;
+    g->newtab.home = tc.home;
+    g->newtab.cwd = l.cwd;
+    g->newtab.profiles_dir = g->profiles_dir;
+    g->newtab.log = log_line;
+    g->newtab.ud = g;
     sk_loop_signal(g->loop, SIGINT, on_stop, g);
     sk_loop_signal(g->loop, SIGTERM, on_stop, g);
     sk_loop_signal(g->loop, SIGHUP, on_stop, g);

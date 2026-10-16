@@ -700,6 +700,82 @@ static void test_the_sessions_dashboard(void)
     CHECK_INT(finish(&a, 5000), 128 + SIGHUP);
 }
 
+#ifdef __APPLE__
+#define CMD_MODS "[\"super\"]"
+#else
+#define CMD_MODS "[\"ctrl\"]"
+#endif
+
+/* A press and release in the middle of a box [x, y, w, h] in points. */
+static void click_box(app *a, const sk_json *box)
+{
+    double b[4] = {0};
+    for (size_t i = 0; i < 4; i++)
+        sk_json_as_number(sk_json_at(box, i), &b[i]);
+    char req[128];
+    snprintf(req, sizeof req, "{\"op\":\"mouse\",\"kind\":\"down\",\"x\":%g,\"y\":%g}", b[0] + b[2] / 2, b[1] + b[3] / 2);
+    ok(a, req);
+    snprintf(req, sizeof req, "{\"op\":\"mouse\",\"kind\":\"up\",\"x\":%g,\"y\":%g}", b[0] + b[2] / 2, b[1] + b[3] / 2);
+    ok(a, req);
+}
+
+/* New tab... (decision 0025) from File: it opens with the command line
+ * in focus and takes the keys; a folder that is not there is refused in
+ * the dialog, which stays open; Escape closes it and the terminal has
+ * the keys again. Nothing is launched: cat is the command line. */
+static void test_the_new_tab_chooser(void)
+{
+    app a;
+    const char *cmd[] = {"cat", NULL};
+    if (!start(&a, cmd))
+        return;
+    sk_arena ar;
+    sk_arena_init(&ar, 0);
+    ok(&a, "{\"op\":\"menu\",\"show\":\"File\",\"button\":[100,40,30,30]}");
+    const sk_json *p = wait_menu(&a, &ar, "File", 5000);
+    const sk_json *row = p ? menu_row(p, "New tab...") : NULL;
+    CHECK(row != NULL);
+    if (row)
+        press_row(&a, p, row, 20);
+    bool open = false;
+    for (uint64_t until = sk_now_ms() + 5000; sk_now_ms() < until && !open; sk_test_sleep_ms(50)) {
+        p = probe(&a, &ar);
+        sk_json_as_bool(sk_json_dig(p, "chooser", "open", NULL), &open);
+    }
+    CHECK(open);
+    sk_str focus = {0};
+    sk_json_as_string(sk_json_dig(p, "chooser", "focus", NULL), &focus);
+    CHECK_MEM(focus, "line");
+    /* cat as the command line, a folder that is not there. */
+    ok(&a, "{\"op\":\"key\",\"key\":\"a\",\"mods\":" CMD_MODS "}");
+    ok(&a, "{\"op\":\"type\",\"text\":\"cat\"}");
+    const sk_json *folder = sk_json_dig(p, "chooser_boxes", "folder", NULL);
+    CHECK(folder != NULL);
+    if (folder)
+        click_box(&a, folder);
+    ok(&a, "{\"op\":\"key\",\"key\":\"a\",\"mods\":" CMD_MODS "}");
+    ok(&a, "{\"op\":\"type\",\"text\":\"/no/such/folder\"}");
+    ok(&a, "{\"op\":\"key\",\"key\":\"Enter\"}");
+    sk_str err = {0};
+    for (uint64_t until = sk_now_ms() + 5000; sk_now_ms() < until; sk_test_sleep_ms(50)) {
+        p = probe(&a, &ar);
+        if (sk_json_as_string(sk_json_dig(p, "chooser", "error", NULL), &err) && err.len)
+            break;
+    }
+    CHECK(err.ptr && strstr(err.ptr, "no such folder: /no/such/folder"));
+    CHECK_INT(len_of(sk_json_get(p, "tabs")), 1);
+    ok(&a, "{\"op\":\"key\",\"key\":\"Escape\"}");
+    p = probe(&a, &ar);
+    sk_json_as_bool(sk_json_dig(p, "chooser", "open", NULL), &open);
+    CHECK(!open);
+    ok(&a, "{\"op\":\"type\",\"text\":\"after\"}");
+    ok(&a, "{\"op\":\"key\",\"key\":\"Enter\"}");
+    CHECK(wait_screen(&a, "after\nafter", 5000));
+    sk_arena_free(&ar);
+    ok(&a, "{\"op\":\"hangup\"}");
+    CHECK_INT(finish(&a, 5000), 128 + SIGHUP);
+}
+
 const sk_test sk_suite_window[] = {
     T(test_typing_reaches_the_tab),
     T(test_the_tab_chords),
@@ -711,5 +787,6 @@ const sk_test sk_suite_window[] = {
     T(test_a_tab_dragged_along_the_strip),
     T(test_the_menus),
     T(test_the_sessions_dashboard),
+    T(test_the_new_tab_chooser),
     {0},
 };
