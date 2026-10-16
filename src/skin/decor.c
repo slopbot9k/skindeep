@@ -161,14 +161,10 @@ static sk_px lut_at(const grad *g, float t)
 {
     if (g->flat)
         return g->solid;
-    float span = g->t1 - g->t0;
-    if (g->repeating) {
-        t = fmodf(t - g->t0, span);
-        if (t < 0)
-            t += span;
-        t += g->t0;
-    }
-    float f = (t - g->t0) / span * (float)(g->nlut - 1);
+    float q = (t - g->t0) / (g->t1 - g->t0);
+    if (g->repeating)
+        q -= floorf(q);
+    float f = q * (float)(g->nlut - 1);
     if (!(f > 0))
         return g->lut[0];
     if (f >= (float)(g->nlut - 1))
@@ -176,38 +172,56 @@ static sk_px lut_at(const grad *g, float t)
     return g->lut[(int)(f + 0.5f)];
 }
 
+/* u within [0, t): a tile's own coordinate. */
+static float wrap(float u, float t)
+{
+    return u - t * floorf(u / t);
+}
+
+static sk_px grad_at(const grad *g, float u, float v)
+{
+    float t;
+    if (g->radial) {
+        float a = (u - g->cx) * g->irx, b = (v - g->cy) * g->iry;
+        t = sqrtf(a * a + b * b);
+    } else {
+        t = (u - g->sx) * g->dx + (v - g->sy) * g->dy;
+    }
+    return lut_at(g, t);
+}
+
 static void grad_row(const pt_shader *s, int x, int y, int n, sk_px *out)
 {
     const grad *g = s->data;
     float py = (float)y + 0.5f;
+    if (g->inv.b != 0 || g->inv.c != 0) {
+        for (int i = 0; i < n; i++) {
+            float px = (float)(x + i) + 0.5f;
+            float u = g->inv.a * px + g->inv.c * py + g->inv.e - g->ox;
+            float v = g->inv.b * px + g->inv.d * py + g->inv.f - g->oy;
+            bool in = (g->rx || (u >= 0 && u < g->tw)) && (g->ry || (v >= 0 && v < g->th));
+            out[i] = in ? grad_at(g, g->rx ? wrap(u, g->tw) : u, g->ry ? wrap(v, g->th) : v) : 0;
+        }
+        return;
+    }
+    /* Upright: v holds along the row, u steps by a pixel's width. */
+    float v = g->inv.d * py + g->inv.f - g->oy;
+    if (g->ry)
+        v = wrap(v, g->th);
+    else if (v < 0 || v >= g->th) {
+        memset(out, 0, (size_t)n * sizeof *out);
+        return;
+    }
+    float du = g->inv.a, u0 = g->inv.a * ((float)x + 0.5f) + g->inv.e - g->ox;
     for (int i = 0; i < n; i++) {
-        float px = (float)(x + i) + 0.5f;
-        float u = g->inv.a * px + g->inv.c * py + g->inv.e - g->ox;
-        float v = g->inv.b * px + g->inv.d * py + g->inv.f - g->oy;
-        if (g->rx) {
-            u = fmodf(u, g->tw);
-            if (u < 0)
-                u += g->tw;
-        } else if (u < 0 || u >= g->tw) {
+        float u = u0 + du * (float)i;
+        if (g->rx)
+            u = u >= 0 && u < g->tw ? u : wrap(u, g->tw);
+        else if (u < 0 || u >= g->tw) {
             out[i] = 0;
             continue;
         }
-        if (g->ry) {
-            v = fmodf(v, g->th);
-            if (v < 0)
-                v += g->th;
-        } else if (v < 0 || v >= g->th) {
-            out[i] = 0;
-            continue;
-        }
-        float t;
-        if (g->radial) {
-            float a = (u - g->cx) * g->irx, b = (v - g->cy) * g->iry;
-            t = sqrtf(a * a + b * b);
-        } else {
-            t = (u - g->sx) * g->dx + (v - g->sy) * g->dy;
-        }
-        out[i] = lut_at(g, t);
+        out[i] = grad_at(g, u, v);
     }
 }
 
@@ -504,6 +518,61 @@ static sk_rect grow(sk_rect r, int d)
     return sk_rect_make(r.x - d, r.y - d, r.w + 2 * d, r.h + 2 * d);
 }
 
+/* Where pixel i of an axis falls in a nine-patch whose middle, from
+ * cut for k pixels, is one pixel wide: n is the patch's length. */
+static int patch_at(int i, int cut, int k, int n)
+{
+    int j = i < cut ? i : i < cut + k ? cut : i - k;
+    return j < 0 ? 0 : j >= n ? n - 1 : j;
+}
+
+/* The coverage of rr over r, inverted first when invert, blurred by
+ * sigma. A long rounded rectangle blurs as a nine-patch, as Skia blurs
+ * one: along a straight edge the blur is the same at every point, so a
+ * patch with a middle a pixel wide is blurred and stretched. */
+static uint8_t *blurred_rrect(const pt_rrect *rr, float sigma, int reach, sk_rect r, bool invert)
+{
+    int padl = (int)ceilf(fmaxf(rr->rx[SK_TOP_LEFT], rr->rx[SK_BOTTOM_LEFT])) + reach + 2;
+    int padr = (int)ceilf(fmaxf(rr->rx[SK_TOP_RIGHT], rr->rx[SK_BOTTOM_RIGHT])) + reach + 2;
+    int padt = (int)ceilf(fmaxf(rr->ry[SK_TOP_LEFT], rr->ry[SK_TOP_RIGHT])) + reach + 2;
+    int padb = (int)ceilf(fmaxf(rr->ry[SK_BOTTOM_LEFT], rr->ry[SK_BOTTOM_RIGHT])) + reach + 2;
+    int kx = (int)rr->w - (padl + padr + 1), ky = (int)rr->h - (padt + padb + 1);
+    if (kx < 8 && ky < 8) {
+        uint8_t *m = pt_cover_rrect(rr, r);
+        if (invert)
+            for (size_t q = 0; q < (size_t)r.w * (size_t)r.h; q++)
+                m[q] = (uint8_t)(255 - m[q]);
+        sk_blur_a8(m, r.w, r.h, r.w, sigma);
+        return m;
+    }
+    kx = kx < 8 ? 0 : kx;
+    ky = ky < 8 ? 0 : ky;
+    pt_rrect small = *rr;
+    small.w -= (float)kx;
+    small.h -= (float)ky;
+    sk_rect sr = grow(pt_round_out((sk_frect){small.x, small.y, small.w, small.h}), reach + 2);
+    uint8_t *sm = pt_cover_rrect(&small, sr);
+    if (invert)
+        for (size_t q = 0; q < (size_t)sr.w * (size_t)sr.h; q++)
+            sm[q] = (uint8_t)(255 - sm[q]);
+    sk_blur_a8(sm, sr.w, sr.h, sr.w, sigma);
+    /* The middle runs from the patch's pad on, in pixels of r. */
+    int cutx = (int)floorf(small.x) + padl, cuty = (int)floorf(small.y) + padt;
+    uint8_t *m = sk_xmalloc((size_t)r.w * (size_t)r.h);
+    int *col = sk_xmalloc((size_t)r.w * sizeof *col);
+    for (int x = 0; x < r.w; x++)
+        col[x] = patch_at(r.x + x - sr.x, cutx - sr.x, kx, sr.w);
+    for (int y = 0; y < r.h; y++) {
+        const uint8_t *src = sm + (size_t)patch_at(r.y + y - sr.y, cuty - sr.y, ky, sr.h) * (size_t)sr.w;
+        uint8_t *o = m + (size_t)y * (size_t)r.w;
+        for (int x = 0; x < r.w; x++)
+            o[x] = src[col[x]];
+    }
+    free(col);
+    free(sm);
+    return m;
+}
+
 void pt_shadows(painter *P, canvas *cv, uint32_t i, bool inset)
 {
     const sk_css_style *s = P->nodes[i].style;
@@ -535,8 +604,7 @@ void pt_shadows(painter *P, canvas *cv, uint32_t i, bool inset)
             e = sk_rect_intersect(e, grow(cv->clip, reach + 1));
             if (sk_rect_empty(sk_rect_intersect(e, cv->clip)))
                 continue;
-            uint8_t *cov = pt_cover_rrect(&S, e);
-            sk_blur_a8(cov, e.w, e.h, e.w, sigma);
+            uint8_t *cov = blurred_rrect(&S, sigma, reach, e, false);
             uint8_t *hole = pt_cover_rrect(&outer, e);
             for (size_t q = 0; q < (size_t)e.w * (size_t)e.h; q++)
                 cov[q] = (uint8_t)pt_mul(cov[q], 255u - hole[q]);
@@ -554,10 +622,13 @@ void pt_shadows(painter *P, canvas *cv, uint32_t i, bool inset)
             I.x += sh->x * kx;
             I.y += sh->y * ky;
             sk_rect e = grow(a, reach + 1);
-            uint8_t *cov = (I.w > 0 && I.h > 0) ? pt_cover_rrect(&I, e) : sk_xcalloc((size_t)e.w, (size_t)e.h);
-            for (size_t q = 0; q < (size_t)e.w * (size_t)e.h; q++)
-                cov[q] = (uint8_t)(255 - cov[q]);
-            sk_blur_a8(cov, e.w, e.h, e.w, sigma);
+            uint8_t *cov;
+            if (I.w > 0 && I.h > 0) {
+                cov = blurred_rrect(&I, sigma, reach, e, true);
+            } else {
+                cov = sk_xmalloc((size_t)e.w * (size_t)e.h);
+                memset(cov, 255, (size_t)e.w * (size_t)e.h);
+            }
             uint8_t *inside = pt_cover_rrect(&pad, e);
             for (size_t q = 0; q < (size_t)e.w * (size_t)e.h; q++)
                 cov[q] = (uint8_t)pt_mul(cov[q], inside[q]);

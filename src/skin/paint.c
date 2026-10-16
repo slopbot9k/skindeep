@@ -88,6 +88,36 @@ sk_blend pt_mix(uint8_t mix)
 static void comp_row(sk_px *d, const sk_px *s, sk_px solid, int n, const uint8_t *cov, const uint8_t *clip,
                      sk_blend b, uint32_t opacity)
 {
+    /* The common cases first: source-over at full strength. */
+    if (b == SK_BLEND_SRC_OVER && opacity == 255 && !clip) {
+        if (!s && !cov) {
+            if (solid >> 24 == 255) {
+                for (int x = 0; x < n; x++)
+                    d[x] = solid;
+            } else if (solid) {
+                uint32_t k = 255 - (solid >> 24);
+                for (int x = 0; x < n; x++)
+                    d[x] = solid + pt_scale(d[x], k);
+            }
+            return;
+        }
+        if (s && !cov) {
+            for (int x = 0; x < n; x++)
+                if (s[x])
+                    d[x] = pt_over(s[x], d[x]);
+            return;
+        }
+        if (!s) {
+            for (int x = 0; x < n; x++)
+                if (cov[x])
+                    d[x] = pt_over(cov[x] == 255 ? solid : pt_scale(solid, cov[x]), d[x]);
+            return;
+        }
+        for (int x = 0; x < n; x++)
+            if (cov[x] && s[x])
+                d[x] = pt_over(cov[x] == 255 ? s[x] : pt_scale(s[x], cov[x]), d[x]);
+        return;
+    }
     for (int x = 0; x < n; x++) {
         uint32_t k = opacity;
         if (cov)

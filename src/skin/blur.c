@@ -8,13 +8,16 @@
  * centred on the pixel, for an even d two boxes d wide centred half a
  * pixel left and half a pixel right of it and a third d + 1 wide
  * centred on it. Between the passes values keep 8 more bits than a
- * pixel, so only the last pass rounds to 8 bits. */
+ * pixel, so only the last pass rounds to 8 bits.
+ *
+ * The passes across run along each row; the passes down run a row at a
+ * time too, a running sum per column, so both read memory in order. */
 #include "blur.h"
 
 #include <math.h>
 #include <string.h>
 
-/* The three boxes for sigma: each pass's width and how far left of the
+/* The three boxes for sigma: each pass's width and how far before the
  * pixel its window starts. */
 typedef struct {
     int width[3], left[3];
@@ -42,27 +45,6 @@ static boxes plan(float sigma)
     return b;
 }
 
-/* One box pass over n values, src read with stride ss, out written
- * with stride os: out[i] is the mean of src[i - left .. i - left +
- * width - 1], values outside counting as 0. Inputs and outputs carry
- * shift extra bits: in << in_shift, out << out_shift. */
-static void box_pass(const uint32_t *src, size_t ss, uint32_t *out, size_t os, int n, int width, int left)
-{
-    uint64_t sum = 0;
-    /* The window for i = 0 is [-left, width - left). */
-    for (int k = 0; k < width - left && k < n; k++)
-        sum += src[(size_t)k * ss];
-    uint64_t inv = ((uint64_t)1 << 32) / (uint64_t)width;
-    for (int i = 0; i < n; i++) {
-        out[(size_t)i * os] = (uint32_t)((sum * inv + ((uint64_t)1 << 31)) >> 32);
-        int add = i + width - left, drop = i - left;
-        if (add < n)
-            sum += src[(size_t)add * ss];
-        if (drop >= 0)
-            sum -= src[(size_t)drop * ss];
-    }
-}
-
 /* A Gaussian kernel of sigma, 1 + 2 radius weights summing to 1. */
 static float *kernel(float sigma, int *radius)
 {
@@ -82,35 +64,128 @@ static float *kernel(float sigma, int *radius)
     return k;
 }
 
-/* Blurs n lines of len values in v (8.8 fixed point), each line's
- * values step apart and lines line apart. */
-static void blur_lines(uint32_t *v, int nlines, size_t line, int len, size_t step, float sigma, uint32_t *t0,
-                       uint32_t *t1)
+/* 2^32 over a box's width, to divide by a multiply. */
+static uint64_t inverse(int width)
 {
+    return ((uint64_t)1 << 32) / (uint64_t)width;
+}
+
+static uint32_t scaled(uint64_t sum, uint64_t inv)
+{
+    return (uint32_t)((sum * inv + ((uint64_t)1 << 31)) >> 32);
+}
+
+/* One box pass along a row of n: out[i] is the mean of src[i - left
+ * .. i - left + width - 1], values beyond the row counting as 0. */
+static void box_row(const uint32_t *src, uint32_t *out, int n, int width, int left)
+{
+    uint64_t sum = 0, inv = inverse(width);
+    for (int k = 0; k < width - left && k < n; k++)
+        sum += src[k];
+    for (int i = 0; i < n; i++) {
+        out[i] = scaled(sum, inv);
+        int add = i + width - left, drop = i - left;
+        if (add < n)
+            sum += src[add];
+        if (drop >= 0)
+            sum -= src[drop];
+    }
+}
+
+/* The same down the columns of a w by h plane, a row at a time. */
+static void box_down(const uint32_t *src, uint32_t *out, int w, int h, int width, int left, uint64_t *sums)
+{
+    uint64_t inv = inverse(width);
+    memset(sums, 0, (size_t)w * sizeof *sums);
+    for (int k = 0; k < width - left && k < h; k++) {
+        const uint32_t *r = src + (size_t)k * (size_t)w;
+        for (int x = 0; x < w; x++)
+            sums[x] += r[x];
+    }
+    for (int y = 0; y < h; y++) {
+        uint32_t *o = out + (size_t)y * (size_t)w;
+        for (int x = 0; x < w; x++)
+            o[x] = scaled(sums[x], inv);
+        int add = y + width - left, drop = y - left;
+        if (add < h) {
+            const uint32_t *r = src + (size_t)add * (size_t)w;
+            for (int x = 0; x < w; x++)
+                sums[x] += r[x];
+        }
+        if (drop >= 0) {
+            const uint32_t *r = src + (size_t)drop * (size_t)w;
+            for (int x = 0; x < w; x++)
+                sums[x] -= r[x];
+        }
+    }
+}
+
+/* The true kernel along a row, and down the columns. */
+static void gauss_row(const uint32_t *src, uint32_t *out, int n, const float *k, int r)
+{
+    for (int i = 0; i < n; i++) {
+        float acc = 0;
+        int lo = i - r < 0 ? 0 : i - r, hi = i + r >= n ? n - 1 : i + r;
+        for (int j = lo; j <= hi; j++)
+            acc += k[j - i + r] * (float)src[j];
+        out[i] = (uint32_t)(acc + 0.5f);
+    }
+}
+
+static void gauss_down(const uint32_t *src, uint32_t *out, int w, int h, const float *k, int r, float *acc)
+{
+    for (int y = 0; y < h; y++) {
+        memset(acc, 0, (size_t)w * sizeof *acc);
+        int lo = y - r < 0 ? 0 : y - r, hi = y + r >= h ? h - 1 : y + r;
+        for (int j = lo; j <= hi; j++) {
+            float f = k[j - y + r];
+            const uint32_t *s = src + (size_t)j * (size_t)w;
+            for (int x = 0; x < w; x++)
+                acc[x] += f * (float)s[x];
+        }
+        uint32_t *o = out + (size_t)y * (size_t)w;
+        for (int x = 0; x < w; x++)
+            o[x] = (uint32_t)(acc[x] + 0.5f);
+    }
+}
+
+/* A w by h plane of 8.8 fixed-point values blurred in place; tmp holds
+ * as many. */
+static void blur_plane(uint32_t *v, uint32_t *tmp, int w, int h, float sigma)
+{
+    int m = w > h ? w : h;
     if (sigma >= 2) {
         boxes b = plan(sigma);
-        for (int l = 0; l < nlines; l++) {
-            uint32_t *p = v + (size_t)l * line;
-            box_pass(p, step, t0, 1, len, b.width[0], b.left[0]);
-            box_pass(t0, 1, t1, 1, len, b.width[1], b.left[1]);
-            box_pass(t1, 1, p, step, len, b.width[2], b.left[2]);
+        uint32_t *row = sk_xmalloc((size_t)m * sizeof *row), *row2 = sk_xmalloc((size_t)m * sizeof *row2);
+        for (int y = 0; y < h; y++) {
+            uint32_t *p = v + (size_t)y * (size_t)w;
+            box_row(p, row, w, b.width[0], b.left[0]);
+            box_row(row, row2, w, b.width[1], b.left[1]);
+            box_row(row2, p, w, b.width[2], b.left[2]);
         }
+        uint64_t *sums = sk_xmalloc((size_t)w * sizeof *sums);
+        box_down(v, tmp, w, h, b.width[0], b.left[0], sums);
+        box_down(tmp, v, w, h, b.width[1], b.left[1], sums);
+        box_down(v, tmp, w, h, b.width[2], b.left[2], sums);
+        memcpy(v, tmp, (size_t)w * (size_t)h * sizeof *v);
+        free(sums);
+        free(row);
+        free(row2);
         return;
     }
     int r;
     float *k = kernel(sigma, &r);
-    for (int l = 0; l < nlines; l++) {
-        uint32_t *p = v + (size_t)l * line;
-        for (int i = 0; i < len; i++)
-            t0[i] = p[(size_t)i * step];
-        for (int i = 0; i < len; i++) {
-            float acc = 0;
-            int lo = i - r < 0 ? 0 : i - r, hi = i + r >= len ? len - 1 : i + r;
-            for (int j = lo; j <= hi; j++)
-                acc += k[j - i + r] * (float)t0[j];
-            p[(size_t)i * step] = (uint32_t)(acc + 0.5f);
-        }
+    uint32_t *row = sk_xmalloc((size_t)m * sizeof *row);
+    for (int y = 0; y < h; y++) {
+        uint32_t *p = v + (size_t)y * (size_t)w;
+        gauss_row(p, row, w, k, r);
+        memcpy(p, row, (size_t)w * sizeof *p);
     }
+    float *acc = sk_xmalloc((size_t)w * sizeof *acc);
+    gauss_down(v, tmp, w, h, k, r, acc);
+    memcpy(v, tmp, (size_t)w * (size_t)h * sizeof *v);
+    free(acc);
+    free(row);
     free(k);
 }
 
@@ -119,22 +194,18 @@ void sk_blur_a8(uint8_t *a, int w, int h, int stride, float sigma)
     if (!(sigma > 0.01f) || w <= 0 || h <= 0)
         return;
     size_t n = (size_t)w * (size_t)h;
-    uint32_t *v = sk_xmalloc(n * sizeof *v);
+    uint32_t *v = sk_xmalloc(n * sizeof *v), *tmp = sk_xmalloc(n * sizeof *tmp);
     for (int y = 0; y < h; y++)
         for (int x = 0; x < w; x++)
             v[(size_t)y * (size_t)w + (size_t)x] = (uint32_t)a[(size_t)y * (size_t)stride + (size_t)x] << 8;
-    int m = w > h ? w : h;
-    uint32_t *t0 = sk_xmalloc((size_t)m * sizeof *t0), *t1 = sk_xmalloc((size_t)m * sizeof *t1);
-    blur_lines(v, h, (size_t)w, w, 1, sigma, t0, t1);
-    blur_lines(v, w, 1, h, (size_t)w, sigma, t0, t1);
+    blur_plane(v, tmp, w, h, sigma);
     for (int y = 0; y < h; y++)
         for (int x = 0; x < w; x++) {
             uint32_t q = (v[(size_t)y * (size_t)w + (size_t)x] + 128) >> 8;
             a[(size_t)y * (size_t)stride + (size_t)x] = (uint8_t)(q > 255 ? 255 : q);
         }
     free(v);
-    free(t0);
-    free(t1);
+    free(tmp);
 }
 
 void sk_blur_image(sk_image *im, float sigma)
@@ -143,9 +214,7 @@ void sk_blur_image(sk_image *im, float sigma)
         return;
     int w = im->w, h = im->h;
     size_t n = (size_t)w * (size_t)h;
-    uint32_t *v = sk_xmalloc(n * sizeof *v);
-    int m = w > h ? w : h;
-    uint32_t *t0 = sk_xmalloc((size_t)m * sizeof *t0), *t1 = sk_xmalloc((size_t)m * sizeof *t1);
+    uint32_t *v = sk_xmalloc(n * sizeof *v), *tmp = sk_xmalloc(n * sizeof *tmp);
     uint32_t *out = sk_xcalloc(n, sizeof *out);
     for (int sh = 0; sh < 32; sh += 8) {
         for (int y = 0; y < h; y++) {
@@ -153,8 +222,7 @@ void sk_blur_image(sk_image *im, float sigma)
             for (int x = 0; x < w; x++)
                 v[(size_t)y * (size_t)w + (size_t)x] = ((row[x] >> sh) & 255) << 8;
         }
-        blur_lines(v, h, (size_t)w, w, 1, sigma, t0, t1);
-        blur_lines(v, w, 1, h, (size_t)w, sigma, t0, t1);
+        blur_plane(v, tmp, w, h, sigma);
         for (size_t i = 0; i < n; i++) {
             uint32_t q = (v[i] + 128) >> 8;
             out[i] |= (q > 255 ? 255 : q) << sh;
@@ -173,8 +241,7 @@ void sk_blur_image(sk_image *im, float sigma)
         }
     }
     free(v);
-    free(t0);
-    free(t1);
+    free(tmp);
     free(out);
 }
 
