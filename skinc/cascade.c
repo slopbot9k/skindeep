@@ -22,6 +22,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 void sk_xdecl_init(sk_xdecl *x, const sk_css_decl *d, const sk_css_sheet *sheet, bool internal)
 {
