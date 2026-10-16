@@ -784,14 +784,16 @@ static void test_control_c_interrupts_the_child(void)
 {
     rec r;
     rec_init(&r);
-    char *argv[] = {"sh", "-c", "echo ready; sleep 20", NULL};
+    /* stty's report goes first, so a failure shows the terminal's modes. */
+    char *argv[] = {"sh", "-c", "stty -a; echo ready; sleep 20", NULL};
     sk_session_opts o = opts(&r, argv);
     sk_session *s = make(&r, &o);
     sk_session_start(s, 80, 24);
     CHECK(wait_output(&r, "ready", 5000));
     sk_session_input(s, "\x03", 1);
     CHECK(wait_end(&r, 5000));
-    CHECK_INT(r.status, 128 + SIGINT);
+    if (r.status != 128 + SIGINT)
+        sk_test_fail(__FILE__, __LINE__, "status %d, output: %.600s", r.status, sk_buf_cstr(&r.out));
     rec_free(&r);
 }
 

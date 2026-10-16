@@ -6,6 +6,7 @@
 #include "../../src/base/paths.h"
 #include "../../src/base/strv.h"
 #include "../../src/sessions/board.h"
+#include "../../src/core/command.h"
 #include "../test.h"
 
 #include <math.h>
@@ -249,9 +250,21 @@ static void fixture_init(fixture *fx, bool with_gh)
     CHECK(sk_mkdirs(fx->bin, 0777) == 0 && sk_mkdirs(fx->logs, 0777) == 0);
     write_script(fx->bin, "git", FAKE_GIT);
     write_script(fx->bin, "curl", FAKE_CURL);
-    if (with_gh)
+    if (with_gh) {
         write_script(fx->bin, "gh", FAKE_GH);
-    sk_strv_pushf(&fx->env, "PATH=%s:/usr/bin:/bin", fx->bin);
+        sk_strv_pushf(&fx->env, "PATH=%s:/usr/bin:/bin", fx->bin);
+    } else {
+        /* No system dir on PATH: CI images ship a real gh in /usr/bin.
+         * The fakes need cat alone. */
+        char *tools = sk_path_join(root, "tools");
+        char *cat_path = sk_resolve_command("cat", getenv("PATH"));
+        char *link = sk_path_join(tools, "cat");
+        CHECK(cat_path && sk_mkdirs(tools, 0777) == 0 && symlink(cat_path, link) == 0);
+        sk_strv_pushf(&fx->env, "PATH=%s:%s", fx->bin, tools);
+        free(tools);
+        free(cat_path);
+        free(link);
+    }
     sk_strv_pushf(&fx->env, "FAKE_LOG=%s", fx->logs);
     sk_strv_push(&fx->env, "GIT_ASKPASS=/usr/bin/false");
     fx->loop = sk_loop_new();

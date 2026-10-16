@@ -27,6 +27,16 @@ int sk_pty_set_size(int fd, int cols, int rows)
     return ioctl(fd, TIOCSWINSZ, &ws);
 }
 
+int sk_pty_get_size(int fd, int *cols, int *rows)
+{
+    struct winsize ws = {0};
+    if (ioctl(fd, TIOCGWINSZ, &ws) != 0 || !ws.ws_col || !ws.ws_row)
+        return -1;
+    *cols = ws.ws_col;
+    *rows = ws.ws_row;
+    return 0;
+}
+
 int sk_pty_set_modes(int fd)
 {
     struct termios t;

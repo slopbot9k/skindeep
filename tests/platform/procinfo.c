@@ -100,7 +100,7 @@ static void test_child(void)
 {
     char real[PATH_MAX];
     CHECK(realpath(sk_test_tmpdir(), real) != NULL);
-    int hold;
+    int hold = -1;
     pid_t child = start_child(sk_test_tmpdir(), &hold);
     CHECK(child > 0);
 
