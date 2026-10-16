@@ -106,8 +106,10 @@ $(BUILD)/skinc-objs/%.o: skinc/%.c
 	$(COMPILE) -c $< -o $@
 
 # Single-file libraries of third_party/ compile in src/vendor/, one unit
-# each, with the warnings their authors' code meets.
+# each, with the warnings their authors' code meets; the decoders only
+# skinc runs, in skinc/vendor_*.c, the same.
 $(BUILD)/src/vendor/%.o: WARN := -w
+$(BUILD)/skinc-objs/vendor_%.o: WARN := -w
 
 # Generated sources: tools/bin2c runs on the build machine.
 $(BIN2C): tools/bin2c.c

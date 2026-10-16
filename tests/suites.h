@@ -98,4 +98,5 @@
     X(skinc_skins)                                                           \
     X(skinc_program)                                                         \
     X(adpcm)                                                                 \
-    X(fontcheck)
+    X(fontcheck)                                                             \
+    X(skinc_media)
