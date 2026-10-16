@@ -12,6 +12,8 @@
 #include "appsettings.h"
 #include "clitab.h"
 #include "control.h"
+#include "dashboard.h"
+#include "dashview.h"
 #include "foreign.h"
 #include "identity.h"
 #include "lastskin.h"
@@ -201,6 +203,8 @@ struct gui {
     sk_env paths;
     sk_foreign *foreign;
     sk_monitor_config mon;
+    sk_dashboard_config dash;
+    sk_boards *boards;
     char *profiles_dir, *settings_file, *last_dir;
     sk_appsettings settings;
     SK_VEC(problem) problems;
@@ -217,6 +221,13 @@ struct gui {
     sk_glyph_cache *cache;
     double font_px; /* the terminal's, from the settings */
     SK_VEC(gwin *) wins;
+    /* Each dashboard tab's pane, by tab id. */
+    SK_VEC(struct dview) dviews;
+};
+
+struct dview {
+    int id;
+    sk_dashview *v;
 };
 
 /* ---- Terminals shared by the threads ---- */
@@ -324,9 +335,9 @@ static void free_snap_win(snap_win *w)
  * the tab's note. */
 static void strip_of(gui *g, sk_tab *tab, strip_text *out)
 {
-    /* A monitor says its own (monitor.js's strip). */
+    /* A monitor and the dashboard say their own. */
     sk_tab_strip ms;
-    if (sk_monitor_strip(tab, &ms)) {
+    if (sk_monitor_strip(tab, &ms) || sk_dashboard_strip(tab, &ms)) {
         out->label = sk_xstrdup(ms.label ? ms.label : "");
         out->cmdline = sk_xstrdup(ms.cmdline ? ms.cmdline : "");
         out->cwd = sk_xstrdup(ms.cwd ? ms.cwd : "");
@@ -515,6 +526,11 @@ static void do_start(void *ud)
         free(m);
         return;
     }
+    if (tab && tab->kind == SK_TAB_DASHBOARD) {
+        sk_dashboard_start(tab);
+        free(m);
+        return;
+    }
     sk_session *s = sk_clitab_session(tab);
     if (s && sk_session_get_state(s) == SK_SESSION_IDLE) {
         int cols, rows;
@@ -558,17 +574,46 @@ static void mon_pane(void *ud, sk_tab *tab, const char *text)
     on_output(ud, tab, text, strlen(text));
 }
 
+/* The dashboard's sessions, boards and view (decision 0028). */
+static void dash_list(void *ud, sk_foreign_entries *out)
+{
+    sk_foreign_sessions(((gui *)ud)->foreign, out);
+}
+
+static void dash_board(void *ud, const char *folder, sk_board *out)
+{
+    sk_boards_get(((gui *)ud)->boards, folder, out);
+}
+
+typedef struct {
+    gui *g;
+    int id;
+    char view[];
+} view_msg;
+
+static void ui_dash_view(void *ud);
+
+static void dash_send(void *ud, sk_tab *tab, const char *view)
+{
+    gui *g = ud;
+    size_t n = strlen(view);
+    view_msg *m = sk_xmalloc(sizeof *m + n + 1);
+    m->g = g;
+    m->id = tab->id;
+    memcpy(m->view, view, n + 1);
+    sk_ui_post(ui_dash_view, m);
+}
+
 static int make_tab(void *ud, sk_tab *tab, const sk_tab_spec *spec, char **err)
 {
     gui *g = ud;
     if (spec->kind == SK_TAB_MONITOR) {
         if (sk_monitor_make(&g->mon, tab, spec, err) != 0)
             return -1;
-    } else if (spec->kind == SK_TAB_CLI) {
-        if (sk_clitab_make(&g->cli, tab, spec, err) != 0)
+    } else if (spec->kind == SK_TAB_DASHBOARD) {
+        if (sk_dashboard_make(&g->dash, tab, spec, err) != 0)
             return -1;
-    } else {
-        *err = sk_xstrdup("this build opens no dashboard tab yet");
+    } else if (sk_clitab_make(&g->cli, tab, spec, err) != 0) {
         return -1;
     }
     int cols, rows;
@@ -902,13 +947,13 @@ static void file_rows(gui *g, row_vec *v)
 }
 
 /* Agents: the agent sessions of decision 0027 and the dashboard of
- * decision 0028, which is not in this build yet. */
+ * decision 0028. */
 static void agents_rows(gui *g, row_vec *v)
 {
     row_add(v, SK_ROW_HEADING, "Agent sessions");
     sk_menu_row *box = row_add(v, SK_ROW_SESSIONS, NULL);
     sessions_now(g, &box->sessions, &box->nsessions);
-    row_item(v, "Sessions dashboard", ACT_DASHBOARD, SK_ROW_CLOSES, NULL)->disabled = true;
+    row_item(v, "Sessions dashboard", ACT_DASHBOARD, SK_ROW_CLOSES, NULL);
 }
 
 /* Skins and Visualization, whose subsystems are not in this build yet:
@@ -1104,6 +1149,13 @@ static void do_action(void *ud)
     case ACT_SESSION:
         sk_foreign_open(g->foreign, m->arg, &err);
         break;
+    case ACT_DASHBOARD:
+        if (!sk_dashboard_open(g->tabs, g->l->cwd, &err) && err) {
+            add_problem(g, "Sessions dashboard failed", err);
+            free(err);
+            err = NULL;
+        }
+        break;
     default:
         err = sk_xstrdup("not in this build yet");
         break;
@@ -1281,6 +1333,8 @@ static void gwin_free(gwin *w)
     free(w);
 }
 
+static void drop_dviews(gui *g);
+
 /* Each window as the snapshot has it: new windows open, windows with no
  * tabs left close. */
 static void ui_snapshot(void *ud)
@@ -1333,6 +1387,7 @@ static void ui_snapshot(void *ud)
             sk_window_focus(w->win);
         redraw(w);
     }
+    drop_dviews(g);
     free(s->wins);
     free(s);
 }
@@ -1495,6 +1550,84 @@ static void menu_press(gwin *w, const sk_menu_press *p)
         sk_loop_post(w->g->loop, do_action, m);
     }
     menu_changed(w);
+}
+
+/* ---- The dashboard's pane ---- */
+
+static sk_dashview *dview_of(gui *g, int id, bool make)
+{
+    for (size_t i = 0; i < g->dviews.len; i++)
+        if (g->dviews.ptr[i].id == id)
+            return g->dviews.ptr[i].v;
+    if (!make)
+        return NULL;
+    struct dview d = {id, sk_dashview_new()};
+    sk_vec_push(&g->dviews, d);
+    return d.v;
+}
+
+/* The pane of w's active tab when it is the dashboard's. */
+static sk_dashview *active_dview(gwin *w)
+{
+    snap_tab *t = active_tab(w);
+    return t && t->kind == SK_TAB_DASHBOARD ? dview_of(w->g, t->id, false) : NULL;
+}
+
+static void ui_dash_view(void *ud)
+{
+    view_msg *m = ud;
+    gui *g = m->g;
+    sk_dashview_update(dview_of(g, m->id, true), m->view, strlen(m->view));
+    for (size_t i = 0; i < g->wins.len; i++)
+        if (g->wins.ptr[i]->snap.active == m->id)
+            redraw(g->wins.ptr[i]);
+    free(m);
+}
+
+/* Panes whose tab no window has any more. */
+static void drop_dviews(gui *g)
+{
+    for (size_t i = 0; i < g->dviews.len;) {
+        bool kept = false;
+        for (size_t k = 0; k < g->wins.len && !kept; k++)
+            for (size_t j = 0; j < g->wins.ptr[k]->snap.n && !kept; j++)
+                kept = g->wins.ptr[k]->snap.tabs[j].id == g->dviews.ptr[i].id;
+        if (kept) {
+            i++;
+            continue;
+        }
+        sk_dashview_free(g->dviews.ptr[i].v);
+        g->dviews.ptr[i] = g->dviews.ptr[--g->dviews.len];
+    }
+}
+
+/* The pointer on the dashboard's pane: the live row under it lit, a
+ * press opening its session, the wheel scrolling it. True when the
+ * event was the pane's. */
+static bool dash_mouse(gwin *w, const sk_event *ev)
+{
+    snap_tab *at = active_tab(w);
+    if (!at || at->kind != SK_TAB_DASHBOARD)
+        return false;
+    sk_dashview *v = active_dview(w);
+    if (!v)
+        return true;
+    double x = ev->mouse.x - TERM_INSET, y = ev->mouse.y - top_points(w) - TERM_INSET;
+    if (ev->type == SK_EV_MOUSE_MOVE && sk_dashview_hover(v, x, y))
+        redraw(w);
+    if (ev->type == SK_EV_MOUSE_DOWN && ev->mouse.button == 1) {
+        const char *key = sk_dashview_hit(v, x, y);
+        if (key) {
+            size_t n = strlen(key);
+            act_msg *m = sk_xcalloc(1, sizeof *m + n + 1);
+            m->g = w->g;
+            m->win = w->snap.id;
+            m->action = ACT_SESSION;
+            memcpy(m->arg, key, n);
+            sk_loop_post(w->g->loop, do_action, m);
+        }
+    }
+    return true;
 }
 
 /* ---- Drawing ---- */
@@ -1685,6 +1818,23 @@ static void on_sync_check(void *ud)
     sk_window_request_frame(w->win);
 }
 
+/* The dashboard's pane at the terminal's rect, in the terminal theme's
+ * colours. */
+static void draw_dash(gwin *w, sk_image *f, sk_term *t)
+{
+    sk_term_palette p;
+    sk_term_lock(t);
+    sk_term_palette_of(t, &p);
+    sk_term_unlock(t);
+    sk_rect a = term_area(w);
+    sk_dashview_style st = {w->g->mono, w->g->cache, sk_window_scale(w->win), (sk_color)(0xff000000u | p.fg),
+                            (sk_color)(0xff000000u | p.bg)};
+    sk_fill_rect(f, a, st.bg, SK_BLEND_SRC, NULL);
+    sk_dashview *v = active_dview(w);
+    if (v)
+        sk_dashview_draw(v, f, a, &st);
+}
+
 static void draw(gwin *w)
 {
     gui *g = w->g;
@@ -1702,6 +1852,13 @@ static void draw(gwin *w)
         sk_fill_rect(f, stage_area(w), SK_RGB(0, 0, 0), SK_BLEND_SRC, NULL);
     }
     sk_term *t = active_term(w);
+    snap_tab *at = active_tab(w);
+    if (t && at->kind == SK_TAB_DASHBOARD) {
+        /* Drawn whole each time: every view and hover asks for all. */
+        if (w->all)
+            draw_dash(w, f, t);
+        t = NULL;
+    }
     if (t) {
         sk_rect a = term_area(w);
         sk_image area = sk_image_view(f, a);
@@ -2190,7 +2347,7 @@ static void on_mouse(gwin *w, const sk_event *ev)
         if (strip_mouse(w, ev))
             return;
     }
-    if (!t)
+    if (!t || (!chrome && dash_mouse(w, ev)))
         return;
     sk_term_input_modes m;
     sk_term_input_modes_of(t, &m);
@@ -2291,6 +2448,15 @@ static void on_scroll(gwin *w, const sk_event *ev)
     if (sk_menu_open(w->menu) && sk_menu_scroll(w->menu, ev->scroll.x, ev->scroll.y,
                                                 -(ev->scroll.precise ? ev->scroll.dy / 20.8 : ev->scroll.dy))) {
         redraw(w);
+        return;
+    }
+    /* The dashboard's pane scrolls by points, three lines of 18 to a
+     * notch. */
+    snap_tab *at = active_tab(w);
+    if (at && at->kind == SK_TAB_DASHBOARD) {
+        sk_dashview *dv = active_dview(w);
+        if (dv && sk_dashview_scroll(dv, -(ev->scroll.precise ? ev->scroll.dy : ev->scroll.dy * 54)))
+            redraw(w);
         return;
     }
     sk_term *t = active_term(w);
@@ -2550,6 +2716,13 @@ static void probe(gui *g, gwin *w, ctl_msg *m)
     sk_jw_key(&jw, SK_STR("menu"));
     if (w)
         sk_menu_state(w->menu, &jw);
+    else
+        sk_jw_null(&jw);
+    /* The dashboard's pane, when it is the active tab's. */
+    sk_jw_key(&jw, SK_STR("dashboard"));
+    sk_dashview *dv = w ? active_dview(w) : NULL;
+    if (dv)
+        sk_dashview_state(dv, &jw);
     else
         sk_jw_null(&jw);
     /* The web link under the pointer, as the addon found it. */
@@ -2866,6 +3039,23 @@ int sk_gui_run(const sk_options *o, const sk_envp *env, const char *self)
     g->mon.pane = mon_pane;
     g->mon.log = log_line;
     g->mon.ud = g;
+    /* The sessions dashboard (decision 0028) and its issue boards
+     * (decision 0029). */
+    sk_boards_opts bo;
+    memset(&bo, 0, sizeof bo);
+    bo.loop = g->loop;
+    bo.log = log_line;
+    bo.log_ud = g;
+    g->boards = sk_boards_new(&bo);
+    g->dash.loop = g->loop;
+    g->dash.tabs = g->tabs;
+    g->dash.list = dash_list;
+    g->dash.watcher = mon_watcher;
+    g->dash.board = dash_board;
+    g->dash.strip = mon_strip;
+    g->dash.send = dash_send;
+    g->dash.log = log_line;
+    g->dash.ud = g;
     sk_loop_signal(g->loop, SIGINT, on_stop, g);
     sk_loop_signal(g->loop, SIGTERM, on_stop, g);
     sk_loop_signal(g->loop, SIGHUP, on_stop, g);
@@ -2878,6 +3068,7 @@ int sk_gui_run(const sk_options *o, const sk_envp *env, const char *self)
         sk_tell("%s", err);
         free(err);
         sk_tabs_free(g->tabs);
+        sk_boards_free(g->boards);
         sk_foreign_free(g->foreign);
         sk_loop_free(g->loop);
         goto out;
@@ -2914,6 +3105,7 @@ int sk_gui_run(const sk_options *o, const sk_envp *env, const char *self)
     /* The tabs' watch agents are the foreign sessions', so the tabs go
      * first. */
     sk_tabs_free(g->tabs);
+    sk_boards_free(g->boards);
     sk_foreign_free(g->foreign);
     for (size_t i = 0; i < g->ctabs.len; i++)
         st_unref(g->ctabs.ptr[i].st);
@@ -2932,6 +3124,9 @@ out:
     while (g->wins.len)
         gwin_free(g->wins.ptr[--g->wins.len]);
     sk_vec_free(&g->wins);
+    for (size_t i = 0; i < g->dviews.len; i++)
+        sk_dashview_free(g->dviews.ptr[i].v);
+    sk_vec_free(&g->dviews);
     /* The cache keys glyphs by face, so it goes before the faces do. */
     sk_glyph_cache_free(g->cache);
     sk_fontset_free(g->mono);

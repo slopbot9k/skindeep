@@ -652,6 +652,54 @@ static void test_the_menus(void)
     CHECK_INT(finish(&a, 5000), 128 + SIGHUP);
 }
 
+/* Agents' Sessions dashboard opens the dashboard's tab (decision 0028),
+ * whose pane shows its samples; asked again, it makes it active. */
+static void test_the_sessions_dashboard(void)
+{
+    app a;
+    const char *cmd[] = {"cat", NULL};
+    if (!start(&a, cmd))
+        return;
+    sk_arena ar;
+    sk_arena_init(&ar, 0);
+    ok(&a, "{\"op\":\"menu\",\"show\":\"Agents\",\"button\":[100,40,30,30]}");
+    const sk_json *p = wait_menu(&a, &ar, "Agents", 5000);
+    const sk_json *row = p ? menu_row(p, "Sessions dashboard") : NULL;
+    CHECK(row != NULL);
+    if (row)
+        press_row(&a, p, row, 20);
+    double ticks = 0;
+    for (uint64_t until = sk_now_ms() + 8000; sk_now_ms() < until; sk_test_sleep_ms(100)) {
+        p = probe(&a, &ar);
+        ticks = num(sk_json_get(p, "dashboard"), "ticks");
+        if (ticks >= 1)
+            break;
+    }
+    CHECK(ticks >= 1);
+    const sk_json *tabs = sk_json_get(p, "tabs");
+    CHECK_INT(len_of(tabs), 2);
+    sk_str kind = {0};
+    sk_json_as_string(sk_json_get(sk_json_at(tabs, 1), "kind"), &kind);
+    CHECK_MEM(kind, "dashboard");
+    /* Back to cat, and the menu again: the same tab, made active. */
+    ok(&a, "{\"op\":\"key\",\"key\":\"Tab\",\"mods\":[\"ctrl\"]}");
+    ok(&a, "{\"op\":\"menu\",\"show\":\"Agents\"}");
+    p = wait_menu(&a, &ar, "Agents", 5000);
+    row = p ? menu_row(p, "Sessions dashboard") : NULL;
+    if (row)
+        press_row(&a, p, row, 20);
+    bool back = false;
+    for (uint64_t until = sk_now_ms() + 5000; sk_now_ms() < until && !back; sk_test_sleep_ms(50)) {
+        p = probe(&a, &ar);
+        back = sk_json_get(p, "dashboard") && sk_json_get(p, "dashboard")->type == SK_JSON_OBJECT;
+    }
+    CHECK(back);
+    CHECK_INT(len_of(sk_json_get(p, "tabs")), 2);
+    sk_arena_free(&ar);
+    ok(&a, "{\"op\":\"hangup\"}");
+    CHECK_INT(finish(&a, 5000), 128 + SIGHUP);
+}
+
 const sk_test sk_suite_window[] = {
     T(test_typing_reaches_the_tab),
     T(test_the_tab_chords),
@@ -662,5 +710,6 @@ const sk_test sk_suite_window[] = {
     T(test_closing_the_window_hangs_up),
     T(test_a_tab_dragged_along_the_strip),
     T(test_the_menus),
+    T(test_the_sessions_dashboard),
     {0},
 };
