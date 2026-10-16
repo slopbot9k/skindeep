@@ -25,24 +25,17 @@ const sk_viz_mode_info sk_viz_modes[SK_VIZ_MODES] = {
 /* Each Canvas2D mode's class, by the table's index. */
 static const sk_vmode_class *class_of(int mode)
 {
+    /* The five butterchurn modes before them have none. */
     static const sk_vmode_class *const classes[SK_VIZ_MODES] = {
-        NULL,
-        NULL,
-        NULL,
-        NULL,
-        NULL,
-        &sk_vmode_scope,
-        &sk_vmode_analyzer,
-        &sk_vmode_fire,
-        &sk_vmode_superscope,
-        &sk_vmode_dotplane,
-        NULL,
-        NULL,
-        NULL,
-        NULL,
-        NULL,
-        NULL,
-        NULL,
+        [5] = &sk_vmode_scope,
+        [6] = &sk_vmode_analyzer,
+        [7] = &sk_vmode_fire,
+        [8] = &sk_vmode_superscope,
+        [9] = &sk_vmode_dotplane,
+        [10] = &sk_vmode_fern,
+        [11] = &sk_vmode_go,
+        [12] = &sk_vmode_zoom,
+        [13] = &sk_vmode_gravity,
     };
     return mode >= 0 && mode < SK_VIZ_MODES ? classes[mode] : NULL;
 }

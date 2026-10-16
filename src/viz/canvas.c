@@ -159,76 +159,189 @@ static bool invert(const sk_vc_xform *m, sk_vc_xform *inv)
     return true;
 }
 
-/* A gradient set up for one fill: the LUT and the pixels-to-points
- * transform. */
+/* A paint set up for one fill, in pixels: a colour, or a gradient's
+ * LUT and how t follows the pixel. A linear gradient's t is linear in
+ * the pixel, so it is stepped along a row. A radial one with one centre
+ * under a transform that keeps circles round is a distance from a point
+ * in pixels, its colour flat inside the radius where the LUT still
+ * holds its first entry. Any other radial gradient solves canvas's two
+ * circles per pixel. */
+enum { SHADE_SOLID, SHADE_LINEAR, SHADE_ROUND, SHADE_CONE };
+
 typedef struct {
-    const sk_vc_paint *p;
-    sk_px lut[256];
-    sk_vc_xform inv;
+    int kind;
     bool ok;
-    /* radial: the quadratic's constant parts */
-    double cdx, cdy, dr, a;
+    sk_px solid;
+    sk_px lut[256];
+    /* linear: t = a x + b y + c at a pixel's centre */
+    double a, b, c;
+    /* round: the centre, the inner radius and 255 / the span, the
+     * squared radius within which the colour is lut[0] and past which
+     * lut[255], in pixels */
+    double cx, cy, r0, k, flat2, out2;
+    /* cone: the points of each pixel, and the quadratic's constants */
+    const sk_vc_paint *p;
+    sk_vc_xform inv;
+    double cdx, cdy, dr, qa;
 } shader;
 
 static void shader_init(shader *sh, const sk_vc_paint *p, const sk_vc_xform *m)
 {
+    memset(sh, 0, sizeof *sh);
     sh->p = p;
-    sh->ok = p->kind == SK_VC_SOLID || invert(m, &sh->inv);
-    if (p->kind == SK_VC_SOLID)
+    sh->ok = true;
+    if (p->kind == SK_VC_SOLID) {
+        sh->kind = SHADE_SOLID;
+        sh->solid = sk_premul(p->color);
         return;
+    }
     gradient_lut(p, sh->lut);
-    sh->cdx = p->x1 - p->x0;
-    sh->cdy = p->y1 - p->y0;
-    sh->dr = p->r1 - p->r0;
-    sh->a = sh->cdx * sh->cdx + sh->cdy * sh->cdy - (p->kind == SK_VC_RADIAL ? sh->dr * sh->dr : 0);
+    if (!invert(m, &sh->inv)) {
+        sh->ok = false;
+        return;
+    }
+    double cdx = p->x1 - p->x0, cdy = p->y1 - p->y0, dr = p->r1 - p->r0;
+    if (p->kind == SK_VC_LINEAR) {
+        double len2 = cdx * cdx + cdy * cdy;
+        if (!(len2 > 0)) {
+            sh->ok = false;
+            return;
+        }
+        sh->kind = SHADE_LINEAR;
+        const sk_vc_xform *v = &sh->inv;
+        sh->a = (v->a * cdx + v->b * cdy) / len2;
+        sh->b = (v->c * cdx + v->d * cdy) / len2;
+        sh->c = ((v->e - p->x0) * cdx + (v->f - p->y0) * cdy) / len2;
+        return;
+    }
+    bool round = m->a == m->d && m->b == -m->c;
+    if (cdx == 0 && cdy == 0 && round) {
+        /* Two circles about one centre, one inside the other. */
+        if (!(dr != 0) || p->r0 < 0 || p->r1 < 0) {
+            sh->ok = false;
+            return;
+        }
+        double k = sqrt(fabs(m->a * m->d - m->b * m->c));
+        sh->kind = SHADE_ROUND;
+        sh->cx = m->a * p->x0 + m->c * p->y0 + m->e;
+        sh->cy = m->b * p->x0 + m->d * p->y0 + m->f;
+        double r0 = p->r0 * k, r1 = p->r1 * k;
+        sh->r0 = r0;
+        sh->k = 255 / (r1 - r0);
+        /* t below j's half step rounds to entry j: entries 0..j alike are
+         * flat. With r1 < r0, t falls outward and nothing is flat. */
+        int j = 0;
+        while (j < 255 && sh->lut[j + 1] == sh->lut[0])
+            j++;
+        double flat = r1 > r0 ? r0 + (j + 0.5) / 255 * (r1 - r0) : 0;
+        sh->flat2 = flat > 0 ? flat * flat : -1;
+        sh->out2 = r1 > r0 ? r1 * r1 : INFINITY;
+        return;
+    }
+    sh->kind = SHADE_CONE;
+    sh->cdx = cdx;
+    sh->cdy = cdy;
+    sh->dr = dr;
+    sh->qa = cdx * cdx + cdy * cdy - dr * dr;
 }
 
-/* The gradient's colour at pixel (x, y), or 0 where a two-circle
- * gradient paints nothing. */
-static sk_px shade(const shader *sh, int x, int y)
+/* A two-circle gradient's colour at pixel (x, y), or 0 where it paints
+ * nothing: the largest w with |q - c(w)| = r(w) >= 0, c(w) = c0 + w (c1
+ * - c0), r(w) = r0 + w (r1 - r0), from a w^2 - 2 b w + c = 0. */
+static sk_px shade_cone(const shader *sh, int x, int y)
 {
     const sk_vc_paint *p = sh->p;
     double px = x + 0.5, py = y + 0.5;
-    double ux = sh->inv.a * px + sh->inv.c * py + sh->inv.e;
-    double uy = sh->inv.b * px + sh->inv.d * py + sh->inv.f;
+    double qx = sh->inv.a * px + sh->inv.c * py + sh->inv.e - p->x0;
+    double qy = sh->inv.b * px + sh->inv.d * py + sh->inv.f - p->y0;
+    double b = qx * sh->cdx + qy * sh->cdy + p->r0 * sh->dr;
+    double c = qx * qx + qy * qy - p->r0 * p->r0;
     double t;
-    if (p->kind == SK_VC_LINEAR) {
-        if (!(sh->a > 0))
+    if (fabs(sh->qa) < 1e-12) {
+        if (fabs(b) < 1e-12)
             return 0;
-        t = ((ux - p->x0) * sh->cdx + (uy - p->y0) * sh->cdy) / sh->a;
+        t = c / (2 * b);
+        if (p->r0 + t * sh->dr < 0)
+            return 0;
     } else {
-        /* The largest w with |q - c(w)| = r(w) >= 0, c(w) = c0 + w (c1 -
-         * c0), r(w) = r0 + w (r1 - r0): a w^2 - 2 b w + c = 0. */
-        double qx = ux - p->x0, qy = uy - p->y0;
-        double b = qx * sh->cdx + qy * sh->cdy + p->r0 * sh->dr;
-        double c = qx * qx + qy * qy - p->r0 * p->r0;
-        if (fabs(sh->a) < 1e-12) {
-            if (fabs(b) < 1e-12)
-                return 0;
-            t = c / (2 * b);
-            if (p->r0 + t * sh->dr < 0)
-                return 0;
-        } else {
-            double disc = b * b - sh->a * c;
-            if (disc < 0)
-                return 0;
-            double s = sqrt(disc);
-            double t1 = (b + s) / sh->a, t2 = (b - s) / sh->a;
-            if (t1 < t2) {
-                double tmp = t1;
-                t1 = t2;
-                t2 = tmp;
-            }
-            if (p->r0 + t1 * sh->dr >= 0)
-                t = t1;
-            else if (p->r0 + t2 * sh->dr >= 0)
-                t = t2;
-            else
-                return 0;
+        double disc = b * b - sh->qa * c;
+        if (disc < 0)
+            return 0;
+        double s = sqrt(disc);
+        double t1 = (b + s) / sh->qa, t2 = (b - s) / sh->qa;
+        if (t1 < t2) {
+            double tmp = t1;
+            t1 = t2;
+            t2 = tmp;
         }
+        if (p->r0 + t1 * sh->dr >= 0)
+            t = t1;
+        else if (p->r0 + t2 * sh->dr >= 0)
+            t = t2;
+        else
+            return 0;
     }
-    int i = (int)floor(sk_vm_clamp(t, 0, 1) * 255 + 0.5);
-    return sh->lut[i];
+    return sh->lut[(int)floor(sk_vm_clamp(t, 0, 1) * 255 + 0.5)];
+}
+
+/* A row of a paint's colours: n pixels from (x, y) into out. */
+/* The most pixels a row is shaded in at once. */
+#define SHADE_RUN 256
+
+/* A run of LUT indices, t in 255ths rounded, from t at the first pixel
+ * and its step: in floats with no branch, so the loop vectorizes. */
+static void linear_index(float t, float step, int n, int32_t *idx)
+{
+    for (int i = 0; i < n; i++) {
+        float v = (t + step * (float)i) * 255.0f + 0.5f;
+        v = v < 0 ? 0 : v > 255 ? 255 : v;
+        idx[i] = (int32_t)v;
+    }
+}
+
+/* The same for a round gradient: t from the distance to the centre. */
+static void round_index(float dx, float dy2, float r0, float k, int n, int32_t *idx)
+{
+    for (int i = 0; i < n; i++) {
+        float x = dx + (float)i;
+        float v = (sqrtf(x * x + dy2) - r0) * k + 0.5f;
+        v = v < 0 ? 0 : v > 255 ? 255 : v;
+        idx[i] = (int32_t)v;
+    }
+}
+
+static void shade_row(const shader *sh, int x, int y, int n, sk_px *out)
+{
+    int32_t idx[SHADE_RUN];
+    switch (sh->kind) {
+    case SHADE_SOLID:
+        for (int i = 0; i < n; i++)
+            out[i] = sh->solid;
+        break;
+    case SHADE_LINEAR:
+        for (int at = 0; at < n; at += SHADE_RUN) {
+            int m = SK_MIN(SHADE_RUN, n - at);
+            double t = sh->a * (x + at + 0.5) + sh->b * (y + 0.5) + sh->c;
+            linear_index((float)t, (float)sh->a, m, idx);
+            for (int i = 0; i < m; i++)
+                out[at + i] = sh->lut[idx[i]];
+        }
+        break;
+    case SHADE_ROUND: {
+        double dy = y + 0.5 - sh->cy;
+        for (int at = 0; at < n; at += SHADE_RUN) {
+            int m = SK_MIN(SHADE_RUN, n - at);
+            round_index((float)(x + at + 0.5 - sh->cx), (float)(dy * dy), (float)sh->r0, (float)sh->k, m, idx);
+            for (int i = 0; i < m; i++)
+                out[at + i] = sh->lut[idx[i]];
+        }
+        break;
+    }
+    default:
+        for (int i = 0; i < n; i++)
+            out[i] = shade_cone(sh, x + i, y);
+        break;
+    }
 }
 
 /* ---- The canvas ---- */
@@ -594,45 +707,151 @@ static sk_rect region(const sk_vc *vc, double x0, double y0, double x1, double y
     return sk_rect_intersect(r, vc->st.clip);
 }
 
-/* Coverage cov over r (a row of stride bytes each) painted with p: times
- * the clip mask and globalAlpha, composited by the operation. */
+/* n pixels of d under the one colour s, premultiplied and scaled
+ * already. */
+static void span_solid(sk_px *d, int n, sk_px s, sk_blend op)
+{
+    if (!s || n <= 0)
+        return;
+    if (op == SK_BLEND_ADD) {
+        for (int i = 0; i < n; i++)
+            d[i] = add_px(s, d[i]);
+    } else if (s >> 24 == 255) {
+        for (int i = 0; i < n; i++)
+            d[i] = s;
+    } else {
+        uint32_t k = 255 - (s >> 24);
+        for (int i = 0; i < n; i++)
+            d[i] = s + scale_px(d[i], k);
+    }
+}
+
+/* n pixels of d from (x, y) under the shader's colours, each scaled by
+ * its coverage in k, or all by k0 when k is NULL. */
+static void span_shaded(const shader *sh, sk_px *d, int x, int y, int n, const uint8_t *k, uint32_t k0, sk_blend op,
+                        sk_px *tmp)
+{
+    if (n <= 0)
+        return;
+    shade_row(sh, x, y, n, tmp);
+    /* With no branch: scaling by 255 leaves a pixel as it is, and an
+     * opaque one over d leaves nothing of d. */
+    if (op == SK_BLEND_SRC_OVER) {
+        if (k)
+            for (int i = 0; i < n; i++) {
+                sk_px s = scale_px(tmp[i], k[i]);
+                d[i] = s + scale_px(d[i], 255 - (s >> 24));
+            }
+        else
+            for (int i = 0; i < n; i++) {
+                sk_px s = scale_px(tmp[i], k0);
+                d[i] = s + scale_px(d[i], 255 - (s >> 24));
+            }
+        return;
+    }
+    for (int i = 0; i < n; i++)
+        d[i] = add_px(scale_px(tmp[i], k ? k[i] : k0), d[i]);
+}
+
+/* A run of n pixels from (x, y), each covered by k: a colour's span,
+ * or a round gradient's flat centre and clear outside as spans and the
+ * rest pixel by pixel. */
+static void run(const shader *sh, sk_px *d, int x, int y, int n, uint32_t k, sk_blend op, sk_px *tmp)
+{
+    if (sh->kind == SHADE_SOLID) {
+        span_solid(d, n, k == 255 ? sh->solid : scale_px(sh->solid, k), op);
+        return;
+    }
+    if (sh->kind != SHADE_ROUND) {
+        span_shaded(sh, d, x, y, n, NULL, k, op, tmp);
+        return;
+    }
+    /* Pixels whose centres lie within radius rr of the centre on this
+     * row: [*a, *b), clamped to the run. */
+    double dy = y + 0.5 - sh->cy, dy2 = dy * dy;
+    int x1 = x + n;
+#define WITHIN(r2, a, b)                                                     \
+    do {                                                                     \
+        if ((r2) > dy2) {                                                    \
+            double h_ = sqrt((r2) - dy2);                                    \
+            double lo_ = ceil(sh->cx - h_ - 0.5), hi_ = floor(sh->cx + h_ - 0.5) + 1; \
+            a = (int)sk_vm_clamp(lo_, x, x1);                                \
+            b = (int)sk_vm_clamp(hi_, a, x1);                                \
+        } else {                                                             \
+            a = b = x1;                                                      \
+        }                                                                    \
+    } while (0)
+    int oa, ob, fa, fb;
+    WITHIN(sh->out2, oa, ob);
+    if (sh->flat2 > 0) {
+        WITHIN(sh->flat2, fa, fb);
+        fa = (int)sk_vm_clamp(fa, oa, ob);
+        fb = (int)sk_vm_clamp(fb, fa, ob);
+    } else {
+        fa = fb = oa;
+    }
+#undef WITHIN
+    if (oa == ob)
+        oa = ob = fa = fb = x1;
+    sk_px out = k == 255 ? sh->lut[255] : scale_px(sh->lut[255], k);
+    sk_px in = k == 255 ? sh->lut[0] : scale_px(sh->lut[0], k);
+    span_solid(d, oa - x, out, op);
+    span_shaded(sh, d + (oa - x), oa, y, fa - oa, NULL, k, op, tmp);
+    span_solid(d + (fa - x), fb - fa, in, op);
+    span_shaded(sh, d + (fb - x), fb, y, ob - fb, NULL, k, op, tmp);
+    span_solid(d + (ob - x), x1 - ob, out, op);
+}
+
+/* Coverage cov over r (a row of stride bytes each) painted with p:
+ * times the clip mask and globalAlpha, composited by the operation.
+ * Runs of full coverage go a span at a time. */
 static void paint(sk_vc *vc, sk_rect r, const uint8_t *cov, int stride, const sk_vc_paint *p)
 {
     shader sh;
     shader_init(&sh, p, &vc->st.m);
-    if (!sh.ok)
-        return;
     uint32_t A = byte(vc->st.alpha * 255);
-    if (!A)
-        return;
-    sk_px solid = p->kind == SK_VC_SOLID ? sk_premul(p->color) : 0;
-    if (p->kind == SK_VC_SOLID && !solid)
+    if (!sh.ok || !A || (sh.kind == SHADE_SOLID && !sh.solid))
         return;
     sk_blend op = vc->st.op;
     const uint8_t *mask = vc->st.mask;
     int mw = vc->im->w;
+    sk_px *tmp = sk_xmalloc((size_t)r.w * sizeof *tmp);
+    uint8_t *k = sk_xmalloc((size_t)r.w);
     for (int y = 0; y < r.h; y++) {
         const uint8_t *c = cov + (size_t)y * (size_t)stride;
-        sk_px *d = sk_image_row(vc->im, r.y + y) + r.x;
+        int x0 = 0, x1 = r.w;
+        while (x0 < x1 && !c[x0])
+            x0++;
+        while (x1 > x0 && !c[x1 - 1])
+            x1--;
+        if (x0 == x1)
+            continue;
         const uint8_t *m = mask ? mask + (size_t)(r.y + y) * (size_t)mw + r.x : NULL;
-        for (int x = 0; x < r.w; x++) {
-            uint32_t k = c[x];
-            if (!k)
-                continue;
-            if (m)
-                k = mul8(k, m[x]);
-            if (A != 255)
-                k = mul8(k, A);
-            if (!k)
-                continue;
-            sk_px s = p->kind == SK_VC_SOLID ? solid : shade(&sh, r.x + x, r.y + y);
-            if (k != 255)
-                s = scale_px(s, k);
-            if (s)
-                d[x] = blend(op, s, d[x]);
+        for (int x = x0; x < x1; x++)
+            k[x] = (uint8_t)(m ? mul8(c[x], m[x]) : c[x]);
+        sk_px *d = sk_image_row(vc->im, r.y + y) + r.x;
+        int py = r.y + y;
+        for (int x = x0; x < x1;) {
+            int e = x;
+            if (k[x] == 255) {
+                while (e < x1 && k[e] == 255)
+                    e++;
+                run(&sh, d + x, r.x + x, py, e - x, A, op, tmp);
+            } else {
+                while (e < x1 && k[e] != 255)
+                    e++;
+                if (A != 255)
+                    for (int i = x; i < e; i++)
+                        k[i] = (uint8_t)mul8(k[i], A);
+                span_shaded(&sh, d + x, r.x + x, py, e - x, k + x, 0, op, tmp);
+            }
+            x = e;
         }
     }
+    free(tmp);
+    free(k);
 }
+
 
 /* The colour at globalAlpha, as gfx takes it. */
 static sk_color faded(const sk_vc *vc, sk_color c)
@@ -899,14 +1118,28 @@ static void rect_cover(sk_vc *vc, sk_rect r, double x0, double y0, double x1, do
     vc->cover.ptr = sk_vec_grow_(vc->cover.ptr, &vc->cover.cap, n, 1);
     vc->cover.len = n;
     uint8_t *c = vc->cover.ptr;
+    /* Each column's share across; a row whole down copies the shares. */
+    double *cols = sk_xmalloc((size_t)r.w * sizeof *cols);
+    uint8_t *full = sk_xmalloc((size_t)r.w);
+    for (int x = 0; x < r.w; x++) {
+        double px = r.x + x, cx = SK_MIN(x1, px + 1) - SK_MAX(x0, px);
+        cols[x] = cx > 0 ? SK_MIN(cx, 1.0) : 0;
+        full[x] = (uint8_t)floor(cols[x] * 255 + 0.5);
+    }
     for (int y = 0; y < r.h; y++) {
         double py = r.y + y, cy = SK_MIN(y1, py + 1) - SK_MAX(y0, py);
+        uint8_t *row = c + (size_t)y * (size_t)r.w;
+        if (cy >= 1) {
+            memcpy(row, full, (size_t)r.w);
+            continue;
+        }
         for (int x = 0; x < r.w; x++) {
-            double px = r.x + x, cx = SK_MIN(x1, px + 1) - SK_MAX(x0, px);
-            double a = cx > 0 && cy > 0 ? cx * cy : 0;
-            c[(size_t)y * (size_t)r.w + x] = (uint8_t)floor(SK_MIN(a, 1.0) * 255 + 0.5);
+            double a = cy > 0 ? cols[x] * cy : 0;
+            row[x] = (uint8_t)floor(a * 255 + 0.5);
         }
     }
+    free(cols);
+    free(full);
 }
 
 /* The rectangle as the aside path, the current path left alone. */

@@ -101,4 +101,5 @@
     X(viz_synth)                                                             \
     X(viz_layout)                                                            \
     X(viz_canvas)                                                            \
+    X(viz_rules)                                                             \
     X(viz_modes)
