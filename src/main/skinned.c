@@ -1,11 +1,12 @@
-/* skinned: the app (decision 0036). Until the window of phase 4 it runs
- * only headless:
+/* skinned: the app (decision 0036): CMD's tabs in a window, or with
+ * --headless in the terminal it runs in.
  *
- *   skinned --headless[=FILE] [--record=FILE] [--statusline=always|chain-only]
- *           -- CMD [ARGS...]
+ *   skinned [--statusline=always|chain-only] -- CMD [ARGS...]
+ *   skinned --headless[=FILE] [--record=FILE] [...] -- CMD [ARGS...]
  *
  * --record keeps the first tab's pty output for the terminal's tests.
  * The other options of bin/skinned are taken and do nothing yet. */
+#include "../app/gui.h"
 #include "../app/headless.h"
 #include "../app/identity.h"
 #include "../core/command.h"
@@ -71,11 +72,10 @@ int main(int argc, char **argv)
     if (!sk_options_parse(&o, sk_strv_argv(&own), &env, &err)) {
         sk_tell("%s", sk_buf_cstr(&err));
         status = SK_EXIT_APP;
-    } else if (!headless) {
-        sk_tell("this build has no window yet: run skinned --headless[=FILE] [--record=FILE] -- CMD [ARGS...]");
-        status = SK_EXIT_APP;
-    } else {
+    } else if (headless) {
         status = sk_headless_run(&o, &ho, &env, argv[0]);
+    } else {
+        status = sk_gui_run(&o, &env, argv[0]);
     }
     sk_buf_free(&err);
     sk_envp_free(&env);

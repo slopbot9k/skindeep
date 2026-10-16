@@ -17,6 +17,7 @@
 #include <signal.h>
 #include <spawn.h>
 #include <stdatomic.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -323,9 +324,28 @@ static void on_gone(void *ud, sk_tab *tab, int code, sk_tab *next)
     post_snapshot(g);
 }
 
+/* For tests: SKINNED_SHOT=FILE keeps what the window shows when the
+ * app ends, read back from the system, as a QOI image. */
+static void shot(gui *g)
+{
+    const char *path = getenv("SKINNED_SHOT");
+    sk_image im;
+    if (!path || !*path || !g->win || !sk_window_readback(g->win, &im))
+        return;
+    size_t n = 0;
+    uint8_t *q = sk_qoi_encode(&im, &n);
+    FILE *f = q ? fopen(path, "wb") : NULL;
+    if (!f || fwrite(q, 1, n, f) != n)
+        sk_log("cannot write %s", path);
+    if (f)
+        fclose(f);
+    free(q);
+    sk_image_free(&im);
+}
+
 static void ui_quit(void *ud)
 {
-    (void)ud;
+    shot(ud);
     sk_ui_quit();
 }
 

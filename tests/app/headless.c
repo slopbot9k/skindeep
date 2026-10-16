@@ -141,8 +141,6 @@ static void test_statuses(void)
     CHECK_INT(run(bin, three, extra, out.ptr), 3);
     const char *missing[] = {metrics.ptr, "--", "no-such-command-anywhere", NULL};
     CHECK_INT(run(bin, missing, extra, out.ptr), 127);
-    const char *no_window[] = {"--", "sh", NULL};
-    CHECK_INT(run(bin, no_window, extra, out.ptr), 125);
     /* With no stdio, the files skinned opens must not take fds 0 to 2:
      * the tab's output to fd 1 would go into the metrics. */
     no_stdio = true;
