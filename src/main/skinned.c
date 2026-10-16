@@ -5,6 +5,7 @@
  *
  * The other options of bin/skinned are taken and do nothing yet. */
 #include "../app/headless.h"
+#include "../app/identity.h"
 #include "../core/command.h"
 
 #include <signal.h>
@@ -17,6 +18,7 @@ int main(int argc, char **argv)
     (void)argc;
     signal(SIGPIPE, SIG_IGN);
     sk_tell_adopt(3);
+    sk_identity_set_argv_source(sk_identity_kernel_argv);
     /* --headless is this build's own option, taken before the parser
      * that knows bin/skinned's options sees the rest. */
     sk_strv own = {0};

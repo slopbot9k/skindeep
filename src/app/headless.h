@@ -1,9 +1,10 @@
-/* skinned --headless (phase 2 of decision 0036): one tab's core with no
- * window. The command runs on a pty through its adapter and the relays,
- * as a tab's would, while the terminal skinned runs in stands in for the
- * window: raw mode, keys to the pty, its output to stdout, the window
- * size followed. Once a second the bus and the adapter's report go out
- * as one JSON line to the metrics file, the meters a skin would show. */
+/* skinned --headless (phase 2 of decision 0036): the tabs' model and a
+ * CLI tab's core with no window. The first tab runs the command on a pty
+ * through its adapter and the relays, while the terminal skinned runs in
+ * stands in for the window: raw mode, keys to the active tab's pty, its
+ * output to stdout, the window size followed. Once a second the active
+ * tab's bus and adapter report go out as one JSON line to the metrics
+ * file, the meters a skin would show. */
 #ifndef SK_APP_HEADLESS_H
 #define SK_APP_HEADLESS_H
 

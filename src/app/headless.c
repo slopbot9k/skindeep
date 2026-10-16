@@ -1,14 +1,12 @@
 #include "headless.h"
 
-#include "../agents/agent.h"
 #include "../base/json.h"
 #include "../base/log.h"
 #include "../base/paths.h"
-#include "../core/bus.h"
 #include "../core/command.h"
 #include "../core/loop.h"
-#include "../core/session.h"
 #include "../platform/pty.h"
+#include "clitab.h"
 #include "runtime.h"
 
 #include <errno.h>
@@ -27,9 +25,8 @@
 
 typedef struct {
     sk_loop *loop;
-    sk_session *session;
-    sk_agent *agent;
-    sk_bus *bus;
+    sk_tabs *tabs;
+    sk_clitab_config cli;
     FILE *metrics;
     bool raw;
     struct termios saved;
@@ -62,19 +59,35 @@ static void write_all(int fd, const char *p, size_t n)
     }
 }
 
-static void on_spawn(void *ud, pid_t pid)
+/* The window's own session: the active tab's, while it is a CLI's. */
+static sk_session *active_session(headless *h)
 {
-    (void)ud;
-    sk_log("spawn %ld", (long)pid);
+    return sk_clitab_session(sk_tabs_active(h->tabs));
 }
 
-static void on_output(void *ud, const char *bytes, size_t n)
+static int make_tab(void *ud, sk_tab *tab, const sk_tab_spec *spec, char **err)
 {
-    (void)ud;
-    write_all(1, bytes, n);
+    headless *h = ud;
+    return sk_clitab_make(&h->cli, tab, spec, err);
 }
 
-static void on_end(void *ud, int status)
+static void on_spawn(void *ud, sk_tab *tab, pid_t pid)
+{
+    (void)ud;
+    sk_log("tab %d: spawn %ld", tab->id, (long)pid);
+}
+
+/* The terminal shows the active tab, as the window would. */
+static void on_output(void *ud, sk_tab *tab, const char *bytes, size_t n)
+{
+    headless *h = ud;
+    if (tab == sk_tabs_active(h->tabs))
+        write_all(1, bytes, n);
+    else
+        sk_tabs_output(h->tabs, tab);
+}
+
+static void on_ended(void *ud, int status)
 {
     headless *h = ud;
     h->status = status;
@@ -88,7 +101,9 @@ static void on_stdin(sk_loop *loop, int fd, short revents, void *ud)
     char buf[4096];
     ssize_t n = read(fd, buf, sizeof buf);
     if (n > 0) {
-        sk_session_input(h->session, buf, (size_t)n);
+        sk_session *s = active_session(h);
+        if (s)
+            sk_session_input(s, buf, (size_t)n);
         return;
     }
     if (n < 0 && (errno == EAGAIN || errno == EINTR))
@@ -103,17 +118,18 @@ static void on_winch(sk_loop *loop, int signo, void *ud)
     (void)loop, (void)signo;
     headless *h = ud;
     int cols, rows;
-    if (sk_pty_get_size(0, &cols, &rows) == 0)
-        sk_session_resize(h->session, cols, rows);
+    sk_session *s = active_session(h);
+    if (s && sk_pty_get_size(0, &cols, &rows) == 0)
+        sk_session_resize(s, cols, rows);
 }
 
-/* As closing a window does (decision 0016). */
+/* As closing the window does (decision 0016). */
 static void on_stop(sk_loop *loop, int signo, void *ud)
 {
     (void)loop;
     headless *h = ud;
     sk_log("signal %d: hanging up", signo);
-    sk_session_hangup(h->session);
+    sk_tabs_hangup_all(h->tabs);
 }
 
 static const char *state_name(sk_ch_state s)
@@ -130,21 +146,27 @@ static void key_str(sk_jw *w, const char *key, const char *value)
         sk_jw_null(w);
 }
 
-/* {"t", "agent", "report", "metrics"}: the time in ms since the epoch,
- * the adapter, what it follows, and the bus. */
+/* {"t", "tab", "agent", "report", "metrics"}: the time in ms since the
+ * epoch, the active tab, its adapter, what it follows, and its bus. */
 static void write_metrics(headless *h)
 {
+    sk_tab *tab = sk_tabs_active(h->tabs);
+    sk_agent *agent = sk_clitab_agent(tab);
+    if (!agent)
+        return;
     struct timespec ts;
     clock_gettime(CLOCK_REALTIME, &ts);
     sk_report r;
-    sk_agent_report(h->agent, &r);
+    sk_agent_report(agent, &r);
     sk_buf out = {0};
     sk_jw w;
     sk_jw_init(&w, &out, 0);
     sk_jw_object(&w);
     sk_jw_key(&w, SK_STR("t"));
     sk_jw_number(&w, (double)ts.tv_sec * 1000 + (double)(ts.tv_nsec / 1000000));
-    key_str(&w, "agent", sk_agent_kind(h->agent));
+    sk_jw_key(&w, SK_STR("tab"));
+    sk_jw_number(&w, tab->id);
+    key_str(&w, "agent", sk_agent_kind(agent));
     sk_jw_key(&w, SK_STR("report"));
     sk_jw_object(&w);
     key_str(&w, "session", r.session);
@@ -165,7 +187,7 @@ static void write_metrics(headless *h)
     sk_jw_array_end(&w);
     sk_jw_object_end(&w);
     sk_jw_key(&w, SK_STR("metrics"));
-    sk_bus_write(h->bus, &w);
+    sk_bus_write(sk_clitab_bus(tab), &w);
     sk_jw_object_end(&w);
     sk_buf_putc(&out, '\n');
     fwrite(out.ptr, 1, out.len, h->metrics);
@@ -243,11 +265,10 @@ int sk_headless_run(const sk_options *o, const char *metrics_path, const sk_envp
     char *state = sk_path_state(&e), *root = sk_path_runtime_base(&e);
     char *store = sk_runtime_settings_dir(&e);
     char *run_dir = sk_runtime_create(&e, sk_envp_get(env, "SKINNED_RUNTIME_DIR"));
-    char *tab_dir = run_dir ? sk_path_join(run_dir, "tab-1") : NULL;
     char *metrics = NULL, *log_path = NULL, *relay = NULL;
     FILE *mf = NULL;
     int log_fd = -1;
-    if (!state || !root || !store || !tab_dir || sk_mkdirs(state, 0700) != 0 || sk_mkdirs(tab_dir, 0700) != 0) {
+    if (!state || !root || !store || !run_dir || sk_mkdirs(state, 0700) != 0) {
         sk_tell("cannot make the app's directories: %s", strerror(errno));
         goto out;
     }
@@ -269,61 +290,67 @@ int sk_headless_run(const sk_options *o, const char *metrics_path, const sk_envp
     headless h;
     memset(&h, 0, sizeof h);
     h.loop = sk_loop_new();
-    h.bus = sk_bus_new(log_line, NULL);
     h.metrics = mf;
     h.status = SK_EXIT_APP;
-    sk_agent_ctx ctx;
-    memset(&ctx, 0, sizeof ctx);
-    ctx.cmd = o->cmd;
-    ctx.cwd = cwd;
-    ctx.env = env;
-    ctx.run_dir = tab_dir;
-    ctx.root = root;
-    ctx.store = store;
-    ctx.relay = relay;
-    ctx.statusline = o->statusline;
-    ctx.bus = h.bus;
-    ctx.loop = h.loop;
-    ctx.log = log_line;
-    h.agent = sk_agent_open(&ctx);
-    const char *slash = strrchr(o->cmd[0], '/');
-    sk_session_opts so;
-    memset(&so, 0, sizeof so);
-    so.loop = h.loop;
-    so.file = file;
-    so.argv = o->cmd;
-    so.env = env;
-    so.label = slash ? slash + 1 : o->cmd[0];
-    so.agent = h.agent;
-    so.on_spawn = on_spawn;
-    so.on_output = on_output;
-    so.on_end = on_end;
-    so.log = log_line;
-    so.tell = tell_line;
-    so.ud = &h;
-    h.session = sk_session_new(&so);
+    h.cli.loop = h.loop;
+    h.cli.run_dir = run_dir;
+    h.cli.root = root;
+    h.cli.store = store;
+    h.cli.relay = relay;
+    h.cli.statusline = o->statusline;
+    h.cli.spawned = on_spawn;
+    h.cli.output = on_output;
+    h.cli.log = log_line;
+    h.cli.tell = tell_line;
+    h.cli.ud = &h;
+    sk_tabs_config tc;
+    memset(&tc, 0, sizeof tc);
+    tc.make = make_tab;
+    tc.follow_background = true;
+    tc.tell = tell_line;
+    tc.log = log_line;
+    tc.ended = on_ended;
+    tc.ud = &h;
+    tc.cmd = o->cmd;
+    tc.file = file;
+    tc.env = env;
+    tc.home = sk_envp_get(env, "HOME");
+    h.tabs = sk_tabs_new(&tc);
+    h.cli.tabs = h.tabs;
 
-    int cols = 80, rows = 24;
-    sk_pty_get_size(0, &cols, &rows);
-    sk_tell("metrics in %s, log in %s", metrics, log_path);
-    sk_log("headless: %s, relay %s", file, relay ? relay : "(none)");
-    raw_mode(&h);
-    h.stdin_id = sk_loop_watch(h.loop, 0, POLLIN, on_stdin, &h);
-    sk_loop_signal(h.loop, SIGWINCH, on_winch, &h);
-    sk_loop_signal(h.loop, SIGINT, on_stop, &h);
-    sk_loop_signal(h.loop, SIGTERM, on_stop, &h);
-    sk_loop_signal(h.loop, SIGHUP, on_stop, &h);
-    sk_loop_timer(h.loop, METRICS_MS, METRICS_MS, on_metrics, &h);
-    sk_session_start(h.session, cols, rows);
-    sk_loop_run(h.loop);
-    /* No line after the end: the agent is closed and reports nothing. */
-    restore(&h);
-    status = h.status;
-    sk_session_free(h.session);
-    sk_agent_free(h.agent);
+    /* The first tab runs the command as typed (decision 0003). */
+    sk_tab_spec spec;
+    memset(&spec, 0, sizeof spec);
+    spec.kind = SK_TAB_CLI;
+    spec.cmd = o->cmd;
+    spec.cwd = cwd;
+    char *err = NULL;
+    sk_tab *tab = sk_tabs_add(h.tabs, &spec, -1, &err);
+    if (tab) {
+        int cols = 80, rows = 24;
+        sk_pty_get_size(0, &cols, &rows);
+        sk_tell("metrics in %s, log in %s", metrics, log_path);
+        sk_log("headless: %s, relay %s", file, relay ? relay : "(none)");
+        raw_mode(&h);
+        h.stdin_id = sk_loop_watch(h.loop, 0, POLLIN, on_stdin, &h);
+        sk_loop_signal(h.loop, SIGWINCH, on_winch, &h);
+        sk_loop_signal(h.loop, SIGINT, on_stop, &h);
+        sk_loop_signal(h.loop, SIGTERM, on_stop, &h);
+        sk_loop_signal(h.loop, SIGHUP, on_stop, &h);
+        sk_loop_timer(h.loop, METRICS_MS, METRICS_MS, on_metrics, &h);
+        sk_session_start(sk_clitab_session(tab), cols, rows);
+        sk_loop_run(h.loop);
+        restore(&h);
+        status = sk_tabs_done(h.tabs) ? sk_tabs_exit_status(h.tabs) : h.status;
+        sk_tell("exit %d; metrics in %s", status, metrics);
+    } else {
+        sk_tell("cannot open the tab: %s", err ? err : "unknown");
+    }
+    free(err);
+    /* No metrics line after the end: the agent is closed and reports
+     * nothing. */
+    sk_tabs_free(h.tabs);
     sk_loop_free(h.loop);
-    sk_bus_free(h.bus);
-    sk_tell("exit %d; metrics in %s", status, metrics);
 
 out:
     if (mf)
@@ -339,7 +366,6 @@ out:
     free(root);
     free(store);
     free(run_dir);
-    free(tab_dir);
     free(metrics);
     free(log_path);
     free(relay);

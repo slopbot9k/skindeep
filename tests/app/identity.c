@@ -147,6 +147,21 @@ static void test_the_live_cmdline_needs_its_source(void)
     sk_buf_free(&out);
 }
 
+/* The app's source is the kernel's: this test program's own argv. */
+static void test_the_kernels_argv_is_the_apps_source(void)
+{
+    sk_buf raw = {0}, out = {0};
+    CHECK(sk_identity_kernel_argv(getpid(), &raw));
+    CHECK(raw.len > 0 && raw.ptr[raw.len - 1] == 0);
+    CHECK(strstr(sk_buf_cstr(&raw), "run") != NULL);
+    sk_identity_set_argv_source(sk_identity_kernel_argv);
+    CHECK(sk_identity_live_cmdline(getpid(), &out));
+    CHECK(strstr(sk_buf_cstr(&out), "run") != NULL);
+    sk_identity_set_argv_source(NULL);
+    sk_buf_free(&raw);
+    sk_buf_free(&out);
+}
+
 const sk_test sk_suite_identity[] = {
     T(test_quote_leaves_plain_words_and_quotes_the_rest),
     T(test_tildify_writes_the_home_as_a_tilde),
@@ -156,5 +171,6 @@ const sk_test sk_suite_identity[] = {
     T(test_the_title_names_the_app),
     T(test_the_live_cmdline_reads_the_kernels_argv),
     T(test_the_live_cmdline_needs_its_source),
+    T(test_the_kernels_argv_is_the_apps_source),
     {0},
 };

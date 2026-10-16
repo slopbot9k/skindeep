@@ -44,6 +44,8 @@ void sk_identity_title(sk_buf *out, const char *label);
  * process is gone or cannot be read. */
 typedef bool (*sk_identity_argv_fn)(pid_t pid, sk_buf *raw);
 void sk_identity_set_argv_source(sk_identity_argv_fn fn);
+/* The kernel's own, by platform/procinfo: the app's source. */
+bool sk_identity_kernel_argv(pid_t pid, sk_buf *raw);
 /* liveCmdline: pid's arguments, as the kernel sees them after any exec
  * in a wrapper, quoted and joined. False when unknown. */
 bool sk_identity_live_cmdline(pid_t pid, sk_buf *out);

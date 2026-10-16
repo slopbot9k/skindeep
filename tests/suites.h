@@ -41,4 +41,5 @@
     X(appsettings)                                                           \
     X(background)                                                            \
     X(tabs)                                                                  \
+    X(clitab)                                                                \
     X(headless)

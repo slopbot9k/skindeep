@@ -4,6 +4,7 @@
 
 #include "../base/paths.h"
 #include "../base/utf8.h"
+#include "../platform/procinfo.h"
 #include "js.h"
 
 #include <string.h>
@@ -142,6 +143,16 @@ static sk_identity_argv_fn argv_source;
 void sk_identity_set_argv_source(sk_identity_argv_fn fn)
 {
     argv_source = fn;
+}
+
+bool sk_identity_kernel_argv(pid_t pid, sk_buf *raw)
+{
+    sk_strv argv = {0};
+    bool ok = sk_procinfo_argv(pid, &argv);
+    for (size_t i = 0; ok && i < argv.len; i++)
+        sk_buf_append(raw, argv.ptr[i], strlen(argv.ptr[i]) + 1);
+    sk_strv_free(&argv);
+    return ok;
 }
 
 bool sk_identity_live_cmdline(pid_t pid, sk_buf *out)
