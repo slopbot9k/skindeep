@@ -45,14 +45,14 @@ static bool is_daemon(const sk_strv *argv)
     return false;
 }
 
-static void session_free(sk_session *s)
+static void session_free(sk_live_session *s)
 {
     free(s->cwd);
     sk_strv_free(&s->argv);
 }
 
 /* Newest first; a tie in the order /proc lists them, by pid as text. */
-static bool before(const sk_session *a, const sk_session *b)
+static bool before(const sk_live_session *a, const sk_live_session *b)
 {
     if (a->started != b->started)
         return a->started > b->started;
@@ -62,11 +62,11 @@ static bool before(const sk_session *a, const sk_session *b)
     return strcmp(x, y) < 0;
 }
 
-void sk_sessions_scan(uid_t uid, sk_sessions *out)
+void sk_sessions_scan(uid_t uid, sk_live_sessions *out)
 {
     sk_procinfo_owners all = {0};
     sk_procinfo_list(&all);
-    sk_sessions found = {0};
+    sk_live_sessions found = {0};
     for (size_t i = 0; i < all.len; i++) {
         pid_t pid = all.ptr[i].pid;
         sk_procinfo info;
@@ -76,7 +76,7 @@ void sk_sessions_scan(uid_t uid, sk_sessions *out)
         sk_profile_agent kind;
         bool candidate = sk_procinfo_name(pid, &name) &&
                          (!strcmp(name.ptr, "node") || sk_profiles_agent_of(sk_buf_str(&name), &kind));
-        sk_session s = {pid, info.ppid, SK_PROFILE_CLAUDE, (double)info.started_ms, NULL, {0}};
+        sk_live_session s = {pid, info.ppid, SK_PROFILE_CLAUDE, (double)info.started_ms, NULL, {0}};
         if (candidate) {
             sk_procinfo_argv(pid, &s.argv);
             candidate = kind_of(name.ptr, &s.argv, &s.kind) &&
@@ -92,7 +92,7 @@ void sk_sessions_scan(uid_t uid, sk_sessions *out)
     sk_vec_free(&all);
     size_t from = out->len;
     for (size_t i = 0; i < found.len; i++) {
-        sk_session *s = &found.ptr[i];
+        sk_live_session *s = &found.ptr[i];
         bool inner = false;
         for (size_t k = 0; k < found.len && !inner; k++)
             inner = found.ptr[k].pid == s->ppid && found.ptr[k].kind == s->kind;
@@ -102,7 +102,7 @@ void sk_sessions_scan(uid_t uid, sk_sessions *out)
         }
         sk_vec_push(out, *s);
         for (size_t j = out->len - 1; j > from && before(&out->ptr[j], &out->ptr[j - 1]); j--) {
-            sk_session t = out->ptr[j];
+            sk_live_session t = out->ptr[j];
             out->ptr[j] = out->ptr[j - 1];
             out->ptr[j - 1] = t;
         }
@@ -110,7 +110,7 @@ void sk_sessions_scan(uid_t uid, sk_sessions *out)
     sk_vec_free(&found);
 }
 
-void sk_sessions_free(sk_sessions *s)
+void sk_sessions_free(sk_live_sessions *s)
 {
     for (size_t i = 0; i < s->len; i++)
         session_free(&s->ptr[i]);
@@ -438,7 +438,7 @@ bool sk_sessions_claude_transcript(pid_t pid, const char *cwd, double started, c
     return true;
 }
 
-bool sk_sessions_codex_rollout(const sk_session *s, char *const *homes, sk_codex_rollout_fn find,
+bool sk_sessions_codex_rollout(const sk_live_session *s, char *const *homes, sk_codex_rollout_fn find,
                                void *ud, sk_session_channel *out)
 {
     memset(out, 0, sizeof *out);

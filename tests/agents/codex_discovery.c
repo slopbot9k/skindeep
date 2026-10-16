@@ -6,6 +6,7 @@
  * sources first. */
 #include "../../src/agents/codex/codex.h"
 #include "../../src/base/paths.h"
+#include "../../src/sessions/sessions.h"
 #include "../test.h"
 
 #include <fcntl.h>
@@ -795,7 +796,28 @@ static void test_the_adapter_reads_a_forks_source_first(void)
     free(h);
 }
 
+/* The sessions scan's lookup runs on the real discovery. */
+static void test_sessions_scan_lookup_uses_discovery(void)
+{
+    char *h = home();
+    ident id = uuid();
+    char *f = rollout(h, day(0), (opts){.id = id.s});
+    sk_codex_rollout out = {0};
+    CHECK(sk_codex_rollout_find(NULL, 0, h, ARGV("resume", id.s), CWD, now_ms(), &out));
+    CHECK_STR(out.file, f);
+    CHECK_STR(out.thread, id.s);
+    CHECK_STR(out.how, "argv");
+    free(out.file);
+    free(out.thread);
+    sk_codex_rollout none = {0};
+    CHECK(!sk_codex_rollout_find(NULL, 0, h, ARGV("resume", "--last"), "/nowhere", now_ms(), &none));
+    CHECK(none.file == NULL);
+    free(f);
+    free(h);
+}
+
 const sk_test sk_suite_codex_discovery[] = {
+    T(test_sessions_scan_lookup_uses_discovery),
     T(test_t1_resume_id_finds_the_rollout_in_any_date_dir),
     T(test_t2_route_order_argv_then_fd_then_the_cwd_route),
     T(test_t3_a_subagent_rollout_is_never_chosen),

@@ -333,7 +333,7 @@ static void stop(child c)
     waitpid(c.pid, NULL, 0);
 }
 
-static const sk_session *find(const sk_sessions *all, pid_t pid)
+static const sk_live_session *find(const sk_live_sessions *all, pid_t pid)
 {
     for (size_t i = 0; i < all->len; i++)
         if (all->ptr[i].pid == pid)
@@ -358,9 +358,9 @@ static void test_the_scan_agents_by_name_or_script_not_daemons_nor_inner_process
     child npm = run_as(dir, "node", (char *[]){"node", script, NULL});
     child other = run_as(dir, "bash-not-an-agent", (char *[]){"claude", "-c", "echo ready; read x", NULL});
 
-    sk_sessions all = {0};
+    sk_live_sessions all = {0};
     sk_sessions_scan(geteuid(), &all);
-    const sk_session *s = find(&all, claude.pid);
+    const sk_live_session *s = find(&all, claude.pid);
     CHECK(s && s->kind == SK_PROFILE_CLAUDE && s->ppid == getpid());
     if (s) {
         CHECK_STR(s->cwd, dir);
@@ -438,7 +438,7 @@ static void test_codex_rollout_one_try_per_sessions_folder_through_the_discovery
     struct timespec ts[2] = {{1000, 0}, {1000, 0}};
     CHECK(utimensat(AT_FDCWD, file, ts, 0) == 0);
 
-    sk_session s = {4242, 1, SK_PROFILE_CODEX, 5000, "/w", {0}};
+    sk_live_session s = {4242, 1, SK_PROFILE_CODEX, 5000, "/w", {0}};
     sk_strv_push(&s.argv, "codex");
     sk_strv_push(&s.argv, "resume");
     char *homes[] = {h1, h2, h3, NULL};

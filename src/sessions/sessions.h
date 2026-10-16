@@ -24,14 +24,14 @@ typedef struct {
     double started; /* ms since the epoch */
     char *cwd;
     sk_strv argv;
-} sk_session;
-typedef SK_VEC(sk_session) sk_sessions;
+} sk_live_session;
+typedef SK_VEC(sk_live_session) sk_live_sessions;
 
 /* Every live session of uid, the newest first, appended to out. A
  * process whose parent is a session of its own agent is that session,
  * as the native codex an npm codex runs, and is left out. */
-void sk_sessions_scan(uid_t uid, sk_sessions *out);
-void sk_sessions_free(sk_sessions *s);
+void sk_sessions_scan(uid_t uid, sk_live_sessions *out);
+void sk_sessions_free(sk_live_sessions *s);
 
 /* pid's ancestors, its parent first, up to init and at most max (and
  * SK_SESSIONS_MAX_ANCESTORS). Returns how many. */
@@ -103,7 +103,12 @@ typedef bool (*sk_codex_rollout_fn)(void *ud, pid_t pid, const char *codex_home,
 /* A Codex session's rollout among homes, one try per sessions folder
  * they share, its start as the launch. The profile is the home when one
  * alone keeps that folder. False when none is found. */
-bool sk_sessions_codex_rollout(const sk_session *s, char *const *homes, sk_codex_rollout_fn find,
+/* The real sk_codex_rollout_fn, on Codex's discovery
+ * (src/agents/codex/rollout.c); ud is unused. */
+bool sk_codex_rollout_find(void *ud, pid_t pid, const char *codex_home, char *const *args,
+                           const char *cwd, double launched, sk_codex_rollout *out);
+
+bool sk_sessions_codex_rollout(const sk_live_session *s, char *const *homes, sk_codex_rollout_fn find,
                                void *ud, sk_session_channel *out);
 
 /* What a session does, from when its channel was written: "working"
