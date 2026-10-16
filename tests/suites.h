@@ -15,4 +15,9 @@
     X(bus)                                                                    \
     X(tail)                                                                   \
     X(carry)                                                                  \
-    X(agent)
+    X(agent)                                                                  \
+    X(claude_carry)                                                           \
+    X(claude_parse)                                                           \
+    X(claude_core)                                                            \
+    X(claude_settings)                                                        \
+    X(claude_adapter)
