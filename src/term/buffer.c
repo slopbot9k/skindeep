@@ -24,10 +24,21 @@ void sk_line_touch(sk_line *l)
     l->gen = atomic_fetch_add_explicit(&gens, 1, memory_order_relaxed) + 1;
 }
 
+/* The room a combined text of n codepoints, after its count, is given: a
+ * power of two, so marks added one at a time, as REP of one adds tens of
+ * thousands, cost a copy only when the room fills. */
+static size_t comb_room(uint32_t n)
+{
+    size_t room = 4;
+    while (room < (size_t)n + 1)
+        room *= 2;
+    return room;
+}
+
 static uint32_t *comb_dup(const uint32_t *c)
 {
     uint32_t n = c ? c[0] : 0;
-    uint32_t *d = sk_xreallocarray(NULL, (size_t)n + 1, sizeof *d);
+    uint32_t *d = sk_xreallocarray(NULL, comb_room(n), sizeof *d);
     d[0] = n;
     if (n)
         memcpy(d + 1, c + 1, n * sizeof *d);
@@ -196,13 +207,14 @@ void sk_line_add_cp(sk_line *l, int i, uint32_t cp, int width)
     uint32_t content = l->cells[i].content;
     if (content & SK_CELL_COMBINED) {
         uint32_t n = l->comb[i][0];
-        l->comb[i] = sk_xreallocarray(l->comb[i], (size_t)n + 2, sizeof **l->comb);
+        if ((size_t)n + 2 > comb_room(n))
+            l->comb[i] = sk_xreallocarray(l->comb[i], comb_room(n + 1), sizeof **l->comb);
         l->comb[i][n + 1] = cp;
         l->comb[i][0] = n + 1;
     } else if (content & SK_CELL_CP_MASK) {
         if (!l->comb)
             l->comb = sk_xcalloc((size_t)l->cap, sizeof *l->comb);
-        uint32_t *d = sk_xreallocarray(NULL, 3, sizeof *d);
+        uint32_t *d = sk_xreallocarray(NULL, comb_room(2), sizeof *d);
         d[0] = 2;
         d[1] = content & SK_CELL_CP_MASK;
         d[2] = cp;
