@@ -1,0 +1,25 @@
+cols 80 rows 24 cursor 0,23 buffer alt top 0 base 0 lines 24
+|  runtime. XQuartz is never used.                                               |
+|- Three programs. `skinned` is the app. `skinned-relay` replaces                |
+|  `app/relay/hook.py` and `app/relay/statusline.js`. `skinc` compiles a         |
+|  skin into a pack.                                                             |
+|- Skins stay `skin.json` plus `skin.css`. `skinc` resolves the CSS once,        |
+|  for every state a widget can reach. It pre-renders the static layers          |
+|  at 1x and 2x and decodes the images and sounds. The app composites            |
+|  packs and never interprets CSS. The four shipped skins are compiled           |
+|  during the build and linked in as generated C arrays. A skin passed           |
+|  with `--skin` is compiled when it first loads, then cached.                   |
+|- Vendored code: single-file libraries whose licence is free to use             |
+|  (public domain or the Unlicense, MIT, BSD, ISC, zlib). Each lives in          |
+|  `third_party/<library>/` beside its licence and is listed in                  |
+|  `ASSETS.json` (decision 0017). Today these are stb_truetype,                  |
+|  stb_image, stb_vorbis, nanosvg, nanosvgrast and qoi.                          |
+|  - stb_truetype does no range checking, so it reads only the embedded          |
+|    fonts, the system's fonts, and skin fonts `skinc` has checked.              |
+|  - `skinc` accepts only TrueType outlines in skins.                            |
+|- HTTPS goes through the `curl` command, run as a child. libcurl is not         |
+|  linked, because its licence is curl's own, not MIT.                           |
+|- No Python and no JavaScript in the C tree, its build or its tests. The        |
+|  fake CLIs and the live checks are rewritten in C or POSIX sh.                 |
+|- The build is `make` with the system C compiler. The makefile uses only        |
+|                                                                                |

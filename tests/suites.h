@@ -46,6 +46,7 @@
     X(dashboard)                                                             \
     X(foreign)                                                               \
     X(headless)                                                              \
+    X(term_recorded)                                                         \
     X(font)                                                                  \
     X(fonts)                                                                 \
     X(fontset)                                                               \
