@@ -258,6 +258,8 @@ static bool resolve_custom(customs_ctx *c, size_t i, int depth)
 static bool image_of(void *data, sk_str url, uint32_t *index)
 {
     sk_front *f = data;
+    if (!f->url_base || !f->skin.real)
+        return false;
     char *u = sk_xstrndup(url.ptr ? url.ptr : "", url.len);
     sk_str t = sk_str_trim(sk_str_c(u));
     char *key = NULL;
@@ -859,6 +861,51 @@ static sk_el *pseudo_new(sk_front *f, sk_el *origin, uint8_t kind)
     return e;
 }
 
+static bool len_zero(sk_css_len l)
+{
+    return l.kind == SK_LEN_PX && l.px == 0 && l.pct == 0;
+}
+
+/* An auto margin is 0 in block flow and on an inline box. */
+static bool margin_zero(sk_css_len l)
+{
+    return l.kind == SK_LEN_AUTO || len_zero(l);
+}
+
+/* What decision 0037's layout leaves out, refused per element: a box
+ * with padding, a border, a background or margins inside a line, and
+ * a block in block flow with a vertical margin, which would collapse. */
+static void layout_checks(sk_front *f, const sk_el *el, const sk_css_style *parent, const sk_css_style *s, bool *said)
+{
+    if (*said || s->display == SK_DISPLAY_NONE || el->kind == SK_EL_HOST || el->kind == SK_EL_LINK ||
+        (el->kind > SK_EL_SVG && el->kind != SK_EL_BEFORE && el->kind != SK_EL_AFTER))
+        return;
+    const char *why = NULL;
+    if (s->display == SK_DISPLAY_INLINE && el->kind != SK_EL_SVG) {
+        bool box = s->bg_color.a > 0 || s->nbox_shadow || s->outline_width > 0;
+        for (int i = 0; i < 4 && !box; i++)
+            box = !len_zero(s->padding[i]) || !margin_zero(s->margin[i]) || s->border_width[i] > 0;
+        for (uint16_t i = 0; i < s->nbg_image && !box; i++)
+            box = s->bg_image[i].kind != SK_IMAGE_NONE;
+        if (box)
+            why = "an inline box takes text properties only: no padding, border, outline, background, shadow or "
+                  "margin (make it display: inline-block or block)";
+    } else if (s->display != SK_DISPLAY_INLINE && s->display != SK_DISPLAY_INLINE_BLOCK &&
+               (s->position == SK_POS_STATIC || s->position == SK_POS_RELATIVE) && s->float_ == SK_FLOAT_NONE &&
+               parent->display != SK_DISPLAY_FLEX && parent->display != SK_DISPLAY_GRID &&
+               (!margin_zero(s->margin[SK_TOP]) || !margin_zero(s->margin[SK_BOTTOM]))) {
+        why = "a block in block flow takes no vertical margin: skinc does not collapse margins (use padding, or "
+              "a flex container)";
+    }
+    if (!why)
+        return;
+    *said = true;
+    sk_buf b = {0};
+    describe(&b, f, el);
+    sk_diag(f->d, f->css_shown ? f->css_shown : "skin.css", "(layout)", "%s: %s", sk_buf_cstr(&b), why);
+    sk_buf_free(&b);
+}
+
 /* Inputs, every state, the table and what children inherit. */
 static void states(sk_front *f, sk_el *el, sk_el *origin, input_vec *found)
 {
@@ -910,6 +957,7 @@ static void states(sk_front *f, sk_el *el, sk_el *origin, input_vec *found)
     el->customs = sk_arena_array(&f->arena, total, sizeof *el->customs);
     char **prints = sk_xcalloc(total, sizeof *prints);
     int vals[SK_PACK_MAX_INPUTS + 1];
+    bool said = false;
     sk_match m;
     memset(&m, 0, sizeof m);
     m.f = f;
@@ -932,6 +980,7 @@ static void states(sk_front *f, sk_el *el, sk_el *origin, input_vec *found)
             pc = &parent->customs[pidx];
         }
         computed c = compute(f, el, origin, &m, ps, pc);
+        layout_checks(f, el, ps, c.style, &said);
         f->cascades++;
         el->table[idx] = keep_style(f, c.style);
         el->customs[idx] = c.customs;

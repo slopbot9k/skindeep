@@ -12,6 +12,11 @@
 
 void sk_test_write(const char *dir, const char *name, const char *text)
 {
+    sk_test_write_bytes(dir, name, text, strlen(text));
+}
+
+void sk_test_write_bytes(const char *dir, const char *name, const void *data, size_t n)
+{
     char *path = sk_path_join(dir, name);
     char *slash = strrchr(path, '/');
     if (slash) {
@@ -21,7 +26,8 @@ void sk_test_write(const char *dir, const char *name, const char *text)
     }
     FILE *f = fopen(path, "wb");
     if (f) {
-        fputs(text, f);
+        if (n)
+            fwrite(data, 1, n, f);
         fclose(f);
     }
     free(path);

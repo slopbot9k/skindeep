@@ -52,7 +52,7 @@ static void test_inheritance_em_currentcolor(void)
                       ":host { font-size: 20px }\n"
                       ".p { color: #00ff00; font-size: 2em; border: 1px solid; letter-spacing: 0.1em;\n"
                       "  background-color: red; line-height: 1.5 }\n"
-                      ".p::after { content: \"x\"; background-color: inherit; width: 2em }\n");
+                      ".p::after { content: \"x\"; display: inline-block; background-color: inherit; width: 2em }\n");
     const sk_el *p = sk_front_panel(&f, "p");
     const sk_css_style *s = panel_style(&f);
     CHECK_STR(sk_test_prop(s, SK_PROP_FONT_SIZE), "40px");
@@ -400,8 +400,67 @@ static void test_blockified(void)
     sk_diags_free(&d);
 }
 
+static void test_layout_refusals(void)
+{
+    sk_front f;
+    sk_diags d = {0};
+    const char *widgets = "[{\"id\": \"r\", \"type\": \"readout\", \"bind\": \"cost.usd\", \"label\": \"c\", \"rect\": "
+                          "{\"left\": 0, \"top\": 60, \"width\": 100, \"height\": 30}}]";
+    /* A flex item takes margins; an inline-block takes a box; auto
+     * vertical margins are 0. */
+    COMPILES(&f, &d, PANEL_PQ, widgets,
+             ".w .label { margin-top: 2px }\n"
+             ".p::before { content: \"x\"; display: inline-block; padding: 2px }\n"
+             ".p::after { content: \"\"; display: block; margin: auto }\n");
+    sk_front_free(&f);
+    sk_diags_free(&d);
+    CHECK(!sk_test_compile(&f, &d, PANEL_PQ, NULL, ".p::before { content: \"x\"; padding: 2px }\n"));
+    CHECK(sk_test_said(&d, "skin.css: (layout): ::before of panel \"p q\": an inline box takes text properties only"));
+    sk_front_free(&f);
+    sk_diags_free(&d);
+    CHECK(!sk_test_compile(&f, &d, PANEL_PQ, NULL, ".p::after { content: \"\"; display: block; margin-top: 3px }\n"));
+    CHECK(sk_test_said(&d, "skin.css: (layout): ::after of panel \"p q\": a block in block flow takes no vertical margin"));
+    sk_front_free(&f);
+    sk_diags_free(&d);
+}
+
+static void test_app_declarations_from_the_manifest(void)
+{
+    /* A sheet's name goes into the app's own declarations quoted and
+     * escaped; a negative gap is left out, as the browser drops it. */
+    const char *widgets = "[{\"id\": \"s\", \"type\": \"sprite\", \"bind\": \"state.busy\", \"sheet\": \"a\\\"b.png\", "
+                          "\"frames\": 2, \"frameWidth\": 1, \"frameHeight\": 1, \"rect\": {\"left\": 0, \"top\": 60, "
+                          "\"width\": 10, \"height\": 10}},\n"
+                          " {\"id\": \"b\", \"type\": \"bar\", \"bind\": \"cache.hit_ratio\", \"segments\": 2, \"gap\": "
+                          "-3, \"rect\": {\"left\": 0, \"top\": 80, \"width\": 10, \"height\": 10}}]";
+    const char *dir = sk_test_skin(NULL, widgets, "");
+    /* A PNG's signature and IHDR, 2 x 1, all validate.js reads. */
+    static const unsigned char png[24] = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 0, 0, 0, 13,
+                                          'I',  'H', 'D', 'R', 0,    0,    0,    2,    0, 0, 0, 1};
+    sk_test_write_bytes(dir, "a\"b.png", png, sizeof png);
+    sk_front f;
+    sk_diags d = {0};
+    bool ok = sk_front_run(&f, dir, &d);
+    CHECK(ok);
+    for (size_t i = 0; !ok && i < d.items.len; i++)
+        fprintf(stderr, "      %s\n", d.items.ptr[i]);
+    const sk_css_style *sheet = sk_front_style(&f, sk_front_find(&f, "s", SK_ROLE_SHEET, 0), NULL, 0);
+    CHECK(sheet && sheet->nbg_image == 1 && sheet->bg_image[0].kind == SK_IMAGE_URL);
+    if (sheet && sheet->nbg_image == 1)
+        CHECK_STR(f.images.ptr[sheet->bg_image[0].source].path, "a\"b.png");
+    CHECK_STR(sk_test_prop(sheet, SK_PROP_BACKGROUND_SIZE), "200% 100%");
+    CHECK_STR(sk_test_prop(sheet, SK_PROP_BACKGROUND_POSITION), "left value() top 0px");
+    const sk_css_style *track = sk_front_style(&f, sk_front_find(&f, "b", SK_ROLE_TRACK, 0), NULL, 0);
+    CHECK_STR(sk_test_prop(track, SK_PROP_DISPLAY), "flex");
+    CHECK_STR(sk_test_prop(track, SK_PROP_COLUMN_GAP), "normal");
+    sk_front_free(&f);
+    sk_diags_free(&d);
+}
+
 const sk_test sk_suite_skinc_cascade[] = {
+    T(test_app_declarations_from_the_manifest),
     T(test_blockified),
+    T(test_layout_refusals),
     T(test_order_and_specificity), T(test_inheritance_em_currentcolor), T(test_custom_properties),
     T(test_states_of_a_widget),    T(test_stage_and_list),              T(test_segments_and_limits),
     T(test_counters),              T(test_fonts_resolved),              T(test_errors_with_lines),

@@ -90,4 +90,5 @@
     X(skinc_cascade)                                                         \
     X(skinc_validate)                                                        \
     X(skinc_splits)                                                          \
-    X(skinc_skins)
+    X(skinc_skins)                                                           \
+    X(skinc_program)

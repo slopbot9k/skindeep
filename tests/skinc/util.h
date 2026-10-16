@@ -24,6 +24,8 @@ bool sk_test_compile(sk_front *f, sk_diags *d, const char *panels, const char *w
     } while (0)
 /* Writes text to dir/name, making the directories it needs. */
 void sk_test_write(const char *dir, const char *name, const char *text);
+/* The same with n bytes. */
+void sk_test_write_bytes(const char *dir, const char *name, const void *data, size_t n);
 
 /* A parsed sheet's first rule, for the value and selector suites. */
 sk_css_rule *sk_test_rule(sk_css_sheet *sheet, const char *css, sk_diags *d);

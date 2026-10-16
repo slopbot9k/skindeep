@@ -138,6 +138,21 @@ static void hint_css(builder *b, sk_el *e, const char *fmt, ...)
     sk_vec_push(&b->hint_of, e);
 }
 
+/* s as the text of a CSS string, quoted: any quote, backslash or
+ * control character escaped. */
+static void css_string(sk_buf *out, const char *s)
+{
+    sk_buf_putc(out, '"');
+    for (; *s; s++) {
+        unsigned char c = (unsigned char)*s;
+        if (c == '"' || c == '\\' || c < 0x20 || c == 0x7f)
+            sk_buf_printf(out, "\\%x ", (unsigned)c);
+        else
+            sk_buf_putc(out, (char)c);
+    }
+    sk_buf_putc(out, '"');
+}
+
 /* skin.js's place(): the rect's keys as px, the rest unset. */
 static void place(builder *b, sk_el *e, const sk_pack_rect *r)
 {
@@ -232,10 +247,17 @@ static void gauge(builder *b, sk_el *root, const sk_skin_widget *w)
     svg_box(dial, SK_SVG_VIEWBOX, 0, 0, 100, 100, 0);
     sk_el *track = svg_el(b, dial, SK_EL_PATH, "path", "track", SK_ROLE_ARC_TRACK);
     svg_arc(track, 50, 50, r, a0, a1, true);
-    hint_css(b, track, "fill: none; stroke-width: %.9g", (double)th);
+    /* A negative width the browser ignores as an attribute: none set. */
+    if (th >= 0)
+        hint_css(b, track, "fill: none; stroke-width: %.9g", (double)th);
+    else
+        hint_css(b, track, "fill: none");
     sk_el *fill = svg_el(b, dial, SK_EL_PATH, "path", "fill", SK_ROLE_ARC_FILL);
     svg_arc(fill, 50, 50, r, a0, a1, true);
-    hint_css(b, fill, "fill: none; stroke-width: %.9g; stroke-dasharray: -sk-value() 100", (double)th);
+    if (th >= 0)
+        hint_css(b, fill, "fill: none; stroke-width: %.9g; stroke-dasharray: -sk-value() 100", (double)th);
+    else
+        hint_css(b, fill, "fill: none; stroke-dasharray: -sk-value() 100");
     for (int i = 0; s->ticks && i <= s->ticks; i++) {
         float a = a0 + (a1 - a0) * (float)i / s->ticks, x0, y0, x1, y1;
         polar(50, 50, r - th / 2 - 1, a, &x0, &y0);
@@ -341,8 +363,12 @@ static void bar_parts(builder *b, sk_el *root, const sk_skin_widget *w, bool met
     resets(b, root, w, meter);
     sk_el *track = div_el(b, root, "track", SK_ROLE_TRACK);
     if (s->segments) {
-        inline_css(b, track, "display: flex; flex-direction: %s; gap: %.9gpx", s->vertical ? "column-reverse" : "row",
-                   (double)s->gap);
+        /* A negative gap the browser ignores: none set. */
+        if (s->gap >= 0)
+            inline_css(b, track, "display: flex; flex-direction: %s; gap: %.9gpx", s->vertical ? "column-reverse" : "row",
+                       (double)s->gap);
+        else
+            inline_css(b, track, "display: flex; flex-direction: %s", s->vertical ? "column-reverse" : "row");
         for (uint16_t i = 0; i < s->segments; i++) {
             sk_el *seg = div_el(b, track, "seg", SK_ROLE_SEG);
             seg->vars |= 1u << SK_VAR_ON;
@@ -374,14 +400,15 @@ static void sprite(builder *b, sk_el *root, const sk_skin_widget *w)
     sk_el *sheet = div_el(b, root, "sheet", SK_ROLE_SHEET);
     /* The sheet's url is the skin's, not the stylesheet's: url_base
      * of the app's own declarations is the skin's root. */
+    sk_buf url = {0};
+    css_string(&url, w->sheet);
     if (s->column)
-        inline_css(b, sheet,
-                   "background-image: url(\"%s\"); background-size: 100%% %.9g%%; background-position: 0 -sk-value()",
-                   w->sheet, (double)s->frames * 100);
+        inline_css(b, sheet, "background-image: url(%s); background-size: 100%% %.9g%%; background-position: 0 -sk-value()",
+                   sk_buf_cstr(&url), (double)s->frames * 100);
     else
-        inline_css(b, sheet,
-                   "background-image: url(\"%s\"); background-size: %.9g%% 100%%; background-position: -sk-value() 0",
-                   w->sheet, (double)s->frames * 100);
+        inline_css(b, sheet, "background-image: url(%s); background-size: %.9g%% 100%%; background-position: -sk-value() 0",
+                   sk_buf_cstr(&url), (double)s->frames * 100);
+    sk_buf_free(&url);
     label(b, root, w, SK_TEXT_STATIC);
 }
 

@@ -165,8 +165,8 @@ $(BUILD)/windemo: $(BUILD)/tools/windemo.o $(LIB)
 $(BUILD)/gfxbench: $(BUILD)/tools/gfxbench.o $(LIB)
 	$(CC) $(OPT) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
-test: $(TEST_BIN) $(RELAY) $(SKINNED)
-	SK_RELAY_BIN=$(RELAY) SK_SKINNED_BIN=$(SKINNED) ./$(TEST_BIN) $(T)
+test: $(TEST_BIN) $(RELAY) $(SKINNED) $(SKINC)
+	SK_RELAY_BIN=$(RELAY) SK_SKINNED_BIN=$(SKINNED) SK_SKINC_BIN=$(SKINC) ./$(TEST_BIN) $(T)
 
 debug:
 	$(MAKE) MODE=debug test
