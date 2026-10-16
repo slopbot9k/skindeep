@@ -430,12 +430,6 @@ static BOOL view_yes(id self, SEL cmd)
     return YES;
 }
 
-static BOOL view_yes_for(id self, SEL cmd, id ev)
-{
-    (void)self, (void)cmd, (void)ev;
-    return YES;
-}
-
 static void view_update_layer(id self, SEL cmd)
 {
     (void)cmd;
@@ -712,7 +706,6 @@ static void make_classes(void)
         sk_die("cannot make the class sk_view");
     sk_add_ptr_ivar(v, "sk_win");
     add(v, "acceptsFirstResponder", (IMP)view_yes, SK_ENC_BOOL "@:");
-    add(v, "acceptsFirstMouse:", (IMP)view_yes_for, SK_ENC_BOOL "@:@");
     add(v, "wantsUpdateLayer", (IMP)view_yes, SK_ENC_BOOL "@:");
     add(v, "updateLayer", (IMP)view_update_layer, "v@:");
     add(v, "keyDown:", (IMP)view_key_down, "v@:@");
@@ -989,8 +982,12 @@ sk_window *sk_window_new(const sk_window_opts *o, char **err)
     w->view = view;
     sk_msg_void_bool(view, "setWantsLayer:", YES);
     sk_msg_void_long(view, "setLayerContentsRedrawPolicy:", NSViewLayerContentsRedrawNever);
+    /* The pointer is followed over an inactive window too, for hover,
+     * as Chromium's are. The click that brings such a window forward
+     * stays AppKit's: the view keeps NSView's acceptsFirstMouse:, as
+     * Electron does. */
     unsigned long track = NSTrackingMouseEnteredAndExited | NSTrackingMouseMoved | NSTrackingCursorUpdate |
-                          NSTrackingActiveInActiveApp | NSTrackingInVisibleRect | NSTrackingEnabledDuringMouseDrag;
+                          NSTrackingActiveAlways | NSTrackingInVisibleRect | NSTrackingEnabledDuringMouseDrag;
     id area = SK_MSG(id (*)(id, SEL, CGRect, unsigned long, id, id))(
         sk_msg(sk_cls("NSTrackingArea"), "alloc"), sk_sel("initWithRect:options:owner:userInfo:"), CGRectZero, track,
         view, nil);
