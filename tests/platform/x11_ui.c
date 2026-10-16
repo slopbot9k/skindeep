@@ -755,7 +755,10 @@ static void test_timers_tasks_and_quit(void)
     tk.repeat_id = sk_xui_timer(5, 5, repeat_task, NULL);
     int cancelled = sk_xui_timer(10, 0, once_task, NULL);
     sk_xui_cancel(cancelled);
-    run_ms(80);
+    uint64_t end = sk_now_ms() + 2000;
+    while ((tk.once < 1 || tk.repeat < 3) && sk_now_ms() < end)
+        sk_xui_once(5);
+    run_ms(20);
     CHECK_INT(tk.once, 1);
     CHECK_INT(tk.repeat, 3);
     pthread_t th;

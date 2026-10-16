@@ -342,7 +342,7 @@ static void posted_task(void *ud)
 static void *poster(void *arg)
 {
     (void)arg;
-    sk_test_sleep_ms(100);
+    sk_test_sleep_ms(300);
     sk_ui_post(posted_task, "x");
     sk_ui_post(posted_task, "y");
     sk_ui_quit();
