@@ -23,6 +23,8 @@
 
 #define MAX_CONNS 64
 #define CONN_MAX_MS 10000
+/* Out of descriptors, accept waits this long before it tries again. */
+#define PAUSE_MS 100
 
 typedef struct {
     struct sk_claude_server *srv;
@@ -34,7 +36,7 @@ typedef struct {
 
 struct sk_claude_server {
     sk_loop *loop;
-    int fd, watch;
+    int fd, watch, pause;
     char *socket, *root, *linked;
     sk_claude_payload_fn fn;
     void *ud;
@@ -119,6 +121,15 @@ static void on_conn(sk_loop *loop, int fd, short revents, void *ud)
     }
 }
 
+static void on_accept(sk_loop *loop, int fd, short revents, void *ud);
+
+static void on_resume(sk_loop *loop, void *ud)
+{
+    sk_claude_server *s = ud;
+    s->pause = 0;
+    s->watch = sk_loop_watch(loop, s->fd, POLLIN, on_accept, s);
+}
+
 static void on_accept(sk_loop *loop, int fd, short revents, void *ud)
 {
     (void)revents;
@@ -128,6 +139,14 @@ static void on_accept(sk_loop *loop, int fd, short revents, void *ud)
         if (cfd < 0) {
             if (errno == EINTR)
                 continue;
+            /* The connection stays queued, and poll would report it at
+             * once, round after round: the listener rests a while. A
+             * relay waits 500 ms before it gives up. */
+            if (errno == EMFILE || errno == ENFILE || errno == ENOBUFS || errno == ENOMEM) {
+                sk_loop_unwatch(loop, s->watch);
+                s->watch = 0;
+                s->pause = sk_loop_timer(loop, PAUSE_MS, 0, on_resume, s);
+            }
             return;
         }
         if (s->conns.len >= MAX_CONNS || !set_flags(cfd)) {
@@ -241,6 +260,7 @@ void sk_claude_server_close(sk_claude_server *s)
         s->linked = NULL;
     }
     sk_loop_unwatch(s->loop, s->watch);
+    sk_loop_cancel(s->loop, s->pause);
     close(s->fd);
     while (s->conns.len)
         drop(s, s->conns.ptr[s->conns.len - 1]);
