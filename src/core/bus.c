@@ -154,6 +154,8 @@ void sk_bus_write(const sk_bus *b, sk_jw *w)
 size_t sk_bus_drain_events(sk_bus *b, int *out, size_t cap)
 {
     size_t n = SK_MIN(cap - cap % 2, b->n_events);
+    if (!n)
+        return 0;
     memcpy(out, b->events, n * sizeof *out);
     memmove(b->events, b->events + n, (b->n_events - n) * sizeof *out);
     b->n_events -= n;
@@ -363,8 +365,10 @@ static void tick_source(sk_source *s, uint64_t now)
         size_t drop = 0;
         while (drop < r->window.len && r->window.ptr[drop].at + window <= now)
             drop++;
-        memmove(r->window.ptr, r->window.ptr + drop, (r->window.len - drop) * sizeof *r->window.ptr);
-        r->window.len -= drop;
+        if (drop) {
+            memmove(r->window.ptr, r->window.ptr + drop, (r->window.len - drop) * sizeof *r->window.ptr);
+            r->window.len -= drop;
+        }
         double sum = 0;
         for (size_t k = 0; k < r->window.len; k++)
             sum += r->window.ptr[k].amount;

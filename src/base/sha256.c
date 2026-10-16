@@ -47,6 +47,8 @@ void sk_sha256_init(sk_sha256 *c)
 void sk_sha256_update(sk_sha256 *c, const void *data, size_t n)
 {
     const unsigned char *p = data;
+    if (!n)
+        return; /* data may be NULL then */
     c->bytes += n;
     if (c->fill) {
         size_t take = SK_MIN(n, 64 - c->fill);

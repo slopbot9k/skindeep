@@ -56,7 +56,8 @@ char *sk_xstrdup(const char *s)
 char *sk_xstrndup(const char *s, size_t n)
 {
     char *d = sk_xmalloc(n + 1);
-    memcpy(d, s, n);
+    if (n)
+        memcpy(d, s, n);
     d[n] = 0;
     return d;
 }
