@@ -82,4 +82,12 @@
     X(term_xinput)                                                           \
     X(term_xparser)                                                          \
     X(term_xselect)                                                          \
-    X(term_xterminal)
+    X(term_xterminal)                                                        \
+    X(skinc_lex)                                                             \
+    X(skinc_parse)                                                           \
+    X(skinc_selector)                                                        \
+    X(skinc_values)                                                          \
+    X(skinc_cascade)                                                         \
+    X(skinc_validate)                                                        \
+    X(skinc_splits)                                                          \
+    X(skinc_skins)

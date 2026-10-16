@@ -335,12 +335,8 @@ void sk_js_fixed(sk_buf *out, double x, int digits)
         sk_buf_putc(&b, '.');
         sk_buf_append(&b, digs + n - digits, (size_t)digits);
     }
-    /* -0.00 prints as 0.00, as toFixed does. */
-    bool zero = true;
-    for (size_t i = 0; i < b.len; i++)
-        if (b.ptr[i] >= '1' && b.ptr[i] <= '9')
-            zero = false;
-    if (neg && !zero)
+    /* toFixed keeps the sign of a negative x that rounds to 0; -0 has none. */
+    if (neg)
         sk_buf_putc(out, '-');
     sk_buf_append(out, b.ptr, b.len);
     sk_buf_free(&b);

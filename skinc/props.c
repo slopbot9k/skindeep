@@ -409,6 +409,8 @@ void sk_prop_copy(uint16_t id, sk_css_style *dst, const sk_css_style *src)
         dst->clip_evenodd = src->clip_evenodd;
     if (n == 4)
         dst->content_none = src->content_none;
+    if (id == SK_PROP_BORDER_IMAGE_SLICE)
+        dst->bi_fill = src->bi_fill;
 }
 
 bool sk_prop_equal(uint16_t id, const sk_css_style *a, const sk_css_style *b)
@@ -488,6 +490,8 @@ void sk_style_initial(sk_css_style *s, sk_css_color current)
     s->font_weight = 400;
     s->letter_spacing = 0;
     s->text_decoration_color = current;
+    /* content: normal, which is none on ::before and ::after. */
+    s->content_none = true;
     s->fill_kind = SK_PAINT_COLOR;
     s->fill = (sk_css_color){0, 0, 0, 1};
     s->stroke_width = (sk_css_len){1, 0, SK_LEN_PX};
@@ -2793,11 +2797,14 @@ void sk_prop_print(sk_buf *b, uint16_t id, const sk_css_style *s)
         break;
     case SK_PROP_BORDER_IMAGE_SLICE:
         for (int i = 0; i < 4; i++) {
+            if (i)
+                sk_buf_putc(b, ' ');
             num(b, s->bi_slice[i]);
-            sk_buf_append_c(b, s->bi_slice_pct & (1 << i) ? "% " : " ");
+            if (s->bi_slice_pct & (1 << i))
+                sk_buf_putc(b, '%');
         }
         if (s->bi_fill)
-            sk_buf_append_c(b, "fill");
+            sk_buf_append_c(b, " fill");
         break;
     case SK_PROP_BORDER_IMAGE_WIDTH:
         for (int i = 0; i < 4; i++) {

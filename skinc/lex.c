@@ -280,6 +280,9 @@ static sk_tok url_token(sk_lexer *lx, sk_tok t)
         }
         sk_utf8_append(&b, c);
     }
+    /* A bad url has no value. */
+    if (t.type == SK_TOK_BAD_URL)
+        sk_buf_clear(&b);
     t.text = keep(lx, &b);
     sk_buf_free(&b);
     return t;

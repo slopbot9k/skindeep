@@ -549,10 +549,10 @@ void sk_selector_print(sk_buf *out, const sk_selector *s)
 {
     for (size_t k = 0; k < s->n; k++) {
         const sk_compound *c = &s->compounds[k];
-        if (k || c->comb != SK_COMB_DESCENDANT)
-            sk_buf_append_c(out, k ? COMB[c->comb] : c->comb ? sk_str_trim(sk_str_c(COMB[c->comb])).ptr : "");
-        if (!k && c->comb > SK_COMB_DESCENDANT)
-            sk_buf_putc(out, ' ');
+        if (k)
+            sk_buf_append_c(out, COMB[c->comb]);
+        else if (c->comb > SK_COMB_DESCENDANT)
+            sk_buf_append_c(out, c->comb == SK_COMB_CHILD ? "> " : c->comb == SK_COMB_NEXT ? "+ " : "~ ");
         for (size_t j = 0; j < c->n; j++) {
             const sk_simple *x = &c->simples[j];
             switch (x->kind) {

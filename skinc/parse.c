@@ -223,19 +223,17 @@ static sk_css_decl *declarations(parser *p, const sk_cv *cv, size_t n, size_t *c
         size_t end = i;
         while (end < n && !is_tok(&cv[end], SK_TOK_SEMICOLON))
             end++;
-        if (is_tok(c, SK_TOK_IDENT)) {
-            /* A nested rule (CSS Nesting) reaches its { before any ;. */
-            bool nested = false;
-            for (size_t k = i; k < end; k++)
-                if (cv[k].kind == SK_CV_BLOCK && cv[k].tok.type == SK_TOK_LBRACE)
-                    nested = true;
-            if (nested) {
-                sk_diag_line(p->d, p->sheet->file, c->tok.line, "a rule inside %s is not supported", what);
-            } else {
-                sk_css_decl decl;
-                if (declaration(p, c, end - i, &decl))
-                    sk_vec_push(&v, decl);
-            }
+        /* A nested rule (CSS Nesting) reaches its { before any ;. */
+        bool nested = false;
+        for (size_t k = i; k < end; k++)
+            if (cv[k].kind == SK_CV_BLOCK && cv[k].tok.type == SK_TOK_LBRACE)
+                nested = true;
+        if (nested && !is_tok(c, SK_TOK_AT_KEYWORD)) {
+            sk_diag_line(p->d, p->sheet->file, c->tok.line, "a rule inside %s is not supported", what);
+        } else if (is_tok(c, SK_TOK_IDENT)) {
+            sk_css_decl decl;
+            if (declaration(p, c, end - i, &decl))
+                sk_vec_push(&v, decl);
         } else if (is_tok(c, SK_TOK_AT_KEYWORD)) {
             sk_diag_line(p->d, p->sheet->file, c->tok.line, "@%.*s inside %s is not supported", (int)c->tok.text.len,
                          c->tok.text.ptr, what);
