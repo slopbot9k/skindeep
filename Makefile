@@ -51,7 +51,7 @@ COMPILE = $(CC) $(CSTD) $(WARN) $(DEFS) $(OPT) $(CFLAGS) -MMD -MP
 # Code for one system lives in src/platform/<os>/ (decision 0036).
 PLATFORM := $(if $(filter Darwin,$(OS)),macos,linux)
 
-LIB_SRC := $(wildcard src/base/*.c src/core/*.c src/agents/*.c src/agents/*/*.c \
+LIB_SRC := $(wildcard src/base/*.c src/core/*.c src/agents/*.c src/agents/*/*.c src/sessions/*.c \
     src/platform/$(PLATFORM)/*.c) src/relay/relay.c
 LIB_OBJ := $(LIB_SRC:%.c=$(BUILD)/%.o)
 LIB := $(BUILD)/libsk.a

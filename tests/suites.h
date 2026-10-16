@@ -15,4 +15,9 @@
     X(bus)                                                                    \
     X(tail)                                                                   \
     X(carry)                                                                  \
-    X(agent)
+    X(agent)                                                                  \
+    X(procinfo)                                                               \
+    X(profiles)                                                               \
+    X(sessions)                                                               \
+    X(history)                                                                \
+    X(board)
