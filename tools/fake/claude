@@ -1,0 +1,57 @@
+#!/bin/sh
+# A replay fake named claude (decisions 0019, 0036), in POSIX sh: run as
+# the CLI of a tab, it finds the settings the app injected and plays the
+# recorded fixtures through the real relays, as Claude Code would. The
+# hook events of test/fixtures/claude/hooks.jsonl go through the hooks'
+# command, test/fixtures/claude/statusline.json through the statusLine
+# command, and both name a copy of transcript-read.jsonl, so the
+# transcript tail has a file to follow. It spends no tokens.
+#
+#   PATH=tools/fake:$PATH skinned --headless -- claude
+#
+# FAKE_CLAUDE_PAUSE: seconds between events (default 0.3).
+# FAKE_CLAUDE_LINGER: seconds it stays after the last (default 2).
+
+here=$(cd "$(dirname "$0")/../.." && pwd)
+fixtures=$here/test/fixtures/claude
+pause=${FAKE_CLAUDE_PAUSE:-0.3}
+
+settings=
+while [ $# -gt 0 ]; do
+    case "$1" in
+    --settings) settings=$2; shift ;;
+    --settings=*) settings=${1#--settings=} ;;
+    esac
+    shift
+done
+if [ -z "$settings" ] || [ ! -r "$settings" ]; then
+    echo "fake claude: no --settings given, nothing to relay"
+    exit 0
+fi
+
+# The generated settings hold one hook command for every event, then the
+# statusLine command: the first and the last "command" values.
+commands=$(sed -n 's/^ *"command": "\(.*\)",\{0,1\}$/\1/p' "$settings")
+hook=$(printf '%s\n' "$commands" | head -n 1)
+status=$(printf '%s\n' "$commands" | tail -n 1)
+
+dir=$(mktemp -d "${TMPDIR:-/tmp}/fake-claude.XXXXXX")
+transcript=$dir/transcript.jsonl
+cp "$fixtures/transcript-read.jsonl" "$transcript"
+place() {
+    sed "s|\"transcript_path\": *\"[^\"]*\"|\"transcript_path\": \"$transcript\"|"
+}
+
+printf '\033[1mfake claude\033[0m: replaying the fixtures through %s\r\n' "$hook"
+place < "$fixtures/statusline.json" | sh -c "$status" > /dev/null
+while IFS= read -r line; do
+    event=$(printf '%s' "$line" | sed -n 's/.*"hook_event_name": *"\([^"]*\)".*/\1/p')
+    printf '  %s\r\n' "$event"
+    printf '%s' "$line" | place | sh -c "$hook"
+    sleep "$pause"
+done < "$fixtures/hooks.jsonl"
+place < "$fixtures/statusline.json" | sh -c "$status" > /dev/null
+printf 'fake claude: done\r\n'
+sleep "${FAKE_CLAUDE_LINGER:-2}"
+rm -rf "$dir"
+exit 0

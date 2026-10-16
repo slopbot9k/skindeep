@@ -40,4 +40,5 @@
     X(runtime)                                                               \
     X(appsettings)                                                           \
     X(background)                                                            \
-    X(tabs)
+    X(tabs)                                                                  \
+    X(headless)

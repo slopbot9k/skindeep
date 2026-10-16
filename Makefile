@@ -2,7 +2,8 @@
 # macOS ships as /usr/bin/make and Linux distributions ship as make, and
 # the system C compiler.
 #
-#   make              build the library, the tests, skinned-relay and hookdump
+#   make              build the library, the tests, skinned (headless for now),
+#                     skinned-relay and hookdump
 #   make test         run the tests (T=json runs the json suite)
 #   make debug        run the tests under AddressSanitizer and UBSan
 #   make fuzz         build the fuzz targets
@@ -62,6 +63,7 @@ TEST_BIN := $(BUILD)/tests/run
 
 RELAY := $(BUILD)/skinned-relay
 HOOKDUMP := $(BUILD)/hookdump
+SKINNED := $(BUILD)/skinned
 
 FUZZ_TARGETS := json http utf8 base64
 FUZZ_BINS := $(FUZZ_TARGETS:%=$(BUILD)/fuzz-%)
@@ -71,7 +73,7 @@ FUZZ_SECONDS ?= 30
 .PHONY: all test debug fuzz fuzz-run clean
 .SECONDARY:
 
-all: $(LIB) $(TEST_BIN) $(RELAY) $(HOOKDUMP)
+all: $(LIB) $(TEST_BIN) $(RELAY) $(HOOKDUMP) $(SKINNED)
 
 $(BUILD)/%.o: %.c
 	@mkdir -p $(dir $@)
@@ -90,11 +92,14 @@ $(TEST_BIN): $(TEST_OBJ) $(LIB)
 $(RELAY): $(BUILD)/src/relay/main.o $(LIB)
 	$(CC) $(OPT) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
+$(SKINNED): $(BUILD)/src/main/skinned.o $(LIB)
+	$(CC) $(OPT) $(LDFLAGS) -o $@ $^ $(LDLIBS)
+
 $(HOOKDUMP): $(BUILD)/tools/hookdump.o $(LIB)
 	$(CC) $(OPT) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
-test: $(TEST_BIN) $(RELAY)
-	SK_RELAY_BIN=$(RELAY) ./$(TEST_BIN) $(T)
+test: $(TEST_BIN) $(RELAY) $(SKINNED)
+	SK_RELAY_BIN=$(RELAY) SK_SKINNED_BIN=$(SKINNED) ./$(TEST_BIN) $(T)
 
 debug:
 	$(MAKE) MODE=debug test
@@ -119,4 +124,5 @@ clean:
 	rm -rf build
 
 -include $(LIB_OBJ:.o=.d) $(TEST_OBJ:.o=.d) $(BUILD)/src/relay/main.d $(BUILD)/tools/hookdump.d \
+    $(BUILD)/src/main/skinned.d \
     $(wildcard $(BUILD)/tests/fuzz/*.d)
