@@ -107,4 +107,7 @@
     X(milk_rings)                                                            \
     X(milk_plasma)                                                           \
     X(milk_stardust)                                                         \
-    X(milk_whirlpool)
+    X(milk_whirlpool)                                                        \
+    X(adpcm)                                                                 \
+    X(fontcheck)                                                             \
+    X(skinc_media)

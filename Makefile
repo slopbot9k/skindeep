@@ -90,7 +90,7 @@ RELAY := $(BUILD)/skinned-relay
 HOOKDUMP := $(BUILD)/hookdump
 SKINNED := $(BUILD)/skinned
 
-FUZZ_TARGETS := json http utf8 base64 claude codex text path links term css
+FUZZ_TARGETS := json http utf8 base64 claude codex text path links term css png jpeg svg vorbis fontcheck adpcm
 FUZZ_BINS := $(FUZZ_TARGETS:%=$(BUILD)/fuzz-%)
 FUZZ_DRIVER := $(BUILD)/tests/fuzz/driver.o
 FUZZ_SECONDS ?= 30
@@ -110,8 +110,16 @@ $(BUILD)/skinc-objs/%.o: skinc/%.c
 	$(COMPILE) -c $< -o $@
 
 # Single-file libraries of third_party/ compile in src/vendor/, one unit
-# each, with the warnings their authors' code meets.
+# each, with the warnings their authors' code meets; the decoders only
+# skinc runs, in skinc/vendor_*.c, the same.
 $(BUILD)/src/vendor/%.o: WARN := -w
+$(BUILD)/skinc-objs/vendor_%.o: WARN := -w
+# Hostile input makes the decoders' own arithmetic overflow where no
+# check before the call can rule it out: stb_image's IDCT on huge
+# coefficients, nanosvg's fixed point of a near-flat edge's slope. It
+# wraps to wrong pixels; the sanitizers still watch the rest, their
+# memory above all.
+$(BUILD)/skinc-objs/vendor_%.o: OPT += -fno-sanitize=signed-integer-overflow,float-cast-overflow
 
 # The MilkDrop renderer feeds each frame into the next: no fused
 # multiply-add, so gcc and clang round its arithmetic alike. A pattern's
