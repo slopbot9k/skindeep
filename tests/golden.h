@@ -14,5 +14,11 @@
 
 #define CHECK_GOLDEN(name, im, tolerance) sk_test_golden(__FILE__, __LINE__, (name), (im), (tolerance))
 void sk_test_golden(const char *file, int line, const char *name, const sk_image *im, int tolerance);
+/* The same where up to ppm pixels in a million may differ by more than
+ * tolerance: a whole skin, whose blurs, glyphs and resampled images
+ * may round a little differently on another machine. */
+#define CHECK_GOLDEN_NEAR(name, im, tolerance, ppm)                                                                    \
+    sk_test_golden_near(__FILE__, __LINE__, (name), (im), (tolerance), (ppm))
+void sk_test_golden_near(const char *file, int line, const char *name, const sk_image *im, int tolerance, long ppm);
 
 #endif

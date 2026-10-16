@@ -65,8 +65,8 @@ PLATFORM := $(if $(filter Darwin,$(OS)),macos,linux)
 # run against a fake server, on every system; only Linux opens windows
 # with it.
 LIB_SRC := $(wildcard src/base/*.c src/core/*.c src/agents/*.c src/agents/*/*.c src/app/*.c src/sessions/*.c \
-    src/gfx/*.c src/text/*.c src/term/*.c src/ui/*.c src/audio/*.c src/viz/*.c src/vendor/*.c src/platform/x11/*.c \
-    src/platform/$(PLATFORM)/*.c) src/relay/relay.c
+    src/gfx/*.c src/text/*.c src/skin/*.c src/term/*.c src/ui/*.c src/audio/*.c src/viz/*.c src/vendor/*.c \
+    src/platform/x11/*.c src/platform/$(PLATFORM)/*.c) src/relay/relay.c
 # The embedded DejaVu, in sk_embedded_font's order (text/text.h).
 FONTS := $(addprefix third_party/dejavu/,DejaVuSansMono.ttf DejaVuSansMono-Bold.ttf DejaVuSansMono-Oblique.ttf \
     DejaVuSansMono-BoldOblique.ttf DejaVuSans.ttf DejaVuSans-Bold.ttf)
@@ -86,6 +86,11 @@ TEST_SRC := $(filter-out tests/fuzz/%,$(wildcard tests/*.c tests/*/*.c))
 TEST_OBJ := $(TEST_SRC:%.c=$(BUILD)/%.o)
 TEST_BIN := $(BUILD)/tests/run
 
+# A shipped skin drawn whole (tools/shot.c), for skinshot and the skin
+# goldens, its images decoded by stb_image until skinc's own decoders
+# are in the library.
+SHOT_OBJ := $(BUILD)/tools/shot.o $(BUILD)/tools/imgdecode.o
+
 RELAY := $(BUILD)/skinned-relay
 HOOKDUMP := $(BUILD)/hookdump
 SKINNED := $(BUILD)/skinned
@@ -95,7 +100,7 @@ FUZZ_BINS := $(FUZZ_TARGETS:%=$(BUILD)/fuzz-%)
 FUZZ_DRIVER := $(BUILD)/tests/fuzz/driver.o
 FUZZ_SECONDS ?= 30
 
-.PHONY: all test debug fuzz fuzz-run clean macdemo windemo milkshot
+.PHONY: all test debug fuzz fuzz-run clean macdemo windemo milkshot skinshot
 .SECONDARY:
 
 all: $(LIB) $(TEST_BIN) $(RELAY) $(HOOKDUMP) $(SKINNED) $(SKINC) $(BUILD)/qoi2png $(BUILD)/windemo
@@ -149,8 +154,8 @@ $(SKINC_LIB): $(SKINC_OBJ)
 	@rm -f $@
 	$(AR) rcs $@ $(SKINC_OBJ)
 
-$(TEST_BIN): $(TEST_OBJ) $(SKINC_LIB) $(LIB)
-	$(CC) $(OPT) $(LDFLAGS) -o $@ $(TEST_OBJ) $(SKINC_LIB) $(LIB) $(LDLIBS) $(UI_LIBS)
+$(TEST_BIN): $(TEST_OBJ) $(SHOT_OBJ) $(SKINC_LIB) $(LIB)
+	$(CC) $(OPT) $(LDFLAGS) -o $@ $(TEST_OBJ) $(SHOT_OBJ) $(SKINC_LIB) $(LIB) $(LDLIBS) $(UI_LIBS)
 
 $(SKINC): $(BUILD)/skinc-objs/main.o $(SKINC_LIB) $(LIB)
 	$(CC) $(OPT) $(LDFLAGS) -o $@ $^ $(LDLIBS)
@@ -188,6 +193,13 @@ milkshot: $(BUILD)/milkshot
 $(BUILD)/milkshot: $(BUILD)/tools/milkshot.o $(LIB)
 	$(CC) $(OPT) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
+# A shipped skin laid out and painted at 1x and 2x, to look at beside the
+# Electron app's screenshots; not part of all.
+$(BUILD)/tools/imgdecode.o: WARN := -w
+skinshot: $(BUILD)/skinshot
+$(BUILD)/skinshot: $(BUILD)/tools/skinshot.o $(SHOT_OBJ) $(SKINC_LIB) $(LIB)
+	$(CC) $(OPT) $(LDFLAGS) -o $@ $^ $(LDLIBS)
+
 test: $(TEST_BIN) $(RELAY) $(SKINNED) $(SKINC)
 	SK_RELAY_BIN=$(RELAY) SK_SKINNED_BIN=$(SKINNED) SK_SKINC_BIN=$(SKINC) ./$(TEST_BIN) $(T)
 
@@ -216,5 +228,4 @@ clean:
 -include $(LIB_OBJ:.o=.d) $(TEST_OBJ:.o=.d) $(SKINC_OBJ:.o=.d) $(BUILD)/skinc-objs/main.d $(BUILD)/src/relay/main.d $(BUILD)/tools/hookdump.d \
     $(BUILD)/src/main/skinned.d \
     $(BUILD)/tools/qoi2png.d $(BUILD)/tools/macdemo.d $(BUILD)/tools/windemo.d $(BUILD)/tools/gfxbench.d \
-    $(BUILD)/tools/milkshot.d \
     $(wildcard $(BUILD)/tests/fuzz/*.d)
