@@ -12,16 +12,33 @@
 #include <string.h>
 
 static _Atomic uint64_t gens;
+static _Atomic long alive;
+
+long sk_line_alive(void)
+{
+    return atomic_load_explicit(&alive, memory_order_relaxed);
+}
 
 void sk_line_touch(sk_line *l)
 {
     l->gen = atomic_fetch_add_explicit(&gens, 1, memory_order_relaxed) + 1;
 }
 
+/* The room a combined text of n codepoints, after its count, is given: a
+ * power of two, so marks added one at a time, as REP of one adds tens of
+ * thousands, cost a copy only when the room fills. */
+static size_t comb_room(uint32_t n)
+{
+    size_t room = 4;
+    while (room < (size_t)n + 1)
+        room *= 2;
+    return room;
+}
+
 static uint32_t *comb_dup(const uint32_t *c)
 {
     uint32_t n = c ? c[0] : 0;
-    uint32_t *d = sk_xreallocarray(NULL, (size_t)n + 1, sizeof *d);
+    uint32_t *d = sk_xreallocarray(NULL, comb_room(n), sizeof *d);
     d[0] = n;
     if (n)
         memcpy(d + 1, c + 1, n * sizeof *d);
@@ -53,6 +70,8 @@ static void drop_comb(sk_line *l, int i)
 sk_line *sk_line_new(int cols, const sk_cell_data *fill, bool wrapped)
 {
     sk_line *l = sk_xcalloc(1, sizeof *l);
+    l->refs = 1;
+    atomic_fetch_add_explicit(&alive, 1, memory_order_relaxed);
     reserve(l, cols > 0 ? cols : 1);
     l->len = cols;
     l->wrapped = wrapped;
@@ -66,6 +85,7 @@ void sk_line_free(sk_line *l)
 {
     if (!l)
         return;
+    atomic_fetch_sub_explicit(&alive, 1, memory_order_relaxed);
     if (l->comb)
         for (int i = 0; i < l->cap; i++)
             free(l->comb[i]);
@@ -103,8 +123,21 @@ void sk_line_copy_from(sk_line *l, const sk_line *src)
 sk_line *sk_line_clone(const sk_line *src)
 {
     sk_line *l = sk_xcalloc(1, sizeof *l);
+    l->refs = 1;
+    atomic_fetch_add_explicit(&alive, 1, memory_order_relaxed);
     sk_line_copy_from(l, src);
     return l;
+}
+
+void sk_line_hold(sk_line *l)
+{
+    l->refs++;
+}
+
+void sk_line_release(sk_line *l)
+{
+    if (l && --l->refs == 0)
+        sk_line_free(l);
 }
 
 int sk_line_chars(const sk_line *l, int i, uint32_t *one, const uint32_t **cp)
@@ -174,13 +207,14 @@ void sk_line_add_cp(sk_line *l, int i, uint32_t cp, int width)
     uint32_t content = l->cells[i].content;
     if (content & SK_CELL_COMBINED) {
         uint32_t n = l->comb[i][0];
-        l->comb[i] = sk_xreallocarray(l->comb[i], (size_t)n + 2, sizeof **l->comb);
+        if ((size_t)n + 2 > comb_room(n))
+            l->comb[i] = sk_xreallocarray(l->comb[i], comb_room(n + 1), sizeof **l->comb);
         l->comb[i][n + 1] = cp;
         l->comb[i][0] = n + 1;
     } else if (content & SK_CELL_CP_MASK) {
         if (!l->comb)
             l->comb = sk_xcalloc((size_t)l->cap, sizeof *l->comb);
-        uint32_t *d = sk_xreallocarray(NULL, 3, sizeof *d);
+        uint32_t *d = sk_xreallocarray(NULL, comb_room(2), sizeof *d);
         d[0] = 2;
         d[1] = content & SK_CELL_CP_MASK;
         d[2] = cp;
@@ -361,10 +395,31 @@ static void lines_init(sk_lines *r, int max)
     r->v = sk_xcalloc((size_t)max, sizeof *r->v);
 }
 
+/* this._array[cyclic(i)] = l: the slot takes a reference to l and lets
+ * go of the line it held. */
+static void put(sk_lines *r, int i, sk_line *l)
+{
+    sk_line **s = slot(r, i);
+    sk_line *old = *s;
+    if (l)
+        l->refs++;
+    *s = l;
+    sk_line_release(old);
+}
+
+/* The same with a new line, whose maker's reference the slot takes. */
+static void adopt(sk_lines *r, int i, sk_line *l)
+{
+    sk_line **s = slot(r, i);
+    sk_line *old = *s;
+    *s = l;
+    sk_line_release(old);
+}
+
 static void lines_free(sk_lines *r)
 {
-    for (int i = 0; i < r->len; i++)
-        sk_line_free(*slot(r, i));
+    for (int i = 0; i < r->max; i++)
+        sk_line_release(r->v[i]);
     free(r->v);
     r->v = NULL;
     r->len = 0;
@@ -377,64 +432,34 @@ static void lines_set_max(sk_lines *r, int max)
         return;
     sk_line **v = sk_xcalloc((size_t)max, sizeof *v);
     int keep = SK_MIN(max, r->len);
-    for (int i = 0; i < r->len; i++) {
-        if (i < keep)
-            v[i] = *slot(r, i);
-        else
-            sk_line_free(*slot(r, i));
-    }
-    free(r->v);
+    for (int i = 0; i < keep; i++)
+        if ((v[i] = *slot(r, i)))
+            v[i]->refs++;
+    lines_free(r);
     r->v = v;
     r->max = max;
     r->start = 0;
     r->len = keep;
 }
 
-/* A line leaves the ring. */
-static void drop(sk_lines *r, sk_line *l)
-{
-    if (l && l == r->held)
-        r->held_dropped = true;
-    else
-        sk_line_free(l);
-}
-
-void sk_lines_hold(sk_lines *r, sk_line *l)
-{
-    r->held = l;
-    r->held_dropped = false;
-}
-
-void sk_lines_release(sk_lines *r)
-{
-    if (r->held_dropped)
-        sk_line_free(r->held);
-    r->held = NULL;
-    r->held_dropped = false;
-}
-
 void sk_lines_set(sk_lines *r, int i, sk_line *l)
 {
-    sk_line **s = slot(r, i);
-    if (*s && *s != l)
-        drop(r, *s);
-    *s = l;
+    if (*slot(r, i) != l)
+        adopt(r, i, l);
 }
 
 void sk_lines_push(sk_lines *r, sk_line *l)
 {
+    adopt(r, r->len, l);
     if (r->len == r->max) {
-        sk_line **s = slot(r, 0);
-        drop(r, *s);
-        *s = l;
         r->start = (r->start + 1) % r->max;
         emit(r, SK_LINES_TRIM, 0, 1);
     } else {
-        *slot(r, r->len) = l;
         r->len++;
     }
 }
 
+/* The last line, with its slot's reference. */
 static sk_line *lines_pop(sk_lines *r)
 {
     sk_line **s = slot(r, r->len - 1);
@@ -446,42 +471,35 @@ static sk_line *lines_pop(sk_lines *r)
 
 void sk_lines_insert(sk_lines *r, int i, sk_line *l)
 {
-    if (r->len == r->max) {
-        /* CircularList.splice into a full ring, move for move: the first
-         * move up wraps onto the first line, which is lost; past the end
-         * nothing moves and the line lost is the one at i, wrapped. Then
-         * the trim moves the start on. Inserted at 0, the last line so
-         * comes first and the new one last; past the end, the first line
-         * comes last. */
-        sk_line *lost = *slot(r, i < r->len ? r->len : i);
-        for (int k = r->len - 1; k >= i; k--)
-            *slot(r, k + 1) = *slot(r, k);
-        *slot(r, i) = l;
-        drop(r, lost);
-        emit(r, SK_LINES_INSERT, i, 1);
+    /* CircularList.splice, move for move. Into a full ring the first move
+     * up wraps onto the first line, and past the end nothing moves and
+     * the line lands on the one i wraps to; then the trim moves the start
+     * on. Inserted at 0, the last line so comes first and the new one
+     * last; past the end, the first line comes last. */
+    bool full = r->len == r->max;
+    /* Past the end of a ring with room JavaScript would expose a slot
+     * the list no longer holds; the line goes at the end instead. */
+    int at = full ? i : SK_MIN(i, r->len);
+    for (int k = r->len - 1; k >= at; k--)
+        put(r, k + 1, *slot(r, k));
+    adopt(r, at, l);
+    emit(r, SK_LINES_INSERT, i, 1);
+    if (full) {
         r->start = (r->start + 1) % r->max;
         emit(r, SK_LINES_TRIM, 0, 1);
-        return;
+    } else {
+        r->len++;
     }
-    /* Past the end of a ring with room, JavaScript would expose a slot
-     * the list no longer holds; the line goes at the end instead. */
-    int at = SK_MIN(i, r->len);
-    for (int k = r->len; k > at; k--)
-        *slot(r, k) = *slot(r, k - 1);
-    *slot(r, at) = l;
-    r->len++;
-    emit(r, SK_LINES_INSERT, i, 1);
 }
 
 void sk_lines_remove(sk_lines *r, int i)
 {
     if (!r->len)
         return;
-    int at = SK_MIN(i, r->len - 1);
-    drop(r, *slot(r, at));
-    for (int k = at; k < r->len - 1; k++)
-        *slot(r, k) = *slot(r, k + 1);
-    *slot(r, r->len - 1) = NULL;
+    for (int k = i; k < r->len - 1; k++)
+        put(r, k, *slot(r, k + 1));
+    /* The slot left past the end lets its line go. */
+    put(r, r->len - 1, NULL);
     r->len--;
     emit(r, SK_LINES_DELETE, i, 1);
 }
@@ -490,36 +508,36 @@ void sk_lines_trim_start(sk_lines *r, int n)
 {
     if (n > r->len)
         n = r->len;
-    for (int k = 0; k < n; k++) {
-        drop(r, *slot(r, k));
-        *slot(r, k) = NULL;
-    }
+    for (int k = 0; k < n; k++)
+        put(r, k, NULL);
     r->start = (r->start + n) % r->max;
     r->len -= n;
     emit(r, SK_LINES_TRIM, 0, n);
 }
 
-void sk_lines_shift_up(sk_lines *r, int i, int n)
+bool sk_lines_shift(sk_lines *r, int start, int count, int offset)
 {
-    if (n <= 0)
-        return;
-    drop(r, *slot(r, i));
-    for (int k = i; k < i + n - 1; k++)
-        *slot(r, k) = *slot(r, k + 1);
-    *slot(r, i + n - 1) = NULL;
-}
-
-void sk_lines_shift_down(sk_lines *r, int i, int n)
-{
-    if (n <= 0)
-        return;
-    if (i + n < r->len)
-        drop(r, *slot(r, i + n));
-    else
-        r->len = SK_MIN(i + n + 1, r->max);
-    for (int k = i + n; k > i; k--)
-        *slot(r, k) = *slot(r, k - 1);
-    *slot(r, i) = NULL;
+    if (count <= 0)
+        return true;
+    if (start < 0 || start >= r->len || start + offset < 0)
+        return false;
+    if (offset > 0) {
+        for (int k = count - 1; k >= 0; k--)
+            put(r, start + k + offset, *slot(r, start + k));
+        int expand = start + count + offset - r->len;
+        if (expand > 0) {
+            r->len += expand;
+            while (r->len > r->max) {
+                r->len--;
+                r->start = (r->start + 1) % r->max;
+                emit(r, SK_LINES_TRIM, 0, 1);
+            }
+        }
+    } else {
+        for (int k = 0; k < count; k++)
+            put(r, start + k + offset, *slot(r, start + k));
+    }
+    return true;
 }
 
 /* The buffer. */
@@ -725,7 +743,7 @@ static void reflow_larger(sk_buffer *b, int new_cols, int new_rows)
             int count = remove.ptr[next_idx + 1];
             emit(r, SK_LINES_DELETE, i - removed, count);
             for (int k = 0; k < count && i + k < r->len; k++)
-                sk_line_free(sk_lines_get(r, i + k));
+                sk_line_release(sk_lines_get(r, i + k));
             i += count - 1;
             removed += count;
             next_idx += 2;
@@ -872,7 +890,7 @@ static void reflow_smaller(sk_buffer *b, int new_cols, int new_rows)
             if (b->ybase == 0) {
                 if (b->y < new_rows - 1) {
                     b->y++;
-                    sk_line_free(lines_pop(r));
+                    sk_line_release(lines_pop(r));
                 } else {
                     b->ybase++;
                     b->ydisp++;
@@ -923,10 +941,10 @@ static void reflow_smaller(sk_buffer *b, int new_cols, int new_rows)
     }
     /* What did not fit is dropped. */
     for (int i = 0; i < orig_len; i++)
-        sk_line_free(orig[i]);
+        sk_line_release(orig[i]);
     for (size_t k = 0; k < ins.len; k++) {
         for (int j = 0; j < ins.ptr[k].n; j++)
-            sk_line_free(ins.ptr[k].lines[j]);
+            sk_line_release(ins.ptr[k].lines[j]);
         free(ins.ptr[k].lines);
     }
     sk_vec_free(&ins);
@@ -976,7 +994,7 @@ void sk_buffer_resize(sk_buffer *b, int new_cols, int new_rows)
             for (int y = b->rows; y > new_rows; y--) {
                 if (r->len > new_rows + b->ybase) {
                     if (r->len > b->ybase + b->y + 1) {
-                        sk_line_free(lines_pop(r));
+                        sk_line_release(lines_pop(r));
                     } else {
                         b->ybase++;
                         b->ydisp++;

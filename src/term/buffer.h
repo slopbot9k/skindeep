@@ -45,11 +45,21 @@ typedef struct sk_line {
     /* Changes with every change to the line, unique across lines, so a
      * reader can tell what to redraw. */
     uint64_t gen;
+    /* The ring slots and holders that keep it, as references keep a
+     * JavaScript object: 1 when made, for its maker. */
+    int refs;
 } sk_line;
 
 sk_line *sk_line_new(int cols, const sk_cell_data *fill, bool wrapped);
 sk_line *sk_line_clone(const sk_line *l);
+/* Frees a line no ring holds. */
 void sk_line_free(sk_line *l);
+/* A reference more, as print keeps the row it wraps from; and one less,
+ * the last freeing the line. */
+void sk_line_hold(sk_line *l);
+void sk_line_release(sk_line *l);
+/* The lines made and not yet freed, for the tests' leak checks. */
+long sk_line_alive(void);
 void sk_line_touch(sk_line *l);
 
 static inline int sk_line_width(const sk_line *l, int i)
@@ -92,16 +102,16 @@ typedef struct {
     void *ud;
 } sk_lines_listener;
 
-/* The ring of lines: xterm.js's CircularList. A line dropped from it is
- * freed, unless it is the held one: JavaScript keeps a line alive while
- * print still holds it, and the hold does the same. */
+/* The ring of lines: xterm.js's CircularList. Each slot holds a
+ * reference, as the JavaScript array does: an index past the end wraps
+ * onto a live slot when the ring is full, a move can leave one line in
+ * two slots, and a line is freed when its last slot or holder lets go.
+ * A slot past the length holds nothing. */
 typedef struct {
     sk_line **v;
     int max, start, len;
     int id; /* 0 the normal buffer, 1 the alternate */
     const sk_lines_listener *listen;
-    sk_line *held;
-    bool held_dropped;
 } sk_lines;
 
 static inline sk_line *sk_lines_get(const sk_lines *r, int i)
@@ -139,20 +149,16 @@ int sk_buffer_next_stop(const sk_buffer *b, int x);
 int sk_buffer_prev_stop(const sk_buffer *b, int x);
 sk_line *sk_buffer_blank(const sk_buffer *b, const sk_cell_data *fill, bool wrapped);
 
-/* The ring operations the screen uses, with xterm.js's events. */
-void sk_lines_hold(sk_lines *r, sk_line *l);
-/* Ends the hold, freeing the held line if it was dropped meanwhile. */
-void sk_lines_release(sk_lines *r);
+/* The ring operations the screen uses, with xterm.js's events. A line
+ * handed to set, push or insert brings its maker's reference along. */
 void sk_lines_set(sk_lines *r, int i, sk_line *l);
 void sk_lines_push(sk_lines *r, sk_line *l);
 void sk_lines_insert(sk_lines *r, int i, sk_line *l);
 void sk_lines_remove(sk_lines *r, int i);
 void sk_lines_trim_start(sk_lines *r, int n);
-/* Moves the lines [i + 1, i + n) up one, freeing line i; line i + n - 1
- * is then the caller's to set. No event, as xterm.js fires none. */
-void sk_lines_shift_up(sk_lines *r, int i, int n);
-/* Moves the lines [i, i + n) down one, freeing line i + n; line i is then
- * the caller's to set. */
-void sk_lines_shift_down(sk_lines *r, int i, int n);
+/* shiftElements: count lines from start moved by offset, a step at a
+ * time, growing the ring past its end and trimming it when full. False,
+ * changing nothing, where xterm.js throws: start outside the lines. */
+bool sk_lines_shift(sk_lines *r, int start, int count, int offset);
 
 #endif

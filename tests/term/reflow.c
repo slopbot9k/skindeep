@@ -5,6 +5,9 @@
 #include "../../src/term/screen.h"
 #include "screen.h"
 
+#include <stdint.h>
+#include <stdlib.h>
+
 static bool wrapped(tt *x, int line)
 {
     return sk_screen_line(x->t->active, line)->wrapped;
@@ -230,6 +233,93 @@ static void test_alt_ring_grown_short(void)
     tt_close(&x);
 }
 
+static int by_address(const void *a, const void *b)
+{
+    uintptr_t x = (uintptr_t)*(sk_line *const *)a, y = (uintptr_t)*(sk_line *const *)b;
+    return (x > y) - (x < y);
+}
+
+/* The lines both rings hold, each counted once, checking that each
+ * line's references are the slots that hold it. */
+static long ring_lines(sk_term *t)
+{
+    sk_lines *rings[2] = {&t->normal.lines, &t->alt.lines};
+    SK_VEC(sk_line *) all = {0};
+    for (int k = 0; k < 2; k++)
+        for (int i = 0; i < rings[k]->max; i++)
+            if (rings[k]->v[i])
+                sk_vec_push(&all, rings[k]->v[i]);
+    qsort(all.ptr, all.len, sizeof *all.ptr, by_address);
+    long distinct = 0;
+    for (size_t i = 0; i < all.len;) {
+        size_t run = 1;
+        while (i + run < all.len && all.ptr[i + run] == all.ptr[i])
+            run++;
+        CHECK_INT(all.ptr[i]->refs, (int)run);
+        distinct++;
+        i += run;
+    }
+    sk_vec_free(&all);
+    return distinct;
+}
+
+/* The alternate ring two rows past its lines, as above, labelled by row
+ * from L1 at the top. */
+static void open_two_past(tt *x)
+{
+    tt_open(x, 10, 8);
+    sk_term_resize(x->t, 10, 6);
+    tt_feed(x, "\x1b[?1049h\x1b[6;1H\n\n\x1b[H");
+    sk_term_resize(x->t, 10, 8);
+    tt_feed(x, "L1\r\nL2\r\nL3\r\nL4\r\nL5\r\nL6\r\nL7\r\nL8");
+    int top, base, lines;
+    sk_term_viewport(x->t, &top, &base, &lines);
+    CHECK_INT(base, 2);
+    CHECK_INT(lines, 8);
+}
+
+static void test_alt_ring_reverse_index(void)
+{
+    /* A reverse index whose region runs past the lines of the full ring:
+     * shiftElements writes round onto the ring's first lines, grows the
+     * ring past its end and trims it twice, and the blank lands two
+     * slots on, leaving one line in two slots. Writing to one row so
+     * writes to the other, as in xterm.js. The lines the moves let go
+     * are freed, and those the ring holds are all that is left. */
+    long before = sk_line_alive();
+    tt x;
+    open_two_past(&x);
+    tt_feed(&x, "\x1b[6;8r\x1b[6;1H\x1bM");
+    CHECK_ROWS(x.t, "L3\nL4\nL5\nL6\nL6\n\nL1\nL2");
+    tt_feed(&x, "\x1b[4;5HZ");
+    CHECK_ROWS(x.t, "L3\nL4\nL5\nL6  Z\nL6  Z\n\nL1\nL2");
+    CHECK_INT((int)(sk_line_alive() - before), (int)ring_lines(x.t));
+    /* Scrolling a region whose lines start past the ring's: shiftElements
+     * throws, and nothing moves. */
+    tt_feed(&x, "\x1b[7;8r\x1b[8;1H\n");
+    CHECK_ROWS(x.t, "L3\nL4\nL5\nL6  Z\nL6  Z\n\nL1\nL2");
+    CHECK_INT((int)(sk_line_alive() - before), (int)ring_lines(x.t));
+    tt_close(&x);
+    CHECK_INT((int)(sk_line_alive() - before), 0);
+}
+
+static void test_ring_lines_freed(void)
+{
+    /* Every way lines leave the rings, in both buffers, frees them. */
+    long before = sk_line_alive();
+    tt x;
+    tt_open(&x, 6, 4);
+    for (int i = 0; i < 30; i++)
+        tt_feed(&x, "abcdefgh\r\n\x1b[2;3r\x1b[3;1H\n\x1b[2;1H\x1bM\x1b[r\x1b[2L\x1b[M\x1b[S\x1b[T");
+    sk_term_resize(x.t, 3, 6);
+    sk_term_resize(x.t, 8, 2);
+    tt_feed(&x, "\x1b[3J\x1b[?1049h\x1b[2;2r\x1b[2;1H\n\x1bM\x1b[r");
+    sk_term_resize(x.t, 6, 5);
+    CHECK_INT((int)(sk_line_alive() - before), (int)ring_lines(x.t));
+    tt_close(&x);
+    CHECK_INT((int)(sk_line_alive() - before), 0);
+}
+
 static void test_minimum_size(void)
 {
     tt x;
@@ -260,6 +350,8 @@ const sk_test sk_suite_term_reflow[] = {
     T(test_alt_resize),
     T(test_alt_ring_past_lines),
     T(test_alt_ring_grown_short),
+    T(test_alt_ring_reverse_index),
+    T(test_ring_lines_freed),
     T(test_minimum_size),
     {0},
 };
