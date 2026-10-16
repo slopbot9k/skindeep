@@ -356,6 +356,75 @@ static void test_a_url_in_the_text_is_a_link(void)
     finish(&a, 5000);
 }
 
+static size_t len_of(const sk_json *v)
+{
+    return v && v->type == SK_JSON_ARRAY ? v->array.len : 0;
+}
+
+/* Decision 0023: a tab dragged out of its strip and let go outside the
+ * window leaves for a new window, which then works on its own and goes
+ * with its last tab. */
+static void test_a_tab_dragged_out_gets_its_own_window(void)
+{
+    app a;
+    const char *cmd[] = {"cat", NULL};
+    if (!start(&a, cmd))
+        return;
+    ok(&a, "{\"op\":\"key\",\"key\":\"t\",\"mods\":" APP_MODS "}");
+    sk_arena ar;
+    sk_arena_init(&ar, 0);
+    const sk_json *p = NULL;
+    for (uint64_t until = sk_now_ms() + 5000; sk_now_ms() < until; sk_test_sleep_ms(50)) {
+        p = probe(&a, &ar);
+        if (len_of(sk_json_get(p, "tabs")) == 2)
+            break;
+    }
+    CHECK_INT(len_of(sk_json_get(p, "tabs")), 2);
+    /* The second tab of the strip, at 1100 points wide: x 226 to 446. */
+    ok(&a, "{\"op\":\"mouse\",\"kind\":\"down\",\"x\":300,\"y\":15,\"button\":1}");
+    ok(&a, "{\"op\":\"mouse\",\"kind\":\"move\",\"x\":312,\"y\":15}");
+    ok(&a, "{\"op\":\"mouse\",\"kind\":\"up\",\"x\":320,\"y\":-60,\"button\":1}");
+    for (uint64_t until = sk_now_ms() + 5000; sk_now_ms() < until; sk_test_sleep_ms(50)) {
+        p = probe(&a, &ar);
+        if (len_of(sk_json_get(p, "windows")) == 2)
+            break;
+    }
+    const sk_json *wins = sk_json_get(p, "windows");
+    CHECK_INT(len_of(wins), 2);
+    int second = -1;
+    for (size_t i = 0; i < len_of(wins); i++) {
+        const sk_json *w = sk_json_at(wins, i);
+        CHECK_INT(len_of(sk_json_get(w, "tabs")), 1);
+        if (num(w, "id") != 0)
+            second = (int)num(w, "id");
+    }
+    CHECK(second > 0);
+    /* Typing in the new window reaches its tab alone. */
+    char req[256];
+    snprintf(req, sizeof req, "{\"op\":\"type\",\"text\":\"away\\n\",\"win\":%d}", second);
+    ok(&a, req);
+    bool there = false;
+    for (uint64_t until = sk_now_ms() + 5000; !there && sk_now_ms() < until; sk_test_sleep_ms(50)) {
+        snprintf(req, sizeof req, "{\"op\":\"probe\",\"win\":%d}", second);
+        there = screen_has(ask(&a, &ar, req), "away\naway");
+    }
+    CHECK(there);
+    CHECK(!screen_has(probe(&a, &ar), "away"));
+    /* Closing it hangs up its tab; the first window stays. */
+    snprintf(req, sizeof req, "{\"op\":\"close\",\"win\":%d}", second);
+    ok(&a, req);
+    for (uint64_t until = sk_now_ms() + 5000; sk_now_ms() < until; sk_test_sleep_ms(50)) {
+        p = probe(&a, &ar);
+        if (len_of(sk_json_get(p, "windows")) == 1)
+            break;
+    }
+    CHECK_INT(len_of(sk_json_get(p, "windows")), 1);
+    CHECK_INT(len_of(sk_json_get(p, "tabs")), 1);
+    sk_arena_free(&ar);
+    ok(&a, "{\"op\":\"hangup\"}");
+    CHECK_INT(finish(&a, 5000), 128 + SIGHUP);
+}
+
 /* Decision 0016: closing the window hangs up every tab. */
 static void test_closing_the_window_hangs_up(void)
 {
@@ -373,6 +442,7 @@ const sk_test sk_suite_window[] = {
     T(test_the_app_ends_with_the_last_tabs_status),
     T(test_a_double_click_selects_a_word),
     T(test_a_url_in_the_text_is_a_link),
+    T(test_a_tab_dragged_out_gets_its_own_window),
     T(test_closing_the_window_hangs_up),
     {0},
 };
