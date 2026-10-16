@@ -49,4 +49,6 @@
     X(width)                                                                 \
     X(keys)                                                                  \
     X(keys_mouse)                                                            \
-    X(keys_paste)
+    X(keys_paste)                                                            \
+    X(links)                                                                 \
+    X(links_buffer)

@@ -1,0 +1,3 @@
+Ahttp://[::1]:8080/ http://user:pass@127.0.0.1/ HTTP://xn--n3h.com:0443/x
+(http://a.com/foo_(bar)) 'http://b.c/' <https://Example.com:80/staysUpper>
+http://[2001:db8::1]/x http://localhost:3000/api?q=1&r=2#frag HTTPS://K.com/~
