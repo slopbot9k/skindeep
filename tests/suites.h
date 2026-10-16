@@ -96,4 +96,11 @@
     X(skinc_validate)                                                        \
     X(skinc_splits)                                                          \
     X(skinc_skins)                                                           \
-    X(skinc_program)
+    X(skinc_program)                                                         \
+    X(milk_audio)                                                            \
+    X(milk_render)                                                           \
+    X(milk_drift)                                                            \
+    X(milk_rings)                                                            \
+    X(milk_plasma)                                                           \
+    X(milk_stardust)                                                         \
+    X(milk_whirlpool)

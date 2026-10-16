@@ -8,6 +8,7 @@
 #   make debug        run the tests under AddressSanitizer and UBSan
 #   make fuzz         build the fuzz targets
 #   make fuzz-run     run each target for FUZZ_SECONDS (default 30)
+#   make milkshot     build the MilkDrop renderer's frame tool
 #   make clean
 #
 # MODE picks the build: release (the default), debug or fuzz, each in
@@ -62,7 +63,8 @@ PLATFORM := $(if $(filter Darwin,$(OS)),macos,linux)
 # run against a fake server, on every system; only Linux opens windows
 # with it.
 LIB_SRC := $(wildcard src/base/*.c src/core/*.c src/agents/*.c src/agents/*/*.c src/app/*.c src/sessions/*.c \
-    src/gfx/*.c src/text/*.c src/term/*.c src/ui/*.c src/vendor/*.c src/platform/x11/*.c src/platform/$(PLATFORM)/*.c) src/relay/relay.c
+    src/gfx/*.c src/text/*.c src/term/*.c src/ui/*.c src/viz/*.c src/vendor/*.c src/platform/x11/*.c \
+    src/platform/$(PLATFORM)/*.c) src/relay/relay.c
 # The embedded DejaVu, in sk_embedded_font's order (text/text.h).
 FONTS := $(addprefix third_party/dejavu/,DejaVuSansMono.ttf DejaVuSansMono-Bold.ttf DejaVuSansMono-Oblique.ttf \
     DejaVuSansMono-BoldOblique.ttf DejaVuSans.ttf DejaVuSans-Bold.ttf)
@@ -91,7 +93,7 @@ FUZZ_BINS := $(FUZZ_TARGETS:%=$(BUILD)/fuzz-%)
 FUZZ_DRIVER := $(BUILD)/tests/fuzz/driver.o
 FUZZ_SECONDS ?= 30
 
-.PHONY: all test debug fuzz fuzz-run clean macdemo windemo
+.PHONY: all test debug fuzz fuzz-run clean macdemo windemo milkshot
 .SECONDARY:
 
 all: $(LIB) $(TEST_BIN) $(RELAY) $(HOOKDUMP) $(SKINNED) $(SKINC) $(BUILD)/qoi2png $(BUILD)/windemo
@@ -108,6 +110,10 @@ $(BUILD)/skinc-objs/%.o: skinc/%.c
 # Single-file libraries of third_party/ compile in src/vendor/, one unit
 # each, with the warnings their authors' code meets.
 $(BUILD)/src/vendor/%.o: WARN := -w
+
+# The MilkDrop renderer feeds each frame into the next: no fused
+# multiply-add, so gcc and clang round its arithmetic alike.
+$(BUILD)/src/viz/milk%.o: OPT += -ffp-contract=off
 
 # Generated sources: tools/bin2c runs on the build machine.
 $(BIN2C): tools/bin2c.c
@@ -165,6 +171,12 @@ $(BUILD)/windemo: $(BUILD)/tools/windemo.o $(LIB)
 $(BUILD)/gfxbench: $(BUILD)/tools/gfxbench.o $(LIB)
 	$(CC) $(OPT) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
+# A MilkDrop preset run on the test signal, its frames as QOI and its
+# frame times: make milkshot, then build/release/milkshot.
+milkshot: $(BUILD)/milkshot
+$(BUILD)/milkshot: $(BUILD)/tools/milkshot.o $(LIB)
+	$(CC) $(OPT) $(LDFLAGS) -o $@ $^ $(LDLIBS)
+
 test: $(TEST_BIN) $(RELAY) $(SKINNED) $(SKINC)
 	SK_RELAY_BIN=$(RELAY) SK_SKINNED_BIN=$(SKINNED) SK_SKINC_BIN=$(SKINC) ./$(TEST_BIN) $(T)
 
@@ -193,4 +205,5 @@ clean:
 -include $(LIB_OBJ:.o=.d) $(TEST_OBJ:.o=.d) $(SKINC_OBJ:.o=.d) $(BUILD)/skinc-objs/main.d $(BUILD)/src/relay/main.d $(BUILD)/tools/hookdump.d \
     $(BUILD)/src/main/skinned.d \
     $(BUILD)/tools/qoi2png.d $(BUILD)/tools/macdemo.d $(BUILD)/tools/windemo.d $(BUILD)/tools/gfxbench.d \
+    $(BUILD)/tools/milkshot.d \
     $(wildcard $(BUILD)/tests/fuzz/*.d)
