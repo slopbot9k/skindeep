@@ -1,0 +1,48 @@
+/* coffee: a bohemian basement cafe. Old brick, string lights, a chalkboard
+   with doodles, handbills on a corkboard, a lava lamp, a thrift-store
+   cabinet holding a turntable, a tube amp and LPs, and a table under a
+   block-print cloth with a French press, jars of cold brew, a pothos, a
+   typewriter and mismatched mugs. */
+.room { background: #2a1610 url(images/wall.jpg) 0 0 / 640px 320px; }
+.room::after { content: ""; position: absolute; inset: 0;
+  background: radial-gradient(ellipse 70% 45% at 50% 0%, rgba(255, 176, 90, 0.16), rgba(0, 0, 0, 0) 70%),
+    radial-gradient(ellipse at 50% 55%, rgba(0, 0, 0, 0) 40%, rgba(12, 4, 0, 0.62) 100%); }
+
+/* The chalkboard in a thrift-store frame. */
+.frame { border-radius: 4px; background: url(images/counter.jpg) 0 0 / 260px 260px, #c08a48; background-blend-mode: multiply;
+  box-shadow: inset 0 0 0 1px rgba(255, 220, 170, 0.3), inset 0 0 8px rgba(0, 0, 0, 0.6), 0 5px 14px rgba(0, 0, 0, 0.6); }
+.slate { background: #1e1d1b url(images/slate.jpg) center / cover; box-shadow: inset 0 0 16px rgba(0, 0, 0, 0.8); }
+.board-title::after { content: "Tonight"; display: block; font: bold 34px/34px "Amatic SC", cursive; color: #f4ead6; letter-spacing: 2px;
+  text-shadow: 0 0 2px rgba(255, 255, 255, 0.35); }
+.doodles { background: url(images/doodles.png) 0 0 / 300px 28px no-repeat; opacity: 0.8; }
+.doodle { background: url(images/doodle.png) 0 0 / 92px 116px no-repeat; opacity: 0.8; }
+
+.line { flex-direction: row; justify-content: flex-start; align-items: baseline; color: #f4ead6; gap: 4px; }
+.line .label { flex: 1 1 auto; overflow: hidden; font: bold 22px/24px "Amatic SC", cursive; letter-spacing: 1.5px; text-transform: none; color: #f4ead6; }
+.line .label::after { content: " . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . ."; color: rgba(244, 234, 214, 0.45); }
+.line .value { flex: none; font: bold 24px/24px "Amatic SC", cursive; letter-spacing: 1px; color: #ffe2a8; }
+
+/* The agent's task list (decision 0034), chalked over the menu lines. */
+.skin.checklist .line { visibility: hidden; }
+.chalk-list .item { font: bold 22px/28px "Amatic SC", cursive; letter-spacing: 1.5px; color: #f4ead6; gap: 10px; }
+.chalk-list .item .mark { color: rgba(244, 234, 214, 0.7); }
+.chalk-list .item.doing { color: #ffe2a8; }
+.chalk-list .item.done { opacity: 0.6; }
+/* Its toggle: two chalked words above the lines, the one shown underlined. */
+.chalk-tabs { justify-content: flex-start; align-items: baseline; gap: 14px; }
+.chalk-tabs .option { font: bold 22px/22px "Amatic SC", cursive; letter-spacing: 1.5px; color: #f4ead6; opacity: 0.5; }
+.chalk-tabs .option.on { opacity: 1; border-bottom: 2px solid rgba(244, 234, 214, 0.75); }
+
+/* String lights across the wall: they flare at each tool call. */
+.lights { display: block; }
+.lights.nodata { opacity: 1; }
+.lights .label { display: none; }
+.lights .lamp, .lights .lamp.on { position: absolute; inset: 0; width: auto; height: auto; border-radius: 0; box-shadow: none;
+  background: url(images/lights-off.png) 0 0 / 240px 30px repeat-x; }
+.lights .lamp.on { background-image: url(images/lights-on.png); }
+
+/* The corkboard, and the open mic flyer's readout, turned with the flyer. */
+.cork { background: url(images/cork.png) 0 0 / 228px 140px no-repeat; border-radius: 3px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.55); }
+.handbill { transform: rotate(-3deg); gap: 2px; color: #3a2a22; }
+.handbill .label { font: 11px/12px "Cutive Mono", monospace; letter-spacing: 1px; text-transform: none; }
+.handbill .value { font: 22px/22px "Cutive Mono", monospace; color: #b0381e; }

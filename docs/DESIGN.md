@@ -128,5 +128,6 @@ own keys, pastes and mouse reports.
 | [0034](decisions/0034-checklist.md) | The agent's task list in a list widget |
 | [0035](decisions/0035-resizable-panels.md) | Resizable panels: a dragged boundary between the terminal and a panel |
 | [0036](decisions/0036-c-port.md) | The C port: C17 and POSIX, Linux and macOS, skins compiled by skinc |
+| [0037](decisions/0037-skin-packs.md) | Skin packs: CSS compiled once, per state |
 
 Channel facts: `docs/research/side-channels.md`.

@@ -1,0 +1,46 @@
+
+.chalk-lamp { justify-content: flex-start; gap: 9px; color: #ece8dc; }
+.chalk-lamp .lamp { width: 13px; height: 13px; background: transparent; border: 2px solid rgba(236, 232, 220, 0.7); }
+.chalk-lamp .lamp.on { background: #f6dd7a; border-color: #f6dd7a; box-shadow: 0 0 8px rgba(246, 221, 122, 0.8); }
+.chalk-lamp .label { font: 16px/18px "Permanent Marker", cursive; text-transform: none; }
+
+/* Marker on the whiteboard. */
+.marker { --off: rgba(150, 160, 170, 0.16); align-items: stretch; gap: 1px; }
+.marker .track { background: transparent; }
+.marker .label { align-self: flex-start; font: 14px/16px "Permanent Marker", cursive; text-transform: none; letter-spacing: 0.5px; color: #3a3f45; }
+.marker .resets { position: absolute; right: 2px; top: 0; font: 13px/16px "Permanent Marker", cursive; color: #5a6068; opacity: 1; }
+.marker .seg { border-radius: 2px; }
+.marker .seg.on { border-radius: 3px 1px 4px 2px; box-shadow: none; opacity: 0.88; }
+.marker.blue .seg.on { background: #2457b8; }
+/* Every usage limit (decision 0011), a marker colour a window: red for
+   five hours, green for a week or longer and a spend limit, orange and
+   purple for a model's. Two columns for three or more. */
+.lims { gap: 6px; }
+.lims.n-3, .lims.n-4, .lims.n-5, .lims.n-6 { display: grid; grid-template-columns: 1fr 1fr; grid-auto-rows: 1fr; column-gap: 14px; row-gap: 4px; }
+.lims.n-3 .suffix, .lims.n-4 .suffix, .lims.n-5 .suffix, .lims.n-6 .suffix,
+.lims.n-3 .word, .lims.n-4 .word, .lims.n-5 .word, .lims.n-6 .word { display: none; }
+.lims .marker .seg.on { background: #2e8b4a; }
+.lims .marker.span-5h .seg.on { background: #c7362f; }
+.lims .marker.model .seg.on { background: #7a4aa8; }
+.lims .marker.model.span-5h .seg.on { background: #d0731c; }
+.marker.nodata { opacity: 0.6; }
+
+/* Catalog cards: typed on cream stock, a red rule under the heading. */
+.card { align-items: flex-start; justify-content: flex-start; padding: 3px 7px; box-sizing: border-box; color: #2e2a24;
+  background: #f4ecd4 repeating-linear-gradient(to bottom, rgba(0, 0, 0, 0) 0, rgba(0, 0, 0, 0) 13px, rgba(70, 110, 170, 0.28) 13px, rgba(70, 110, 170, 0.28) 14px) 0 4px;
+  border: 2px solid #c79c48; border-radius: 2px; box-shadow: inset 0 0 0 1px #7d5a1e, 0 1px 2px rgba(0, 0, 0, 0.6); }
+.card .label { font: 11px/14px "Special Elite", monospace; letter-spacing: 1px; color: #6b3a2a; width: 100%; border-bottom: 1px solid rgba(200, 66, 60, 0.75); }
+.card .value { font: 19px/26px "Special Elite", monospace; color: #1f1c18; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.card.nodata { opacity: 0.8; }
+
+/* The reading lamp and its brass plate. */
+.lamp { justify-content: flex-end; }
+.lamp .sheet { flex: none; width: 140px; height: 120px; image-rendering: auto; }
+.lamp .label { position: absolute; bottom: 3px; left: 50%; transform: translateX(-50%); font: 9px/12px "Special Elite", monospace;
+  letter-spacing: 1px; color: #3a2a10; background: linear-gradient(#f2d48a, #b88a32); padding: 0 5px; border-radius: 1px; opacity: 0.9; }
+
+.brass { color: #f2dca4; gap: 2px; }
+.brass .knob-image { filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.7)); }
+.brass .label { font: 11px/12px "Special Elite", monospace; letter-spacing: 2px; color: #f2dca4; }
+.brass .value { font: 13px/14px "Special Elite", monospace; color: #f8ecc8; }
+.lims.n-3 > :last-child, .lims.n-5 > :last-child { grid-column: span 2; }

@@ -87,4 +87,13 @@
     X(term_xterminal)                                                        \
     X(customglyph)                                                           \
     X(termview)                                                              \
-    X(termview_golden)
+    X(termview_golden)                                                       \
+    X(skinc_lex)                                                             \
+    X(skinc_parse)                                                           \
+    X(skinc_selector)                                                        \
+    X(skinc_values)                                                          \
+    X(skinc_cascade)                                                         \
+    X(skinc_validate)                                                        \
+    X(skinc_splits)                                                          \
+    X(skinc_skins)                                                           \
+    X(skinc_program)
