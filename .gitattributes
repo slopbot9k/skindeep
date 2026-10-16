@@ -9,3 +9,5 @@
 test/fixtures/** -text
 third_party/** -text
 tests/fuzz/corpus/** -text
+*.qoi binary
+tests/golden/** -text
