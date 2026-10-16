@@ -30,11 +30,20 @@ extern char **environ;
 #define WINDOW_H 760
 #define WINDOW_MIN_W 600
 #define WINDOW_MIN_H 400
-#define STRIP_H 30      /* the tab strip, from the second tab on */
-#define TAB_MAX_W 220
+/* app.css's chrome, in points. */
+#define IDENTITY_H 22   /* #strip */
+#define TABS_H 24       /* #tabs, from the second tab on */
+#define TERM_INSET 4    /* #term inside #stage */
+#define TAB_MIN_W 60
+#define TAB_MAX_W 240
+#define NEW_W 26        /* the + */
+#define CLOSE_W 16
+#define MARK_W 7
+#define CHROME_PX 12    /* the strips' font size */
 #define DRAG_PX 4       /* points a press moves before it is a drag */
 #define BLINK_MS 600
 #define SYNC_HOLD_MS 1000
+#define POLL_MS 2000    /* session.js's pollMs for the strip */
 
 typedef struct gui gui;
 
@@ -64,9 +73,16 @@ typedef struct {
 typedef struct {
     int id;
     char *name;
+    char *folder; /* the strip's folder, when another tab shows the name */
     bool unseen;
     shared_term *st;
 } snap_tab;
+
+/* The identity strip of decision 0004 for the active tab, as
+ * session.js's sendStrip fills it. */
+typedef struct {
+    char *label, *cmdline, *cwd, *notice;
+} strip_text;
 
 typedef struct {
     int id;
@@ -74,6 +90,7 @@ typedef struct {
     size_t n;
     int active;
     char *title;
+    strip_text strip;
 } snap_win;
 
 typedef struct {
@@ -106,6 +123,10 @@ typedef struct {
     int ime_x, ime_y;
     int ui_cols, ui_rows;
     /* A tab pressed in the strip, and whether the press became a drag. */
+    /* The tab under the pointer (n for the +, -1 for none), and whether
+     * it is the tab's close box. */
+    int hover_tab;
+    bool hover_close;
     int drag_tab;
     double drag_x0;
     bool dragging;
@@ -122,6 +143,7 @@ struct gui {
     sk_clitab_config cli;
     SK_VEC(ctab) ctabs;
     SK_VEC(cwin) cwins;
+    char *strip_key; /* the strips last posted, to post a change alone */
     int status;
 
     /* Between the threads. */
@@ -213,15 +235,62 @@ static void ask_frame(gui *g)
         sk_ui_post(ui_frame_asked, g);
 }
 
+static void free_strip(strip_text *s)
+{
+    free(s->label);
+    free(s->cmdline);
+    free(s->cwd);
+    free(s->notice);
+    memset(s, 0, sizeof *s);
+}
+
 static void free_snap_win(snap_win *w)
 {
     for (size_t i = 0; i < w->n; i++) {
         free(w->tabs[i].name);
+        free(w->tabs[i].folder);
         st_unref(w->tabs[i].st);
     }
     free(w->tabs);
     free(w->title);
+    free_strip(&w->strip);
     memset(w, 0, sizeof *w);
+}
+
+/* The strip of tab as session.js's sendStrip and pollStrip make it: the
+ * label, the live command line (after any exec in a wrapper) with the
+ * home as ~, the folder it started in, and the adapter's notice with
+ * the tab's note. */
+static void strip_of(gui *g, sk_tab *tab, strip_text *out)
+{
+    const char *home = sk_envp_get(g->env, "HOME");
+    sk_buf b = {0}, live = {0};
+    out->label = sk_xstrdup(tab->label);
+    sk_session *s = sk_clitab_session(tab);
+    pid_t pid = s ? sk_session_pid(s) : 0;
+    if (!(pid > 0 && sk_identity_live_cmdline(pid, &live)))
+        sk_identity_quote_argv(&live, tab->cmd.ptr);
+    sk_identity_shown_cmdline(&b, sk_buf_cstr(&live), home);
+    out->cmdline = sk_xstrdup(sk_buf_cstr(&b));
+    sk_buf_clear(&b);
+    sk_identity_tildify(&b, tab->cwd, home);
+    out->cwd = sk_xstrdup(sk_buf_cstr(&b));
+    sk_buf_clear(&b);
+    sk_agent *a = sk_clitab_agent(tab);
+    sk_report r = {0};
+    if (a)
+        sk_agent_report(a, &r);
+    const char *note = sk_clitab_note(tab);
+    if (r.notice && *r.notice)
+        sk_buf_append_c(&b, r.notice);
+    if (note && *note) {
+        if (b.len)
+            sk_buf_append_c(&b, "  ");
+        sk_buf_append_c(&b, note);
+    }
+    out->notice = b.len ? sk_xstrdup(b.ptr) : NULL;
+    sk_buf_free(&b);
+    sk_buf_free(&live);
 }
 
 static void ui_snapshot(void *ud);
@@ -247,6 +316,10 @@ static void post_snapshot(gui *g)
             snap_tab *t = &w->tabs[w->n++];
             t->id = list.ptr[i]->id;
             t->name = sk_xstrdup(sk_tab_name(list.ptr[i]));
+            sk_buf folder = {0};
+            if (sk_tabs_folder(g->tabs, list.ptr[i], &folder))
+                t->folder = sk_xstrdup(sk_buf_cstr(&folder));
+            sk_buf_free(&folder);
             t->unseen = list.ptr[i]->unseen;
             t->st = st_ref(ct->st);
         }
@@ -255,12 +328,42 @@ static void post_snapshot(gui *g)
         sk_buf title = {0};
         sk_identity_title(&title, active ? sk_tab_name(active) : "skinned");
         w->title = title.ptr;
+        if (active)
+            strip_of(g, active, &w->strip);
     }
     sk_vec_free(&list);
     void **pair = sk_xmalloc(2 * sizeof *pair);
     pair[0] = g;
     pair[1] = s;
     sk_ui_post(ui_snapshot, pair);
+}
+
+/* pollStrip, every POLL_MS: the live command line follows an exec in a
+ * wrapper and the notice the adapter's report; a change goes to the UI
+ * with the tabs. */
+static void on_strip_poll(sk_loop *loop, void *ud)
+{
+    (void)loop;
+    gui *g = ud;
+    sk_buf key = {0};
+    int ids[64];
+    size_t nw = SK_MIN(sk_tabs_wins(g->tabs, ids, SK_LEN(ids)), SK_LEN(ids));
+    for (size_t k = 0; k < nw; k++) {
+        sk_tab *a = sk_tabs_active_of(g->tabs, ids[k]);
+        if (!a)
+            continue;
+        strip_text s = {0};
+        strip_of(g, a, &s);
+        sk_buf_printf(&key, "%d\x1f%s\x1f%s\x1f%s\x1f%s\x1e", ids[k], s.label, s.cmdline, s.cwd,
+                      s.notice ? s.notice : "");
+        free_strip(&s);
+    }
+    if (!g->strip_key || strcmp(g->strip_key, sk_buf_cstr(&key))) {
+        free(g->strip_key);
+        g->strip_key = sk_xstrdup(sk_buf_cstr(&key));
+        post_snapshot(g);
+    }
+    sk_buf_free(&key);
 }
 
 typedef struct {
@@ -576,17 +679,37 @@ static sk_term *active_term(gwin *w)
     return t ? t->st->term : NULL;
 }
 
-static int strip_height(gwin *w)
+static int px(gwin *w, double points)
 {
-    return w->snap.n > 1 ? (int)lround(STRIP_H * sk_window_scale(w->win)) : 0;
+    return (int)lround(points * sk_window_scale(w->win));
 }
 
-/* The terminal's part of the frame, in pixels. */
-static sk_rect term_area(gwin *w)
+/* app.css: the identity strip, then the tab strip from the second tab
+ * on, then the stage. In points. */
+static bool tabs_shown(gwin *w)
+{
+    return w->snap.n > 1;
+}
+
+static double top_points(gwin *w)
+{
+    return IDENTITY_H + (tabs_shown(w) ? TABS_H : 0);
+}
+
+/* The stage below the strips, in pixels. */
+static sk_rect stage_area(gwin *w)
 {
     sk_image *f = sk_window_frame(w->win);
-    int top = strip_height(w);
+    int top = px(w, top_points(w));
     return sk_rect_make(0, top, f->w, SK_MAX(0, f->h - top));
+}
+
+/* The terminal's part of the frame, in pixels: #term's 4 points in. */
+static sk_rect term_area(gwin *w)
+{
+    sk_rect s = stage_area(w);
+    int in = px(w, TERM_INSET);
+    return sk_rect_make(s.x + in, s.y + in, SK_MAX(0, s.w - 2 * in), SK_MAX(0, s.h - 2 * in));
 }
 
 static void redraw(gwin *w)
@@ -646,6 +769,7 @@ static gwin *gwin_new(gui *g, int id)
     w->cursor_on = true;
     w->link_r0 = -1;
     w->ime_x = w->ime_y = -1;
+    w->hover_tab = -1;
     w->drag_tab = 0;
     sk_window_opts wo = {.title = "skinned",
                          .w = WINDOW_W,
@@ -780,51 +904,176 @@ static void ui_quit(void *ud)
 
 /* ---- Drawing ---- */
 
-static void tab_geometry(gwin *w, size_t i, int width, double s, sk_rect *tab, sk_rect *close)
+/* The baseline of a line of the chrome's mono text at size, its line box
+ * lh high from top: the font's ascent and descent centred, as CSS sets
+ * a line. */
+static float baseline_in(gui *g, int style, float size, float top, float lh)
 {
-    int pad = (int)lround(4 * s), gap = (int)lround(2 * s), plus = (int)lround(28 * s);
-    int avail = width - 2 * pad - plus;
-    double n = (double)SK_MAX(w->snap.n, (size_t)1);
-    int tw = (int)SK_MIN((double)lround(TAB_MAX_W * s), (avail - gap * n) / n);
-    tw = SK_MAX(tw, (int)lround(40 * s));
-    int h = strip_height(w);
-    *tab = sk_rect_make(pad + (int)i * (tw + gap), (int)lround(3 * s), tw, h - (int)lround(3 * s));
-    int cw = (int)lround(18 * s);
-    *close = sk_rect_make(tab->x + tab->w - cw, tab->y, cw, tab->h);
+    sk_font_vmetrics m;
+    sk_font_vmetrics_at(sk_fontset_primary(g->mono, style), size, &m);
+    return top + (lh - (m.ascent + m.descent)) / 2 + m.ascent;
 }
 
-static void draw_strip(gwin *w, sk_image *f)
+/* text drawn at most maxw wide, cut with an ellipsis as text-overflow:
+ * ellipsis cuts it. Returns the width drawn. */
+static float draw_fit(gui *g, sk_image *f, int style, float size, float x, float base, float maxw, const char *s,
+                      sk_color c)
+{
+    size_t n = strlen(s);
+    float w = sk_measure_text(g->mono, style, size, s, n);
+    /* Half a pixel of slack: a box sized to its text is rounded. */
+    if (w <= maxw + 0.5f) {
+        sk_draw_text(f, g->cache, g->mono, style, size, x, base, s, n, c, NULL);
+        return w;
+    }
+    const char *ell = "\xe2\x80\xa6";
+    float ew = sk_measure_text(g->mono, style, size, ell, 3);
+    size_t keep = 0;
+    float kw = 0;
+    for (size_t i = 0; i < n;) {
+        uint32_t cp;
+        size_t k = sk_utf8_decode(s + i, n - i, &cp, NULL);
+        k = k ? k : 1;
+        float cw = sk_measure_text(g->mono, style, size, s, i + k);
+        if (cw + ew > maxw)
+            break;
+        keep = i + k;
+        kw = cw;
+        i += k;
+    }
+    if (ew > maxw)
+        return 0;
+    sk_draw_text(f, g->cache, g->mono, style, size, x, base, s, keep, c, NULL);
+    sk_draw_text(f, g->cache, g->mono, style, size, x + kw, base, ell, 3, c, NULL);
+    return kw + ew;
+}
+
+/* A tab's parts across, in points: padding 8, the mark, gaps of 6, the
+ * name and folder, the close box, padding 4, a 1-point border. */
+static double tab_fixed(void)
+{
+    return 8 + MARK_W + 6 + 6 + CLOSE_W + 4 + 1;
+}
+
+/* The tabs as #tabs's flexbox lays them out, in pixels: each its content
+ * wide within 60 to 240 points, all shrunk alike when they would pass
+ * the +, none under 60. rects[n] is the +; close[i] each close box. */
+static void tab_layout(gwin *w, int width, sk_rect *rects, sk_rect *close)
 {
     gui *g = w->g;
     double s = sk_window_scale(w->win);
-    int h = strip_height(w);
-    sk_fill_rect(f, sk_rect_make(0, 0, f->w, h), SK_RGB(30, 32, 38), SK_BLEND_SRC, NULL);
-    float px = (float)(12.5 * s);
+    float size = (float)(CHROME_PX * s);
+    int y = px(w, IDENTITY_H), h = px(w, TABS_H) - px(w, 1);
+    double *want = sk_xcalloc(w->snap.n ? w->snap.n : 1, sizeof *want), sum = 0;
     for (size_t i = 0; i < w->snap.n; i++) {
         snap_tab *t = &w->snap.tabs[i];
-        sk_rect r, x;
-        tab_geometry(w, i, f->w, s, &r, &x);
-        bool active = t->id == w->snap.active;
-        sk_fill_rect(f, r, active ? SK_RGB(0, 0, 0) : SK_RGB(46, 49, 58), SK_BLEND_SRC, NULL);
-        float base = (float)(r.y + r.h / 2) + px * 0.35f;
-        float lx = (float)(r.x + lround(10 * s));
-        if (!active && t->unseen) {
-            int d = (int)lround(6 * s);
-            sk_fill_rect(f, sk_rect_make(r.x + (int)lround(6 * s), r.y + (r.h - d) / 2, d, d), SK_RGB(120, 190, 255),
-                         SK_BLEND_SRC_OVER, NULL);
-            lx += (float)(10 * s);
-        }
-        sk_rect clip = sk_rect_make(r.x, r.y, r.w - x.w, r.h);
-        sk_draw_text(f, g->cache, g->sans, 0, px, lx, base, t->name, strlen(t->name),
-                     active ? SK_RGB(235, 237, 242) : SK_RGB(170, 174, 184), &clip);
-        const char *times = "\xc3\x97";
-        sk_draw_text(f, g->cache, g->sans, 0, px, (float)(x.x + lround(4 * s)), base, times, strlen(times),
-                     SK_RGB(150, 154, 164), &x);
+        double pts = tab_fixed() + sk_measure_text(g->mono, 0, size, t->name, strlen(t->name)) / s;
+        if (t->folder)
+            pts += 6 + sk_measure_text(g->mono, 0, size, t->folder, strlen(t->folder)) / s;
+        want[i] = SK_MIN(SK_MAX(pts, (double)TAB_MIN_W), (double)TAB_MAX_W) * s;
+        sum += want[i];
     }
-    sk_rect r, x;
-    tab_geometry(w, w->snap.n, f->w, s, &r, &x);
-    sk_draw_text(f, g->cache, g->sans, 0, (float)(16 * s), (float)(r.x + lround(6 * s)),
-                 (float)(r.y + r.h / 2) + (float)(16 * s) * 0.35f, "+", 1, SK_RGB(170, 174, 184), NULL);
+    double avail = width - NEW_W * s;
+    double f = sum > avail && sum > 0 ? avail / sum : 1;
+    int x = 0;
+    for (size_t i = 0; i < w->snap.n; i++) {
+        int tw = (int)ceil(SK_MAX(want[i] * f, TAB_MIN_W * s));
+        rects[i] = sk_rect_make(x, y, tw, h);
+        close[i] = sk_rect_make(x + tw - px(w, 4 + 1 + CLOSE_W), y + (h - px(w, CLOSE_W)) / 2, px(w, CLOSE_W),
+                                px(w, CLOSE_W));
+        x += tw;
+    }
+    rects[w->snap.n] = sk_rect_make(x, y, px(w, NEW_W), h);
+    close[w->snap.n] = sk_rect_make(0, 0, 0, 0);
+    free(want);
+}
+
+static void fill_circle(sk_image *f, float cx, float cy, float r, sk_color c)
+{
+    sk_path *p = sk_path_new();
+    sk_path_ellipse(p, cx - r, cy - r, 2 * r, 2 * r);
+    sk_fill_path(f, p, NULL, SK_FILL_NONZERO, c, NULL);
+    sk_path_free(p);
+}
+
+/* The identity strip (#strip) and, from the second tab on, the tab strip
+ * (#tabs), as app.css draws them. */
+static void draw_chrome(gwin *w, sk_image *f)
+{
+    gui *g = w->g;
+    double s = sk_window_scale(w->win);
+    float size = (float)(CHROME_PX * s);
+    int line = px(w, 1);
+    /* #strip: the label, the command line taking what is left, the
+     * notice and the folder at the right, 14 points apart. */
+    int ih = px(w, IDENTITY_H);
+    sk_fill_rect(f, sk_rect_make(0, 0, f->w, ih), SK_RGB(0x10, 0x10, 0x10), SK_BLEND_SRC, NULL);
+    sk_fill_rect(f, sk_rect_make(0, ih - line, f->w, line), SK_RGB(0x33, 0x33, 0x33), SK_BLEND_SRC, NULL);
+    /* A flexbox left to right, four items 14 points apart, the empty
+     * ones too: the command line alone grows and shrinks, to nothing at
+     * least, and what passes the right edge is cut off there. */
+    strip_text *st = &w->snap.strip;
+    float pad = (float)(8 * s), gap = (float)(14 * s);
+    float base = baseline_in(g, 0, size, 0, (float)ih);
+    const char *label = st->label ? st->label : "", *cmd = st->cmdline ? st->cmdline : "";
+    const char *notice = st->notice ? st->notice : "", *cwd = st->cwd ? st->cwd : "";
+    float lw = sk_measure_text(g->mono, SK_STYLE_BOLD, size, label, strlen(label));
+    float nw = sk_measure_text(g->mono, 0, size, notice, strlen(notice));
+    float cw = sk_measure_text(g->mono, 0, size, cwd, strlen(cwd));
+    float cmd_x = pad + lw + gap;
+    float cmd_w = SK_MAX(0.0f, (float)f->w - pad - cw - gap - nw - gap - cmd_x);
+    sk_draw_text(f, g->cache, g->mono, SK_STYLE_BOLD, size, pad, base, label, strlen(label), SK_RGB(0xff, 0xff, 0xff),
+                 NULL);
+    draw_fit(g, f, 0, size, cmd_x, base, cmd_w, cmd, SK_RGB(0x9f, 0xb3, 0xc8));
+    float nx = cmd_x + cmd_w + gap;
+    sk_draw_text(f, g->cache, g->mono, 0, size, nx, base, notice, strlen(notice), SK_RGB(0xe0, 0xb0, 0x50), NULL);
+    sk_draw_text(f, g->cache, g->mono, 0, size, nx + nw + gap, base, cwd, strlen(cwd), SK_RGB(0x88, 0x88, 0x88), NULL);
+    if (!tabs_shown(w))
+        return;
+    /* #tabs: each tab its mark, name, folder and close box. */
+    int ty = ih, th = px(w, TABS_H);
+    sk_fill_rect(f, sk_rect_make(0, ty, f->w, th), SK_RGB(0x0b, 0x0b, 0x0b), SK_BLEND_SRC, NULL);
+    sk_fill_rect(f, sk_rect_make(0, ty + th - line, f->w, line), SK_RGB(0x33, 0x33, 0x33), SK_BLEND_SRC, NULL);
+    sk_rect *rects = sk_xcalloc(w->snap.n + 1, sizeof *rects), *closes = sk_xcalloc(w->snap.n + 1, sizeof *closes);
+    tab_layout(w, f->w, rects, closes);
+    float tbase = baseline_in(g, 0, size, (float)ty, (float)px(w, 23));
+    for (size_t i = 0; i < w->snap.n; i++) {
+        snap_tab *t = &w->snap.tabs[i];
+        sk_rect r = rects[i], c = closes[i];
+        bool active = t->id == w->snap.active, hover = (int)i == w->hover_tab;
+        if (active || hover)
+            sk_fill_rect(f, r, active ? SK_RGB(0x1e, 0x1e, 0x1e) : SK_RGB(0x16, 0x16, 0x16), SK_BLEND_SRC, NULL);
+        sk_fill_rect(f, sk_rect_make(r.x + r.w - line, r.y, line, r.h), SK_RGB(0x26, 0x26, 0x26), SK_BLEND_SRC,
+                     NULL);
+        sk_color text = active ? SK_RGB(0xff, 0xff, 0xff) : SK_RGB(0x9a, 0x9a, 0x9a);
+        float tx = (float)(r.x + px(w, 8));
+        if (!active && t->unseen)
+            fill_circle(f, tx + (float)(MARK_W * s / 2), (float)(r.y + r.h / 2.0), (float)(MARK_W * s / 2),
+                        SK_RGB(0x6f, 0xa8, 0xdc));
+        tx += (float)((MARK_W + 6) * s);
+        float room = (float)(c.x - px(w, 6)) - tx;
+        float fw = t->folder ? sk_measure_text(g->mono, 0, size, t->folder, strlen(t->folder)) : 0;
+        float name_w = draw_fit(g, f, 0, size, tx, tbase,
+                                t->folder ? SK_MAX(room - fw - (float)(6 * s), 0) : room, t->name, text);
+        if (t->folder)
+            draw_fit(g, f, 0, size, tx + name_w + (float)(6 * s), tbase, room - name_w - (float)(6 * s), t->folder,
+                     SK_RGB(0x77, 0x77, 0x77));
+        bool on_close = hover && w->hover_close;
+        if (on_close)
+            sk_fill_rect(f, c, SK_RGB(0x3a, 0x3a, 0x3a), SK_BLEND_SRC, NULL);
+        const char *times = "\xc3\x97";
+        float xw = sk_measure_text(g->mono, 0, size, times, strlen(times));
+        sk_draw_text(f, g->cache, g->mono, 0, size, (float)c.x + ((float)c.w - xw) / 2, tbase, times, strlen(times),
+                     on_close ? SK_RGB(0xff, 0xff, 0xff) : SK_RGB(0x77, 0x77, 0x77), NULL);
+    }
+    sk_rect n = rects[w->snap.n];
+    if (w->hover_tab == (int)w->snap.n)
+        sk_fill_rect(f, n, SK_RGB(0x16, 0x16, 0x16), SK_BLEND_SRC, NULL);
+    float pw = sk_measure_text(g->mono, 0, size, "+", 1);
+    sk_draw_text(f, g->cache, g->mono, 0, size, (float)n.x + ((float)n.w - pw) / 2, tbase, "+", 1,
+                 SK_RGB(0x9a, 0x9a, 0x9a), NULL);
+    free(rects);
+    free(closes);
 }
 
 static void on_blink(void *ud)
@@ -845,11 +1094,13 @@ static void draw(gwin *w)
 {
     gui *g = w->g;
     sk_image *f = sk_window_frame(w->win);
-    int top = strip_height(w);
     sk_rect dirty[2];
     size_t nd = 0;
-    if (w->all && top)
-        draw_strip(w, f);
+    if (w->all) {
+        draw_chrome(w, f);
+        /* The stage is the page's black around the terminal. */
+        sk_fill_rect(f, stage_area(w), SK_RGB(0, 0, 0), SK_BLEND_SRC, NULL);
+    }
     sk_term *t = active_term(w);
     if (t) {
         sk_rect a = term_area(w);
@@ -1055,8 +1306,8 @@ static void on_key(gwin *w, const sk_key_event *k)
 /* The pointer in points from the grid's top-left. */
 static void grid_point(gwin *w, double x, double y, double *gx, double *gy)
 {
-    *gx = x;
-    *gy = y - (double)strip_height(w) / sk_window_scale(w->win);
+    *gx = x - TERM_INSET;
+    *gy = y - top_points(w) - TERM_INSET;
 }
 
 static void grid_of(gwin *w, sk_term_grid *grid)
@@ -1193,21 +1444,38 @@ static bool detect_link(gwin *w, sk_term *t, int col, int row)
 
 /* Which tab of the strip x falls on, its close box, or the new-tab box
  * (index n). -1 for none. */
-static int strip_hit(gwin *w, double px, double py, bool *on_close)
+static int strip_hit(gwin *w, double ptx, double pty, bool *on_close)
 {
-    double s = sk_window_scale(w->win);
-    int x = (int)floor(px * s), y = (int)floor(py * s);
-    sk_image *f = sk_window_frame(w->win);
     *on_close = false;
-    for (size_t i = 0; i <= w->snap.n; i++) {
-        sk_rect r, c;
-        tab_geometry(w, i, f->w, s, &r, &c);
-        if (x < r.x || x >= r.x + r.w || y < 0 || y >= r.y + r.h)
+    if (!tabs_shown(w) || pty < IDENTITY_H || pty >= IDENTITY_H + TABS_H)
+        return -1;
+    double s = sk_window_scale(w->win);
+    int x = (int)floor(ptx * s);
+    sk_image *f = sk_window_frame(w->win);
+    sk_rect *rects = sk_xcalloc(w->snap.n + 1, sizeof *rects), *closes = sk_xcalloc(w->snap.n + 1, sizeof *closes);
+    tab_layout(w, f->w, rects, closes);
+    int hit = -1;
+    for (size_t i = 0; i <= w->snap.n && hit < 0; i++) {
+        if (x < rects[i].x || x >= rects[i].x + rects[i].w)
             continue;
-        *on_close = i < w->snap.n && x >= c.x;
-        return (int)i;
+        *on_close = i < w->snap.n && x >= closes[i].x && x < closes[i].x + closes[i].w;
+        hit = (int)i;
     }
-    return -1;
+    free(rects);
+    free(closes);
+    return hit;
+}
+
+/* The tab strip's hover follows the pointer; true when it changed. */
+static bool track_hover(gwin *w, double x, double y)
+{
+    bool on_close = false;
+    int i = strip_hit(w, x, y, &on_close);
+    if (i == w->hover_tab && on_close == w->hover_close)
+        return false;
+    w->hover_tab = i;
+    w->hover_close = on_close;
+    return true;
 }
 
 /* The strip's press, drag and release: a press picks a tab, a middle
@@ -1240,11 +1508,9 @@ static bool strip_mouse(gwin *w, const sk_event *ev)
         if (!w->dragging && fabs(ev->mouse.x - w->drag_x0) < DRAG_PX)
             return true;
         w->dragging = true;
-        int ww, wh;
-        sk_window_size(w->win, &ww, &wh);
-        if (ev->mouse.y < 0 || ev->mouse.y > STRIP_H)
+        if (ev->mouse.y < IDENTITY_H || ev->mouse.y >= IDENTITY_H + TABS_H)
             return true;
-        int i = strip_hit(w, ev->mouse.x, 1, &on_close);
+        int i = strip_hit(w, ev->mouse.x, IDENTITY_H + 1, &on_close);
         if (i >= 0 && (size_t)i < w->snap.n && w->snap.tabs[i].id != w->drag_tab)
             post_tab(g, do_move, w->drag_tab, i);
         return true;
@@ -1268,7 +1534,12 @@ static void on_mouse(gwin *w, const sk_event *ev)
     sk_term *t = active_term(w);
     double gx, gy;
     grid_point(w, ev->mouse.x, ev->mouse.y, &gx, &gy);
-    if (w->drag_tab || (ev->type == SK_EV_MOUSE_DOWN && gy < 0 && !w->selecting)) {
+    /* The strips above the stage are the app's: a press there is never
+     * the terminal's. */
+    bool chrome = ev->mouse.y < top_points(w);
+    if (ev->type == SK_EV_MOUSE_MOVE && !w->selecting && track_hover(w, ev->mouse.x, ev->mouse.y))
+        redraw(w);
+    if (w->drag_tab || (ev->type == SK_EV_MOUSE_DOWN && chrome && !w->selecting)) {
         if (strip_mouse(w, ev))
             return;
     }
@@ -1437,8 +1708,9 @@ static void on_event(void *ud, const sk_event *ev)
         on_mouse(w, ev);
         break;
     case SK_EV_MOUSE_LEAVE:
-        if (w->hover_link || w->link_r0 >= 0) {
+        if (w->hover_link || w->link_r0 >= 0 || w->hover_tab >= 0) {
             clear_hover(w);
+            w->hover_tab = -1;
             redraw(w);
         }
         break;
@@ -1559,7 +1831,7 @@ static void window_json(sk_jw *jw, gwin *w)
     sk_jw_key(jw, SK_STR("rows"));
     sk_jw_int(jw, w->ui_rows);
     sk_jw_key(jw, SK_STR("strip"));
-    sk_jw_bool(jw, strip_height(w) > 0);
+    sk_jw_bool(jw, tabs_shown(w));
     sk_jw_key(jw, SK_STR("active"));
     sk_jw_int(jw, w->snap.active);
     sk_jw_key(jw, SK_STR("tabs"));
@@ -1869,6 +2141,7 @@ int sk_gui_run(const sk_options *o, const sk_envp *env, const char *self)
     sk_loop_signal(g->loop, SIGINT, on_stop, g);
     sk_loop_signal(g->loop, SIGTERM, on_stop, g);
     sk_loop_signal(g->loop, SIGHUP, on_stop, g);
+    sk_loop_timer(g->loop, POLL_MS, POLL_MS, on_strip_poll, g);
     /* A check that asked for the socket and cannot have it would wait
      * on a window it cannot reach: the app ends instead. */
     sk_control *ctl = NULL;
@@ -1914,6 +2187,7 @@ int sk_gui_run(const sk_options *o, const sk_envp *env, const char *self)
         st_unref(g->ctabs.ptr[i].st);
     sk_vec_free(&g->ctabs);
     sk_vec_free(&g->cwins);
+    free(g->strip_key);
     sk_control_close(ctl);
     sk_loop_free(g->loop);
 

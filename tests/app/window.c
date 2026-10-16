@@ -301,12 +301,15 @@ static void test_a_double_click_selects_a_word(void)
     sk_arena_init(&ar, 0);
     const sk_json *p = probe(&a, &ar);
     double w = num(sk_json_get(p, "window"), "w"), cols = num(sk_json_get(p, "window"), "cols");
-    double cell = cols > 0 ? w / cols : 8;
+    /* DejaVu Sans Mono at 14 px: 8 points a cell, the grid 4 points in
+     * below the 22-point identity strip, row 0 centred at y 34. */
+    (void)w, (void)cols;
+    double cell = 8;
     char req[256];
-    snprintf(req, sizeof req, "{\"op\":\"mouse\",\"kind\":\"down\",\"x\":%.1f,\"y\":5,\"button\":1,\"clicks\":2}",
-             cell * 7.5);
+    snprintf(req, sizeof req, "{\"op\":\"mouse\",\"kind\":\"down\",\"x\":%.1f,\"y\":34,\"button\":1,\"clicks\":2}",
+             4 + cell * 7.5);
     ok(&a, req);
-    snprintf(req, sizeof req, "{\"op\":\"mouse\",\"kind\":\"up\",\"x\":%.1f,\"y\":5,\"button\":1}", cell * 7.5);
+    snprintf(req, sizeof req, "{\"op\":\"mouse\",\"kind\":\"up\",\"x\":%.1f,\"y\":34,\"button\":1}", 4 + cell * 7.5);
     ok(&a, req);
     p = probe(&a, &ar);
     sk_str sel = {0};
@@ -329,9 +332,12 @@ static void test_a_url_in_the_text_is_a_link(void)
     sk_arena_init(&ar, 0);
     const sk_json *p = probe(&a, &ar);
     double w = num(sk_json_get(p, "window"), "w"), cols = num(sk_json_get(p, "window"), "cols");
-    double cell = cols > 0 ? w / cols : 8;
+    /* DejaVu Sans Mono at 14 px: 8 points a cell, the grid 4 points in
+     * below the 22-point identity strip, row 0 centred at y 34. */
+    (void)w, (void)cols;
+    double cell = 8;
     char req[256];
-    snprintf(req, sizeof req, "{\"op\":\"mouse\",\"kind\":\"move\",\"x\":%.1f,\"y\":5}", cell * 10.5);
+    snprintf(req, sizeof req, "{\"op\":\"mouse\",\"kind\":\"move\",\"x\":%.1f,\"y\":34}", 4 + cell * 10.5);
     ok(&a, req);
     p = probe(&a, &ar);
     sk_str link = {0};
@@ -347,7 +353,7 @@ static void test_a_url_in_the_text_is_a_link(void)
     sk_test_sleep_ms(300);
     ok(&a, req);
     /* Off the URL, no link. */
-    snprintf(req, sizeof req, "{\"op\":\"mouse\",\"kind\":\"move\",\"x\":%.1f,\"y\":5}", cell * 1.5);
+    snprintf(req, sizeof req, "{\"op\":\"mouse\",\"kind\":\"move\",\"x\":%.1f,\"y\":34}", 4 + cell * 1.5);
     ok(&a, req);
     p = probe(&a, &ar);
     CHECK(!sk_json_as_string(sk_json_get(p, "link"), &link));
@@ -380,10 +386,11 @@ static void test_a_tab_dragged_out_gets_its_own_window(void)
             break;
     }
     CHECK_INT(len_of(sk_json_get(p, "tabs")), 2);
-    /* The second tab of the strip, at 1100 points wide: x 226 to 446. */
-    ok(&a, "{\"op\":\"mouse\",\"kind\":\"down\",\"x\":300,\"y\":15,\"button\":1}");
-    ok(&a, "{\"op\":\"mouse\",\"kind\":\"move\",\"x\":312,\"y\":15}");
-    ok(&a, "{\"op\":\"mouse\",\"kind\":\"up\",\"x\":320,\"y\":-60,\"button\":1}");
+    /* The second tab of the strip, below the identity strip: "cat" makes
+     * each tab about 70 points wide, so x 70 to 140, y 22 to 46. */
+    ok(&a, "{\"op\":\"mouse\",\"kind\":\"down\",\"x\":100,\"y\":34,\"button\":1}");
+    ok(&a, "{\"op\":\"mouse\",\"kind\":\"move\",\"x\":112,\"y\":34}");
+    ok(&a, "{\"op\":\"mouse\",\"kind\":\"up\",\"x\":120,\"y\":-60,\"button\":1}");
     for (uint64_t until = sk_now_ms() + 5000; sk_now_ms() < until; sk_test_sleep_ms(50)) {
         p = probe(&a, &ar);
         if (len_of(sk_json_get(p, "windows")) == 2)
