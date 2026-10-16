@@ -1,0 +1,9 @@
+cols 20 rows 6 cursor 2,5 buffer normal top 1 base 1 lines 7
+>long line that wraps|
+> twice over         |
+|日本語 and a long li|
+>ne that wraps twice |
+>over                |
+|$                   |
+scrollback:
+|$ echo 日本語 and a 

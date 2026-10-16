@@ -1,0 +1,33 @@
+cols 30 rows 6 cursor 7,4 buffer normal top 0 base 0 lines 6
+|######                        |
+|####                          |
+|onetwocurlydotdash            |
+|mix hidden blink              |
+|A1 B A2                       |
+|                              |
+attr 0 0-0: fg=256:16
+attr 0 1-1: fg=256:52
+attr 0 2-2: fg=256:88
+attr 0 3-3: fg=256:124
+attr 0 4-4: fg=256:160
+attr 0 5-5: fg=256:196
+attr 0 6-6: fg=256:196 bg=256:232
+attr 0 7-7: fg=256:196 bg=256:244
+attr 0 8-8: fg=256:196 bg=256:255
+attr 1 0-0: fg=#ff0000
+attr 1 1-1: fg=#ff8000
+attr 1 2-2: fg=#ffff00
+attr 1 3-3: fg=#00ff00
+attr 2 0-2: ul=single
+attr 2 3-5: ul=double
+attr 2 6-10: ul=curly ulc=#ff00ff
+attr 2 11-13: ul=dotted ulc=#ff00ff
+attr 2 14-17: ul=dashed ulc=#ffffff
+attr 3 0-2: bold dim italic strike overline
+attr 3 4-9: inverse invisible
+attr 3 11-15: blink
+attr 4 0-1: link=1
+attr 4 3-3: link=2
+attr 4 5-6: link=1
+link 1 id=a: https://example.com/a
+link 2: https://example.com/b

@@ -66,4 +66,20 @@
     X(keys_mouse)                                                            \
     X(keys_paste)                                                            \
     X(links)                                                                 \
-    X(links_buffer)
+    X(links_buffer)                                                          \
+    X(term_parser)                                                           \
+    X(term_print)                                                            \
+    X(term_cursor)                                                           \
+    X(term_erase)                                                            \
+    X(term_sgr)                                                              \
+    X(term_modes)                                                            \
+    X(term_replies)                                                          \
+    X(term_osc)                                                              \
+    X(term_reflow)                                                           \
+    X(term_select)                                                           \
+    X(term_streams)                                                          \
+    X(term_xbuffer)                                                          \
+    X(term_xinput)                                                           \
+    X(term_xparser)                                                          \
+    X(term_xselect)                                                          \
+    X(term_xterminal)

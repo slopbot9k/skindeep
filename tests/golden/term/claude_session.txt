@@ -1,0 +1,42 @@
+cols 40 rows 14 cursor 2,11 buffer normal top 9 base 9 lines 23
+|                                        |
+|⏺ Read(src/main.c)                      |
+|  ⎿  Read 42 lines                      |
+|                                        |
+|⏺ Update(src/main.c)                    |
+|  ⎿  - int x = 1;                       |
+|     + int x = 2;                       |
+|                                        |
+|⏺ Done ✅ 🚀 the build passes.          |
+|                                        |
+|╭─────────╮                             |
+|│ >       │                             |
+|╰─────────╯                             |
+|  ? for shortcuts                       |
+attr 1 0-0: fg=#4eba65
+attr 1 2-5: bold
+attr 2 2-2: fg=#999999
+attr 2 10-11: bold
+attr 4 0-0: fg=#4eba65
+attr 4 2-7: bold
+attr 5 2-2: fg=#999999
+attr 5 5-16: fg=#ffdcdc bg=#3d0100
+attr 6 5-16: fg=#dcffdc bg=#022800
+attr 8 0-0: fg=#ffffff
+attr 8 17-21: italic
+attr 10 0-10: fg=#999999
+attr 11 0-0: fg=#999999
+attr 11 4-4: inverse
+attr 11 10-10: fg=#999999
+attr 12 0-10: fg=#999999
+attr 13 2-16: fg=#999999
+scrollback:
+|╭────────────────────────────╮
+|│ ✻ Welcome to Claude Code!      │
+|│                            │
+|│   /help for help           │
+|╰────────────────────────────╯
+|
+|> fix the build 日本語
+|
+|⏺ I'll read src/main.c first.

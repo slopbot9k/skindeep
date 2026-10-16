@@ -1,0 +1,29 @@
+cols 40 rows 10 cursor 19,9 buffer normal top 6 base 6 lines 16
+|                                        |
+|                                        |
+|• Ran cargo build                       |
+|  └ ✔ finished in 3.2s                  |
+|                                        |
+|• Edited src/lib.rs (+1 -1)             |
+|    -    let n = 1;                     |
+|    +    let n = 二;                    |
+|⠙ Working (1s • Esc to interrupt)       |
+|▌ make it 🔥 faster                     |
+attr 2 0-4: bold
+attr 3 4-4: fg=16:2
+attr 3 6-21: dim
+attr 5 0-1: bold
+attr 5 9-18: fg=16:6
+attr 5 21-22: fg=16:2
+attr 5 24-25: fg=16:1
+attr 6 4-18: fg=16:1
+attr 7 4-19: fg=16:2
+attr 8 0-0: dim
+attr 9 0-0: inverse
+scrollback:
+|
+|
+|
+|
+|
+|
