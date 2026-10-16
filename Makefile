@@ -84,7 +84,7 @@ FUZZ_BINS := $(FUZZ_TARGETS:%=$(BUILD)/fuzz-%)
 FUZZ_DRIVER := $(BUILD)/tests/fuzz/driver.o
 FUZZ_SECONDS ?= 30
 
-.PHONY: all test debug fuzz fuzz-run clean macdemo
+.PHONY: all test debug fuzz fuzz-run clean macdemo windemo
 .SECONDARY:
 
 all: $(LIB) $(TEST_BIN) $(RELAY) $(HOOKDUMP) $(SKINNED) $(BUILD)/qoi2png
@@ -137,6 +137,11 @@ macdemo: $(BUILD)/macdemo
 $(BUILD)/macdemo: $(BUILD)/tools/macdemo.o $(LIB)
 	$(CC) $(OPT) $(LDFLAGS) -o $@ $^ $(LDLIBS) $(UI_LIBS)
 
+# Phase 3's window, drawing and text together, on either system.
+windemo: $(BUILD)/windemo
+$(BUILD)/windemo: $(BUILD)/tools/windemo.o $(LIB)
+	$(CC) $(OPT) $(LDFLAGS) -o $@ $^ $(LDLIBS) $(UI_LIBS)
+
 test: $(TEST_BIN) $(RELAY) $(SKINNED)
 	SK_RELAY_BIN=$(RELAY) SK_SKINNED_BIN=$(SKINNED) ./$(TEST_BIN) $(T)
 
@@ -164,5 +169,5 @@ clean:
 
 -include $(LIB_OBJ:.o=.d) $(TEST_OBJ:.o=.d) $(BUILD)/src/relay/main.d $(BUILD)/tools/hookdump.d \
     $(BUILD)/src/main/skinned.d \
-    $(BUILD)/tools/qoi2png.d $(BUILD)/tools/macdemo.d \
+    $(BUILD)/tools/qoi2png.d $(BUILD)/tools/macdemo.d $(BUILD)/tools/windemo.d \
     $(wildcard $(BUILD)/tests/fuzz/*.d)
