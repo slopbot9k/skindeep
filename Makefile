@@ -2,8 +2,8 @@
 # macOS ships as /usr/bin/make and Linux distributions ship as make, and
 # the system C compiler.
 #
-#   make              build the library, the tests, skinned, skinned-relay
-#                     and hookdump
+#   make              build the library, the tests, skinned, skinned-relay,
+#                     skinc and hookdump
 #   make test         run the tests (T=json runs the json suite)
 #   make debug        run the tests under AddressSanitizer and UBSan
 #   make fuzz         build the fuzz targets
@@ -71,6 +71,13 @@ LIB_OBJ := $(LIB_SRC:%.c=$(BUILD)/%.o) $(GEN_OBJ)
 BIN2C := $(BUILD)/bin2c
 LIB := $(BUILD)/libsk.a
 
+# skinc (decision 0037) builds from skinc/, its front end a library of
+# its own that the tests and the fuzz targets link before the app's.
+SKINC_SRC := $(filter-out skinc/main.c,$(wildcard skinc/*.c))
+SKINC_OBJ := $(SKINC_SRC:skinc/%.c=$(BUILD)/skinc-objs/%.o)
+SKINC_LIB := $(BUILD)/libskinc.a
+SKINC := $(BUILD)/skinc
+
 TEST_SRC := $(filter-out tests/fuzz/%,$(wildcard tests/*.c tests/*/*.c))
 TEST_OBJ := $(TEST_SRC:%.c=$(BUILD)/%.o)
 TEST_BIN := $(BUILD)/tests/run
@@ -79,7 +86,7 @@ RELAY := $(BUILD)/skinned-relay
 HOOKDUMP := $(BUILD)/hookdump
 SKINNED := $(BUILD)/skinned
 
-FUZZ_TARGETS := json http utf8 base64 claude codex text path links term
+FUZZ_TARGETS := json http utf8 base64 claude codex text path links term css
 FUZZ_BINS := $(FUZZ_TARGETS:%=$(BUILD)/fuzz-%)
 FUZZ_DRIVER := $(BUILD)/tests/fuzz/driver.o
 FUZZ_SECONDS ?= 30
@@ -87,9 +94,14 @@ FUZZ_SECONDS ?= 30
 .PHONY: all test debug fuzz fuzz-run clean macdemo windemo
 .SECONDARY:
 
-all: $(LIB) $(TEST_BIN) $(RELAY) $(HOOKDUMP) $(SKINNED) $(BUILD)/qoi2png $(BUILD)/windemo
+all: $(LIB) $(TEST_BIN) $(RELAY) $(HOOKDUMP) $(SKINNED) $(SKINC) $(BUILD)/qoi2png $(BUILD)/windemo
 
 $(BUILD)/%.o: %.c
+	@mkdir -p $(dir $@)
+	$(COMPILE) -c $< -o $@
+
+# skinc's objects live apart from the program of that name.
+$(BUILD)/skinc-objs/%.o: skinc/%.c
 	@mkdir -p $(dir $@)
 	$(COMPILE) -c $< -o $@
 
@@ -116,8 +128,15 @@ $(LIB): $(LIB_OBJ)
 	@rm -f $@
 	$(AR) rcs $@ $(LIB_OBJ)
 
-$(TEST_BIN): $(TEST_OBJ) $(LIB)
-	$(CC) $(OPT) $(LDFLAGS) -o $@ $(TEST_OBJ) $(LIB) $(LDLIBS) $(UI_LIBS)
+$(SKINC_LIB): $(SKINC_OBJ)
+	@rm -f $@
+	$(AR) rcs $@ $(SKINC_OBJ)
+
+$(TEST_BIN): $(TEST_OBJ) $(SKINC_LIB) $(LIB)
+	$(CC) $(OPT) $(LDFLAGS) -o $@ $(TEST_OBJ) $(SKINC_LIB) $(LIB) $(LDLIBS) $(UI_LIBS)
+
+$(SKINC): $(BUILD)/skinc-objs/main.o $(SKINC_LIB) $(LIB)
+	$(CC) $(OPT) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
 $(RELAY): $(BUILD)/src/relay/main.o $(LIB)
 	$(CC) $(OPT) $(LDFLAGS) -o $@ $^ $(LDLIBS)
@@ -152,7 +171,7 @@ test: $(TEST_BIN) $(RELAY) $(SKINNED)
 debug:
 	$(MAKE) MODE=debug test
 
-$(BUILD)/fuzz-%: $(BUILD)/tests/fuzz/%.o $(FUZZ_DRIVER) $(LIB)
+$(BUILD)/fuzz-%: $(BUILD)/tests/fuzz/%.o $(FUZZ_DRIVER) $(SKINC_LIB) $(LIB)
 	$(CC) $(OPT) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
 ifeq ($(MODE),fuzz)
@@ -171,7 +190,7 @@ endif
 clean:
 	rm -rf build
 
--include $(LIB_OBJ:.o=.d) $(TEST_OBJ:.o=.d) $(BUILD)/src/relay/main.d $(BUILD)/tools/hookdump.d \
+-include $(LIB_OBJ:.o=.d) $(TEST_OBJ:.o=.d) $(SKINC_OBJ:.o=.d) $(BUILD)/skinc-objs/main.d $(BUILD)/src/relay/main.d $(BUILD)/tools/hookdump.d \
     $(BUILD)/src/main/skinned.d \
     $(BUILD)/tools/qoi2png.d $(BUILD)/tools/macdemo.d $(BUILD)/tools/windemo.d $(BUILD)/tools/gfxbench.d \
     $(wildcard $(BUILD)/tests/fuzz/*.d)
