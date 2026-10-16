@@ -60,7 +60,7 @@ static void finish(sk_xfake *f)
 
 static sk_window *window(int w, int h, bool hidden)
 {
-    sk_window_opts o = {"t", w, h, 0, 0, NULL, hidden};
+    sk_window_opts o = {"t", w, h, 0, 0, NULL, hidden, false};
     char *err = NULL;
     sk_window *win = sk_xui_window_new(&o, &err);
     if (!win) {
@@ -175,7 +175,7 @@ static void test_open_and_a_window_s_properties(void)
     CHECK_INT(sk_xfake_count(f, 101, -1), 1);
     CHECK_INT(sk_xfake_count(f, 119, -1), 1);
     CHECK_INT(sk_xfake_count(f, 16, -1), 12);
-    sk_window_opts wo = {"h\xc3\xa9llo", 40, 30, 20, 10, &rec, true};
+    sk_window_opts wo = {"h\xc3\xa9llo", 40, 30, 20, 10, &rec, true, false};
     char *err = NULL;
     sk_window *w = sk_xui_window_new(&wo, &err);
     CHECK(w != NULL);
@@ -574,6 +574,64 @@ static void test_close_ping_and_focus(void)
     finish(f);
 }
 
+/* WM_HINTS's input field, or -1 when the property is not there. */
+static int input_hint(sk_xfake *f, uint32_t id)
+{
+    size_t len;
+    uint32_t type = 0;
+    uint8_t *h = sk_xfake_property(f, id, SK_X11_WM_HINTS, &len, &type);
+    int input = h && len == 36 && type == SK_X11_WM_HINTS && (sk_x11_get32(h) & 1) ? (int)sk_x11_get32(h + 4) : -1;
+    free(h);
+    return input;
+}
+
+/* The visualization's window (decision 0015): its WM_HINTS say it takes
+ * no input, so a window manager never gives it the keys, and a focus
+ * asked of it only raises it. */
+static void test_a_window_that_takes_no_focus(void)
+{
+    sk_xfake *f = start(NULL);
+    if (!f)
+        return;
+    sk_window_opts plain = {"plain", 40, 30, 0, 0, NULL, false, false};
+    sk_window_opts viz = {"viz", 40, 30, 0, 0, NULL, false, true};
+    char *err = NULL;
+    sk_window *a = sk_xui_window_new(&plain, &err), *b = sk_xui_window_new(&viz, &err);
+    CHECK(a && b);
+    if (!a || !b) {
+        free(err);
+        finish(f);
+        return;
+    }
+    CHECK(sk_xui_sync());
+    CHECK_INT(input_hint(f, sk_xui_window_id(a)), 1);
+    CHECK_INT(input_hint(f, sk_xui_window_id(b)), 0);
+    /* WM_TAKE_FOCUS, which would hand it the keys after all, is not
+     * among its protocols. */
+    size_t len;
+    uint32_t type;
+    uint8_t *p = sk_xfake_property(f, sk_xui_window_id(b), sk_xfake_atom(f, "WM_PROTOCOLS"), &len, &type);
+    CHECK(p && len == 8);
+    free(p);
+    CHECK(wait_request(f, 72, 2)); /* both mapped and exposed */
+    run_ms(20);
+
+    size_t raises = sk_xfake_count(f, 12, -1), focuses = sk_xfake_count(f, 42, -1),
+           sends = sk_xfake_count(f, 25, -1);
+    sk_xui_window_focus(b);
+    CHECK(sk_xui_sync());
+    CHECK_INT(sk_xfake_count(f, 12, -1), raises + 1);
+    CHECK_INT(sk_xfake_count(f, 42, -1), focuses);
+    CHECK_INT(sk_xfake_count(f, 25, -1), sends);
+    /* The other window still takes the focus and asks the window
+     * manager for it. */
+    sk_xui_window_focus(a);
+    CHECK(sk_xui_sync());
+    CHECK_INT(sk_xfake_count(f, 42, -1), focuses + 1);
+    CHECK_INT(sk_xfake_count(f, 25, -1), sends + 1);
+    finish(f);
+}
+
 static void test_cursors(void)
 {
     sk_xfake *f = start(NULL);
@@ -906,6 +964,7 @@ const sk_test sk_suite_x11_ui[] = {
     T(test_keys_and_autorepeat),
     T(test_mouse_clicks_and_the_wheel),
     T(test_close_ping_and_focus),
+    T(test_a_window_that_takes_no_focus),
     T(test_cursors),
     T(test_the_clipboard_answers_another_client),
     T(test_the_clipboard_goes_by_incr_to_another_client),
