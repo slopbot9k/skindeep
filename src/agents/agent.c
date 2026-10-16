@@ -190,13 +190,14 @@ void sk_agent_tick(sk_agent *a, uint64_t now)
     sk_bus_tick(a->bus, now);
 }
 
+/* As agent.js report(): a closed part still reports, so a session that
+ * ended keeps its id and title for Reopen closed tab (decision 0026).
+ * Every part frees what it reports only in free. */
 void sk_agent_report(sk_agent *a, sk_report *out)
 {
     sk_report r = {0}, g = {0};
-    if (!a->adapter_closed)
-        a->adapter.ops->report(a->adapter.self, &r);
-    if (!a->generic_closed)
-        a->generic.ops->report(a->generic.self, &g);
+    a->adapter.ops->report(a->adapter.self, &r);
+    a->generic.ops->report(a->generic.self, &g);
     memset(&a->merged, 0, sizeof a->merged);
     a->merged.session = r.session;
     a->merged.title = r.title;

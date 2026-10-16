@@ -152,6 +152,10 @@ static void test_order_of_operations(void)
     sk_agent_close(a);
     CHECK_INT(the_fake.closed, 1);
     CHECK(!sk_agent_rename(a, "ok"));
+    /* A closed part still reports its session, for Reopen closed tab. */
+    sk_agent_report(a, &r);
+    CHECK_STR(r.session, "s1");
+    CHECK_INT(r.n_channels, 3);
     sk_agent_tick(a, 2000);
     CHECK_INT(the_fake.polled, 1); /* no tick after close */
     CHECK_STR(the_fake.order, "pac");
@@ -181,7 +185,7 @@ static void test_failed_prepare(void)
     sk_report r;
     sk_agent_report(a, &r);
     CHECK_STR(r.notice, SK_AGENT_FAILED);
-    CHECK_INT(r.n_channels, 2); /* Generic's alone */
+    CHECK_INT(r.n_channels, 3); /* the closed adapter's, then Generic's, as agent.js */
     sk_agent_free(a);
     free(notice);
     sk_strv_free(&args);
