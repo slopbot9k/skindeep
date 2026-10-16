@@ -61,6 +61,15 @@ jobs:
             echo "::error title=sanitizers::$(tr -d '\r' < out.log | grep -v -E '^(cc|gcc|clang|ar|make)( |\[)' | tail -n 30 | cut -c1-200 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"
             exit 1
           fi
+      # A crash's input goes out in the annotation too, in base64, so it
+      # can be run again with fuzz-NAME -x.
       - name: Fuzz
         if: matrix.cc != 'gcc'
-        run: make fuzz-run FUZZ_SECONDS=30 CC=${{ matrix.cc }}
+        shell: bash
+        run: |
+          set -o pipefail
+          if ! make fuzz-run FUZZ_SECONDS=30 CC=${{ matrix.cc }} 2>&1 | tee out.log; then
+            for f in crash-* hang-*; do [ -f "$f" ] && { echo "$f:"; base64 < "$f" | head -c 2400; echo; } >> out.log; done
+            echo "::error title=fuzz::$(tr -d '\r' < out.log | grep -v -E '^(cc|gcc|clang|ar|make)( |\[)' | tail -n 40 | cut -c1-300 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"
+            exit 1
+          fi
