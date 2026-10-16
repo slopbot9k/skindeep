@@ -7,6 +7,7 @@
 #include "../platform/procinfo.h"
 #include "../platform/ui.h"
 #include "../term/keys.h"
+#include "../term/links.h"
 #include "../ui/termview.h"
 #include "clitab.h"
 #include "control.h"
@@ -100,6 +101,10 @@ struct gui {
     bool selecting;
     double wheel;
     uint32_t hover_link;
+    /* A web link under the pointer: viewport rows and columns, end
+     * exclusive; link_r0 < 0 for none. */
+    int link_r0, link_c0, link_r1, link_c1;
+    char *link_uri;
     int ui_cols, ui_rows;
 };
 
@@ -519,6 +524,8 @@ static void fit(gui *g)
     sk_loop_post(g->loop, do_resize, m);
 }
 
+static void clear_hover(gui *g);
+
 static void focus_term(gui *g)
 {
     sk_term *t = active_term(g);
@@ -535,6 +542,7 @@ static void ui_snapshot(void *ud)
     bool switched = s->active != g->snap.active;
     bool strip = (s->n > 1) != (g->snap.n > 1);
     free_snapshot(&g->snap);
+    free(g->link_uri);
     g->snap = *s;
     free(s);
     if (!g->win)
@@ -545,7 +553,7 @@ static void ui_snapshot(void *ud)
     if (switched) {
         sk_term_mouse_reset(&g->mouse);
         g->selecting = false;
-        g->hover_link = 0;
+        clear_hover(g);
         focus_term(g);
     }
     g->all = true;
@@ -651,7 +659,10 @@ static void draw(gui *g)
                 .focused = g->focused,
                 .cursor_on = g->cursor_on,
                 .link = g->hover_link,
-                .link_row0 = -1,
+                .link_row0 = g->link_r0,
+                .link_col0 = g->link_c0,
+                .link_row1 = g->link_r1,
+                .link_col1 = g->link_c1,
             };
             sk_rect r = sk_termview_draw(g->view, t, &area, &st, g->all);
             if (!sk_rect_empty(r))
@@ -836,9 +847,8 @@ static uint32_t link_at(sk_term *t, int col, int row)
     return link;
 }
 
-static void open_link(gui *g, sk_term *t, uint32_t link)
+static void open_uri(gui *g, const char *uri)
 {
-    const char *uri = sk_term_link_uri(t, link);
     if (!uri)
         return;
     size_t n = strlen(uri);
@@ -846,6 +856,100 @@ static void open_link(gui *g, sk_term *t, uint32_t link)
     m->g = g;
     memcpy(m->uri, uri, n + 1);
     sk_loop_post(g->loop, do_open, m);
+}
+
+/* The web links addon reads the buffer line by line through these, the
+ * line of the last read kept. */
+typedef struct {
+    sk_term *t;
+    sk_term_cell *cells;
+    int cols, line;
+    bool wrapped, have;
+} line_src;
+
+static bool src_load(line_src *s, int y)
+{
+    if (s->line != y) {
+        int cols = s->cols;
+        s->have = sk_term_line(s->t, y, s->cells, &cols, &s->wrapped);
+        s->line = y;
+    }
+    return s->have;
+}
+
+static bool src_row(void *ud, int y, int *cols, bool *wrapped)
+{
+    line_src *s = ud;
+    if (!src_load(s, y))
+        return false;
+    *cols = s->cols;
+    *wrapped = s->wrapped;
+    return true;
+}
+
+static int src_cell(void *ud, int y, int x, uint32_t *cp, int max, int *width)
+{
+    line_src *s = ud;
+    if (!src_load(s, y) || x < 0 || x >= s->cols || max < 1)
+        return 0;
+    const sk_term_cell *c = &s->cells[x];
+    *width = c->width;
+    if (c->cp) {
+        cp[0] = c->cp;
+        return 1;
+    }
+    int n = (int)SK_MIN((uint32_t)max, c->ncomb);
+    for (int i = 0; i < n; i++)
+        cp[i] = c->comb[i];
+    return n;
+}
+
+/* The web link (addon-web-links) under viewport cell col, row into the
+ * hover state, or none. True when that changed. */
+static bool detect_link(gui *g, sk_term *t, int col, int row)
+{
+    int r0 = -1, c0 = 0, r1 = 0, c1 = 0;
+    char *uri = NULL;
+    sk_term_lock(t);
+    int cols, rows, top, base, lines;
+    sk_term_size(t, &cols, &rows);
+    sk_term_viewport(t, &top, &base, &lines);
+    line_src s = {t, sk_xcalloc((size_t)cols, sizeof *s.cells), cols, -1, false, false};
+    sk_term_link_src src = {&s, src_row, src_cell};
+    sk_term_links found = {0};
+    int y = top + row;
+    sk_term_links_find(&src, y, &found);
+    for (size_t i = 0; i < found.len && !uri; i++) {
+        const sk_term_link *l = &found.ptr[i];
+        bool after = y > l->y0 || (y == l->y0 && col >= l->x0);
+        bool before = y < l->y1 || (y == l->y1 && col < l->x1);
+        if (after && before) {
+            r0 = l->y0 - top;
+            c0 = l->x0;
+            r1 = l->y1 - top;
+            c1 = l->x1;
+            uri = sk_xstrdup(l->uri);
+        }
+    }
+    sk_term_links_free(&found);
+    free(s.cells);
+    sk_term_unlock(t);
+    bool changed = r0 != g->link_r0 || c0 != g->link_c0 || r1 != g->link_r1 || c1 != g->link_c1;
+    free(g->link_uri);
+    g->link_uri = uri;
+    g->link_r0 = r0;
+    g->link_c0 = c0;
+    g->link_r1 = r1;
+    g->link_c1 = c1;
+    return changed;
+}
+
+static void clear_hover(gui *g)
+{
+    g->hover_link = 0;
+    free(g->link_uri);
+    g->link_uri = NULL;
+    g->link_r0 = -1;
 }
 
 static void strip_click(gui *g, const sk_event *ev)
@@ -900,9 +1004,17 @@ static void on_mouse(gui *g, const sk_event *ev)
         if (ev->mouse.button != 1)
             break;
         if (ev->mouse.mods & opener) {
+            /* An OSC 8 link first, then a web link in the text. */
             uint32_t link = link_at(t, col, row);
             if (link) {
-                open_link(g, t, link);
+                sk_term_lock(t);
+                open_uri(g, sk_term_link_uri(t, link));
+                sk_term_unlock(t);
+                break;
+            }
+            detect_link(g, t, col, row);
+            if (g->link_uri) {
+                open_uri(g, g->link_uri);
                 break;
             }
         }
@@ -931,9 +1043,18 @@ static void on_mouse(gui *g, const sk_event *ev)
         }
         sk_term_mouse_move(&g->mouse, &m, &grid, gx, gy, gy >= 0, ev->mouse.mods, &out);
         uint32_t link = gy >= 0 ? link_at(t, col, row) : 0;
-        if (link != g->hover_link) {
-            g->hover_link = link;
-            sk_window_set_cursor(g->win, link ? SK_CURSOR_POINTER : SK_CURSOR_IBEAM);
+        bool changed = link != g->hover_link;
+        g->hover_link = link;
+        if (link || gy < 0) {
+            changed |= g->link_r0 >= 0;
+            free(g->link_uri);
+            g->link_uri = NULL;
+            g->link_r0 = -1;
+        } else {
+            changed |= detect_link(g, t, col, row);
+        }
+        if (changed) {
+            sk_window_set_cursor(g->win, link || g->link_uri ? SK_CURSOR_POINTER : SK_CURSOR_IBEAM);
             redraw = true;
         }
         break;
@@ -1025,8 +1146,8 @@ static void on_event(void *ud, const sk_event *ev)
         on_mouse(g, ev);
         break;
     case SK_EV_MOUSE_LEAVE:
-        if (g->hover_link) {
-            g->hover_link = 0;
+        if (g->hover_link || g->link_r0 >= 0) {
+            clear_hover(g);
             g->all = true;
             sk_window_request_frame(g->win);
         }
@@ -1141,6 +1262,12 @@ static void probe(gui *g, ctl_msg *m)
     sk_jw_key(&w, SK_STR("strip"));
     sk_jw_bool(&w, strip_height(g) > 0);
     sk_jw_object_end(&w);
+    /* The web link under the pointer, as the addon found it. */
+    sk_jw_key(&w, SK_STR("link"));
+    if (g->link_uri)
+        sk_jw_string(&w, sk_str_c(g->link_uri));
+    else
+        sk_jw_null(&w);
     sk_term *t = active_term(g);
     sk_jw_key(&w, SK_STR("screen"));
     if (t) {
@@ -1353,6 +1480,7 @@ int sk_gui_run(const sk_options *o, const sk_envp *env, const char *self)
     g->status = SK_EXIT_APP;
     g->cursor_on = true;
     g->focused = true;
+    g->link_r0 = -1;
     atomic_init(&g->frame_posted, false);
     atomic_init(&g->core_done, false);
     char *err = NULL;

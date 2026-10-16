@@ -317,6 +317,36 @@ static void test_a_double_click_selects_a_word(void)
     finish(&a, 5000);
 }
 
+/* addon-web-links: a URL in the text is a link under the pointer. */
+static void test_a_url_in_the_text_is_a_link(void)
+{
+    app a;
+    const char *cmd[] = {"sh", "-c", "echo see https://example.com/a/b here; exec cat", NULL};
+    if (!start(&a, cmd))
+        return;
+    CHECK(wait_screen(&a, "here", 5000));
+    sk_arena ar;
+    sk_arena_init(&ar, 0);
+    const sk_json *p = probe(&a, &ar);
+    double w = num(sk_json_get(p, "window"), "w"), cols = num(sk_json_get(p, "window"), "cols");
+    double cell = cols > 0 ? w / cols : 8;
+    char req[256];
+    snprintf(req, sizeof req, "{\"op\":\"mouse\",\"kind\":\"move\",\"x\":%.1f,\"y\":5}", cell * 10.5);
+    ok(&a, req);
+    p = probe(&a, &ar);
+    sk_str link = {0};
+    CHECK(sk_json_as_string(sk_json_get(p, "link"), &link));
+    CHECK(link.ptr && !strcmp(link.ptr, "https://example.com/a/b"));
+    /* Off the URL, no link. */
+    snprintf(req, sizeof req, "{\"op\":\"mouse\",\"kind\":\"move\",\"x\":%.1f,\"y\":5}", cell * 1.5);
+    ok(&a, req);
+    p = probe(&a, &ar);
+    CHECK(!sk_json_as_string(sk_json_get(p, "link"), &link));
+    sk_arena_free(&ar);
+    ok(&a, "{\"op\":\"hangup\"}");
+    finish(&a, 5000);
+}
+
 /* Decision 0016: closing the window hangs up every tab. */
 static void test_closing_the_window_hangs_up(void)
 {
@@ -333,6 +363,7 @@ const sk_test sk_suite_window[] = {
     T(test_the_tab_chords),
     T(test_the_app_ends_with_the_last_tabs_status),
     T(test_a_double_click_selects_a_word),
+    T(test_a_url_in_the_text_is_a_link),
     T(test_closing_the_window_hangs_up),
     {0},
 };
