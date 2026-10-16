@@ -1013,4 +1013,9 @@ void sk_buffer_resize(sk_buffer *b, int new_cols, int new_rows)
     }
     b->cols = new_cols;
     b->rows = new_rows;
+    /* Grown from a screen that ran past its lines, xterm.js's buffer can
+     * be left with rows that have no line at all, and it throws at the
+     * first write to one; blank lines fill them here. */
+    while (r->len > 0 && r->len < r->max && r->len < b->ybase + new_rows)
+        sk_lines_push(r, sk_line_new(new_cols, &null_cell, false));
 }
