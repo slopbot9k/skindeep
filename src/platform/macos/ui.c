@@ -9,8 +9,14 @@
  * no image on screen still uses, so the layer never shows a buffer being
  * drawn and the frame keeps what was drawn. A front buffer is freed by
  * whoever lets it go last, the window or CoreGraphics, which can release
- * an image on another thread. */
+ * an image on another thread.
+ *
+ * The view is an NSTextInputClient: keys the input method may want pass
+ * through it, and come out as keys, text or a composition as ui.h has
+ * them. */
 #include "uimac.h"
+
+#include "../../base/utf8.h"
 
 #include <dispatch/dispatch.h>
 #include <math.h>
@@ -51,6 +57,12 @@ struct sk_window {
     CFAbsoluteTime last_frame;
     sk_cursor cursor;
     bool inside;
+    /* The input method's composition, an NSString, nil when none is
+     * open, and the selection in it. */
+    id marked;
+    NSRange marked_sel;
+    /* The text cursor, in points from the content's top left. */
+    int ime_x, ime_y, ime_w, ime_h;
 };
 
 typedef struct {
@@ -422,7 +434,7 @@ void sk_window_set_cursor(sk_window *w, sk_cursor c)
     objc_autoreleasePoolPop(pool);
 }
 
-/* ---- The view: input and the window's delegate ---- */
+/* ---- The view ---- */
 
 static BOOL view_yes(id self, SEL cmd)
 {
@@ -438,22 +450,89 @@ static void view_update_layer(id self, SEL cmd)
         sk_msg_void_id(sk_msg(self, "layer"), "setContents:", (id)(void *)w->shown);
 }
 
+/* ---- Keys and the input method ---- */
+
+/* The key keyDown: has given the input method, while it interprets it,
+ * and whether the key's SK_EV_KEY_DOWN has gone out. */
+typedef struct {
+    id view;
+    sk_key_event key;
+    bool sent;
+} key_in_flight;
+
+static key_in_flight keying;
+static void (*input_method)(id view, id ev);
+
+void sk_macos_set_input_method(void (*im)(id view, id ev))
+{
+    input_method = im;
+}
+
+static void emit_key(sk_window *w, sk_event_type type, const sk_key_event *k)
+{
+    sk_event e = {.type = type, .win = w};
+    e.key = *k;
+    emit(&e);
+}
+
 static void key(id self, id ev, sk_event_type type)
 {
     sk_window *w = win_of(self);
     if (!w)
         return;
+    sk_key_event k;
+    sk_macos_key_event(ev, &k);
+    emit_key(w, type, &k);
+}
+
+/* SK_EV_TEXT or SK_EV_PREEDIT, while the view still has its window. */
+static void emit_text(id view, sk_event_type type, const char *utf8)
+{
+    sk_window *w = win_of(view);
+    if (!w)
+        return;
     sk_event e = {.type = type, .win = w};
-    sk_macos_key_event(ev, &e.key);
+    e.text = utf8 ? utf8 : "";
     emit(&e);
 }
 
-/* Every key reaches the app here; phase 4 passes keyDown through
- * interpretKeyEvents: first, for input methods. */
+/* The key in interpretation goes on to the app as its SK_EV_KEY_DOWN,
+ * once: the input method passed it on, or typed the key's own text. */
+static void pass_key(id view)
+{
+    sk_window *w = win_of(view);
+    if (!w || keying.view != view || keying.sent)
+        return;
+    keying.sent = true;
+    emit_key(w, SK_EV_KEY_DOWN, &keying.key);
+}
+
+/* A key goes to the app as it is unless the input method may want it:
+ * Cmd chords never reach the input method, nor, outside a composition,
+ * Ctrl chords and named keys, whose encoding is the terminal's. The
+ * others go through interpretKeyEvents:, which answers with the
+ * NSTextInputClient methods below; a key it answers with none of them
+ * is the input method's. */
 static void view_key_down(id self, SEL cmd, id ev)
 {
     (void)cmd;
-    key(self, ev, SK_EV_KEY_DOWN);
+    sk_window *w = win_of(self);
+    if (!w)
+        return;
+    sk_key_event k;
+    sk_macos_key_event(ev, &k);
+    if ((k.mods & SK_MOD_SUPER) || (!w->marked && ((k.mods & SK_MOD_CTRL) || k.key != SK_KEY_NONE))) {
+        emit_key(w, SK_EV_KEY_DOWN, &k);
+        return;
+    }
+    key_in_flight outer = keying;
+    keying = (key_in_flight){.view = self, .key = k};
+    if (input_method)
+        input_method(self, ev);
+    else
+        sk_msg_void_id(self, "interpretKeyEvents:",
+                       SK_MSG(id (*)(id, SEL, id))(sk_cls("NSArray"), sk_sel("arrayWithObject:"), ev));
+    keying = outer;
 }
 
 static void view_key_up(id self, SEL cmd, id ev)
@@ -476,6 +555,205 @@ static BOOL view_key_equivalent(id self, SEL cmd, id ev)
     }
     return NO;
 }
+
+/* The string of an NSString or an NSAttributedString, which an input
+ * method may pass either of. */
+static id plain_string(id s)
+{
+    if (s && SK_MSG(BOOL (*)(id, SEL, Class))(s, sk_sel("isKindOfClass:"), (Class)sk_cls("NSAttributedString")))
+        return sk_msg(s, "string");
+    return s;
+}
+
+/* Whether s holds text, not only controls and function keys. */
+static bool has_text(const char *s)
+{
+    size_t n = strlen(s);
+    for (size_t i = 0; i < n;) {
+        uint32_t cp;
+        i += sk_utf8_decode(s + i, n - i, &cp, NULL);
+        if (sk_macos_is_text(cp))
+            return true;
+    }
+    return false;
+}
+
+static unsigned long marked_length(sk_window *w)
+{
+    return w && w->marked ? sk_msg_ulong(w->marked, "length") : 0;
+}
+
+/* Closes the composition, if one is open, with SK_EV_PREEDIT ""; true
+ * when one was. */
+static bool end_composition(id view)
+{
+    sk_window *w = win_of(view);
+    if (!w || !w->marked)
+        return false;
+    sk_release(w->marked);
+    w->marked = nil;
+    emit_text(view, SK_EV_PREEDIT, "");
+    return true;
+}
+
+/* Text the input method inserts, in place of the composition when one
+ * is open. Outside one, the key's own text, or nothing but controls
+ * (AppKit's key bindings without a command for the key), lets the key
+ * go on as it is, once; any other text is SK_EV_TEXT. Inside one,
+ * controls alone cancel it. */
+static void view_insert_text(id self, SEL cmd, id text, NSRange replace)
+{
+    (void)cmd, (void)replace;
+    if (!win_of(self))
+        return;
+    const char *s = sk_utf8(plain_string(text));
+    if (!s)
+        s = "";
+    bool composed = end_composition(self);
+    if (!has_text(s)) {
+        if (!composed)
+            pass_key(self);
+    } else if (!composed && keying.view == self && !strcmp(s, keying.key.text)) {
+        pass_key(self);
+    } else {
+        emit_text(self, SK_EV_TEXT, s);
+    }
+}
+
+/* NSResponder's insertText:, which the key bindings send a responder
+ * without an input context. */
+static void view_insert_text_only(id self, SEL cmd, id text)
+{
+    view_insert_text(self, cmd, text, (NSRange){NSNotFound, 0});
+}
+
+/* The composition, opened or changed; empty, it ends with nothing
+ * committed. */
+static void view_set_marked_text(id self, SEL cmd, id text, NSRange sel, NSRange replace)
+{
+    (void)cmd, (void)replace;
+    sk_window *w = win_of(self);
+    if (!w)
+        return;
+    id s = plain_string(text);
+    unsigned long len = s ? sk_msg_ulong(s, "length") : 0;
+    if (!len) {
+        end_composition(self);
+        return;
+    }
+    sk_release(w->marked);
+    w->marked = sk_msg(s, "copy");
+    unsigned long at = sel.location < len ? sel.location : len;
+    w->marked_sel = (NSRange){at, sel.length < len - at ? sel.length : len - at};
+    /* The caller's string, which outlives a handler that frees w. */
+    emit_text(self, SK_EV_PREEDIT, sk_utf8(s));
+}
+
+/* The composition is accepted as it stands, as NSTextInputClient has
+ * it: committed. */
+static void view_unmark_text(id self, SEL cmd)
+{
+    (void)cmd;
+    sk_window *w = win_of(self);
+    if (!w || !w->marked)
+        return;
+    id s = sk_retain(w->marked);
+    end_composition(self);
+    emit_text(self, SK_EV_TEXT, sk_utf8(s));
+    sk_release(s);
+}
+
+static BOOL view_has_marked_text(id self, SEL cmd)
+{
+    (void)cmd;
+    return marked_length(win_of(self)) ? YES : NO;
+}
+
+/* The view's text, for the input method, is the composition alone,
+ * from 0; without one, an empty text with the insertion point at 0. */
+static NSRange view_marked_range(id self, SEL cmd)
+{
+    (void)cmd;
+    unsigned long len = marked_length(win_of(self));
+    return len ? (NSRange){0, len} : (NSRange){NSNotFound, 0};
+}
+
+static NSRange view_selected_range(id self, SEL cmd)
+{
+    (void)cmd;
+    sk_window *w = win_of(self);
+    return marked_length(w) ? w->marked_sel : (NSRange){0, 0};
+}
+
+static id view_valid_attributes(id self, SEL cmd)
+{
+    (void)self, (void)cmd;
+    return sk_msg(sk_cls("NSArray"), "array");
+}
+
+static id view_attributed_substring(id self, SEL cmd, NSRange range, NSRange *actual)
+{
+    (void)cmd;
+    sk_window *w = win_of(self);
+    unsigned long len = marked_length(w);
+    if (range.location >= len)
+        return nil;
+    NSRange r = {range.location, range.length < len - range.location ? range.length : len - range.location};
+    if (actual)
+        *actual = r;
+    id sub = SK_MSG(id (*)(id, SEL, NSRange))(w->marked, sk_sel("substringWithRange:"), r);
+    id a = SK_MSG(id (*)(id, SEL, id))(sk_msg(sk_cls("NSAttributedString"), "alloc"), sk_sel("initWithString:"), sub);
+    return sk_autorelease(a);
+}
+
+static unsigned long view_character_index(id self, SEL cmd, CGPoint p)
+{
+    (void)self, (void)cmd, (void)p;
+    return NSNotFound;
+}
+
+/* Every character of the composition is at the text cursor, where the
+ * app draws it, in screen coordinates. */
+static CGRect view_first_rect(id self, SEL cmd, NSRange range, NSRange *actual)
+{
+    (void)cmd;
+    if (actual)
+        *actual = range;
+    sk_window *w = win_of(self);
+    if (!w)
+        return CGRectZero;
+    CGRect b = sk_msg_rect(self, "bounds");
+    CGRect r = CGRectMake(w->ime_x, b.size.height - w->ime_y - w->ime_h, w->ime_w, w->ime_h);
+    r = SK_MSG_STRET(CGRect (*)(id, SEL, CGRect, id))(self, sk_sel("convertRect:toView:"), r, nil);
+    return SK_MSG_STRET(CGRect (*)(id, SEL, CGRect))(w->win, sk_sel("convertRectToScreen:"), r);
+}
+
+/* A command the key binds to, such as moveLeft: or insertNewline:: the
+ * input method passed the key on. */
+static void view_do_command(id self, SEL cmd, SEL command)
+{
+    (void)cmd, (void)command;
+    pass_key(self);
+}
+
+void sk_window_set_ime_rect(sk_window *w, int x, int y, int width, int height)
+{
+    width = SK_MAX(width, 0);
+    height = SK_MAX(height, 0);
+    if (x == w->ime_x && y == w->ime_y && width == w->ime_w && height == w->ime_h)
+        return;
+    w->ime_x = x;
+    w->ime_y = y;
+    w->ime_w = width;
+    w->ime_h = height;
+    void *pool = objc_autoreleasePoolPush();
+    id context = sk_msg(w->view, "inputContext");
+    if (context)
+        sk_msg_void(context, "invalidateCharacterCoordinates");
+    objc_autoreleasePoolPop(pool);
+}
+
+/* ---- The mouse and the window's delegate ---- */
 
 /* The event's position in points from the view's top left. */
 static void position(sk_window *w, id ev, double *x, double *y)
@@ -711,6 +989,25 @@ static void make_classes(void)
     add(v, "keyDown:", (IMP)view_key_down, "v@:@");
     add(v, "keyUp:", (IMP)view_key_up, "v@:@");
     add(v, "performKeyEquivalent:", (IMP)view_key_equivalent, SK_ENC_BOOL "@:@");
+    /* NSView gives a view an input context when it conforms. */
+    Protocol *client = objc_getProtocol("NSTextInputClient");
+    if (!client || !class_addProtocol(v, client))
+        sk_die("cannot make sk_view an NSTextInputClient");
+    add(v, "insertText:replacementRange:", (IMP)view_insert_text, "v@:@" SK_ENC_RANGE);
+    add(v, "insertText:", (IMP)view_insert_text_only, "v@:@");
+    add(v, "setMarkedText:selectedRange:replacementRange:", (IMP)view_set_marked_text,
+        "v@:@" SK_ENC_RANGE SK_ENC_RANGE);
+    add(v, "unmarkText", (IMP)view_unmark_text, "v@:");
+    add(v, "hasMarkedText", (IMP)view_has_marked_text, SK_ENC_BOOL "@:");
+    add(v, "markedRange", (IMP)view_marked_range, SK_ENC_RANGE "@:");
+    add(v, "selectedRange", (IMP)view_selected_range, SK_ENC_RANGE "@:");
+    add(v, "validAttributesForMarkedText", (IMP)view_valid_attributes, "@@:");
+    add(v, "attributedSubstringForProposedRange:actualRange:", (IMP)view_attributed_substring,
+        "@@:" SK_ENC_RANGE "^" SK_ENC_RANGE);
+    add(v, "characterIndexForPoint:", (IMP)view_character_index, "Q@:" SK_ENC_POINT);
+    add(v, "firstRectForCharacterRange:actualRange:", (IMP)view_first_rect,
+        SK_ENC_RECT "@:" SK_ENC_RANGE "^" SK_ENC_RANGE);
+    add(v, "doCommandBySelector:", (IMP)view_do_command, "v@::");
     static const char *const downs[] = {"mouseDown:", "rightMouseDown:", "otherMouseDown:"};
     static const char *const ups[] = {"mouseUp:", "rightMouseUp:", "otherMouseUp:"};
     static const char *const moves[] = {"mouseMoved:", "mouseDragged:", "rightMouseDragged:", "otherMouseDragged:"};
@@ -796,6 +1093,13 @@ bool sk_ui_open(const char *app_id, sk_ui_handler handler, void *ud, char **err)
          * windows (tests) leave the desktop as it was. */
         SK_MSG(BOOL (*)(id, SEL, long))(NSApp, sk_sel("setActivationPolicy:"), NSApplicationActivationPolicyAccessory);
         SK_MSG(void (*)(id, SEL, BOOL))(sk_cls("NSWindow"), sk_sel("setAllowsAutomaticWindowTabbing:"), NO);
+        /* A held key repeats, as a terminal's should, rather than offer
+         * its accents: press and hold is an input method, which keys now
+         * reach. The user's own setting, if any, still wins. */
+        id no = SK_MSG(id (*)(id, SEL, BOOL))(sk_cls("NSNumber"), sk_sel("numberWithBool:"), NO);
+        id hold = SK_MSG(id (*)(id, SEL, id, id))(sk_cls("NSDictionary"), sk_sel("dictionaryWithObject:forKey:"), no,
+                                                  sk_nsstring("ApplePressAndHoldEnabled"));
+        sk_msg_void_id(sk_msg(sk_cls("NSUserDefaults"), "standardUserDefaults"), "registerDefaults:", hold);
         make_menu(app_id);
         app_delegate = sk_new("sk_app_delegate");
         sk_msg_void_id(NSApp, "setDelegate:", app_delegate);
@@ -1058,6 +1362,7 @@ void sk_window_free(sk_window *w)
     }
     if (w->shown)
         CGImageRelease(w->shown);
+    sk_release(w->marked);
     drop_fronts(w);
     sk_image_free(&w->frame);
     free(w);

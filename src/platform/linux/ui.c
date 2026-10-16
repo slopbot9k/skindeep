@@ -95,6 +95,12 @@ void sk_window_focus(sk_window *w)
     sk_xui_window_focus(w);
 }
 
+/* No input method asks where the cursor is until XIM (decision 0036). */
+void sk_window_set_ime_rect(sk_window *w, int x, int y, int width, int height)
+{
+    (void)w, (void)x, (void)y, (void)width, (void)height;
+}
+
 sk_image *sk_window_frame(sk_window *w)
 {
     return sk_xui_window_frame(w);

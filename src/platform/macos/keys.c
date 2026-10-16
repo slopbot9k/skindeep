@@ -69,7 +69,7 @@ sk_key sk_macos_key(unsigned code)
 
 /* Not text: the C0 and C1 controls, DEL, and the private-use range
  * where AppKit puts its function keys (NSUpArrowFunctionKey and on). */
-static bool is_text(uint32_t cp)
+bool sk_macos_is_text(uint32_t cp)
 {
     return cp >= 0x20 && !(cp >= 0x7F && cp < 0xA0) && !(cp >= 0xF700 && cp <= 0xF8FF);
 }
@@ -83,7 +83,7 @@ static void text_of(id s, char out[16])
     for (size_t i = 0; i < n;) {
         uint32_t cp;
         i += sk_utf8_decode(u + i, n - i, &cp, NULL);
-        if (!is_text(cp))
+        if (!sk_macos_is_text(cp))
             continue;
         char enc[4];
         size_t k = sk_utf8_encode(cp, enc);

@@ -63,11 +63,11 @@ typedef struct {
     sk_key key;
     uint32_t mods;
     /* The character the key types with the layout's Shift, AltGr and
-     * Option applied, as UTF-8; empty for a named key, a dead key, and
-     * any key held with Ctrl or Super whose layout gives nothing. The
-     * keypad's keys but Enter are named and carry their character too,
-     * as a browser's KeyboardEvent.key does, since the key encoder
-     * reads it. */
+     * Option applied, as UTF-8; empty for a named key, a dead key where
+     * it comes as a key (below), and any key held with Ctrl or Super
+     * whose layout gives nothing. The keypad's keys but Enter are named
+     * and carry their character too, as a browser's KeyboardEvent.key
+     * does, since the key encoder reads it. */
     char text[16];
     /* The key's character on the layout with no modifier at all, a
      * letter in lower case: what a Ctrl or Cmd chord names. 0 for a
@@ -77,6 +77,26 @@ typedef struct {
     /* The platform's own key code, for logs. */
     uint32_t code;
 } sk_key_event;
+
+/* Keys and input methods. A key the terminal encodes itself comes as
+ * SK_EV_KEY_DOWN with the text it types: a letter or any plain text,
+ * an Option or AltGr character, a named key, a Ctrl or Cmd chord. Text
+ * typed that way never comes as SK_EV_TEXT as well. SK_EV_TEXT is only
+ * text an input method commits after a composition, or inserts in
+ * place of a key's own text (a full-width comma for ","), or with no
+ * key at all (the emoji picker). A composition is SK_EV_PREEDIT with
+ * its marked text at each change, then "" when it ends, before the
+ * SK_EV_TEXT of what it committed, if anything. A key the input method
+ * takes, to compose, commit or cancel, gives no SK_EV_KEY_DOWN (the
+ * Enter that commits, the Escape that cancels); a key it passes on
+ * gives one as usual, after any text it committed first. Every key
+ * gives its SK_EV_KEY_UP.
+ *
+ * A dead key is the input method's on macOS: Option+E then E on a US
+ * layout gives SK_EV_PREEDIT "´", then SK_EV_PREEDIT "" and SK_EV_TEXT
+ * "é", and no SK_EV_KEY_DOWN for either key. Linux has no input method
+ * until XIM: there a dead key is SK_EV_KEY_DOWN with empty text, and
+ * the next key types its own character. */
 
 typedef enum {
     SK_CURSOR_ARROW,
@@ -94,8 +114,8 @@ typedef enum {
     SK_EV_FOCUS,       /* focus in (focused) or out */
     SK_EV_KEY_DOWN,
     SK_EV_KEY_UP,
-    SK_EV_TEXT,        /* text from an input method (phase 4) */
-    SK_EV_PREEDIT,     /* an input method's composition, "" when it ends (phase 4) */
+    SK_EV_TEXT,        /* text an input method commits (above) */
+    SK_EV_PREEDIT,     /* an input method's composition, "" when it ends */
     SK_EV_MOUSE_DOWN,
     SK_EV_MOUSE_UP,
     SK_EV_MOUSE_MOVE,
@@ -185,6 +205,10 @@ double sk_window_scale(const sk_window *w);
 void sk_window_set_cursor(sk_window *w, sk_cursor c);
 /* Raise and give it the keyboard. */
 void sk_window_focus(sk_window *w);
+/* Where the text cursor is, in points from the content's top left, so
+ * that an input method shows its candidates beside it. Linux ignores
+ * it until XIM. */
+void sk_window_set_ime_rect(sk_window *w, int x, int y, int width, int height);
 
 /* The window's frame: an image of its size in pixels, which the app
  * draws into. What was drawn stays from frame to frame, until a resize

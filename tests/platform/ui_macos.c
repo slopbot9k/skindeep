@@ -1,8 +1,8 @@
 /* platform/ui.h on macOS, on hidden windows: frames presented and read
  * back, sizes and scales, the key and mouse events AppKit would send
- * the window, frame pacing, tasks and timers from any thread, and the
- * clipboard, which is put back as the user had it. Elsewhere the suite
- * is empty. */
+ * the window, input methods, frame pacing, tasks and timers from any
+ * thread, and the clipboard, which is put back as the user had it.
+ * Elsewhere the suite is empty. */
 #include "../test.h"
 
 #ifdef __APPLE__
@@ -17,14 +17,22 @@
 
 static sk_event events[MAX_EVENTS];
 static size_t n_events;
+/* The text of each TEXT and PREEDIT, which lasts only the call. */
+static char texts[MAX_EVENTS][64];
 /* What a test does on an event, besides recording it. */
 static void (*react)(const sk_event *ev);
 
 static void record(void *ud, const sk_event *ev)
 {
     (void)ud;
-    if (n_events < MAX_EVENTS)
-        events[n_events++] = *ev;
+    if (n_events < MAX_EVENTS) {
+        events[n_events] = *ev;
+        if (ev->type == SK_EV_TEXT || ev->type == SK_EV_PREEDIT) {
+            snprintf(texts[n_events], sizeof texts[n_events], "%s", ev->text);
+            events[n_events].text = texts[n_events];
+        }
+        n_events++;
+    }
     if (react)
         react(ev);
 }
@@ -72,6 +80,7 @@ static void close_ui(void)
     sk_ui_close();
     objc_autoreleasePoolPop(pool);
     react = NULL;
+    sk_macos_set_input_method(NULL);
 }
 
 static sk_window *hidden_window(int w, int h)
@@ -292,7 +301,8 @@ static id key_event(sk_window *w, unsigned long type, unsigned code, unsigned lo
         (unsigned short)code);
 }
 
-/* The key event the window reports for a key AppKit sends it. */
+/* The key event the window reports for a key AppKit sends it, which
+ * types no text but the key's own. */
 static sk_key_event press(sk_window *w, unsigned code, unsigned long flags, const char *chars, const char *plain)
 {
     n_events = 0;
@@ -300,6 +310,8 @@ static sk_key_event press(sk_window *w, unsigned code, unsigned long flags, cons
     sk_msg_void_id(sk_macos_nswindow(w), "sendEvent:", ev);
     sk_key_event k = {0};
     CHECK_INT(count(SK_EV_KEY_DOWN), 1);
+    CHECK_INT(count(SK_EV_TEXT), 0);
+    CHECK_INT(count(SK_EV_PREEDIT), 0);
     if (last(SK_EV_KEY_DOWN))
         k = last(SK_EV_KEY_DOWN)->key;
     return k;
@@ -470,6 +482,361 @@ static void test_cmd_q_asks_every_window_to_close(void)
             }
         CHECK(saw_a && saw_b);
     }
+    close_ui();
+}
+
+/* ---- Input methods ---- */
+
+static NSRange range(unsigned long location, unsigned long length)
+{
+    return (NSRange){location, length};
+}
+
+#define CHECK_RANGE(r, loc, len)                                                                                       \
+    do {                                                                                                               \
+        NSRange r_ = (r);                                                                                              \
+        CHECK_INT(r_.location, loc);                                                                                   \
+        CHECK_INT(r_.length, len);                                                                                     \
+    } while (0)
+
+/* The view's NSTextInputClient methods, as AppKit calls them. */
+static void set_marked(id view, id text, unsigned long caret)
+{
+    SK_MSG(void (*)(id, SEL, id, NSRange, NSRange))(view, sk_sel("setMarkedText:selectedRange:replacementRange:"), text,
+                                                    range(caret, 0), range(NSNotFound, 0));
+}
+
+static void insert(id view, const char *utf8)
+{
+    SK_MSG(void (*)(id, SEL, id, NSRange))(view, sk_sel("insertText:replacementRange:"), sk_nsstring(utf8),
+                                           range(NSNotFound, 0));
+}
+
+static NSRange marked_range(id view)
+{
+    return SK_MSG(NSRange (*)(id, SEL))(view, sk_sel("markedRange"));
+}
+
+static NSRange selected_range(id view)
+{
+    return SK_MSG(NSRange (*)(id, SEL))(view, sk_sel("selectedRange"));
+}
+
+static id substring(id view, NSRange r, NSRange *actual)
+{
+    return SK_MSG(id (*)(id, SEL, NSRange, NSRange *))(view, sk_sel("attributedSubstringForProposedRange:actualRange:"),
+                                                       r, actual);
+}
+
+static CGRect first_rect(id view, NSRange r, NSRange *actual)
+{
+    SEL sel = sk_sel("firstRectForCharacterRange:actualRange:");
+    return SK_MSG_STRET(CGRect (*)(id, SEL, NSRange, NSRange *))(view, sel, r, actual);
+}
+
+/* The composition's text, "" when none is open. */
+static const char *marked_text(id view)
+{
+    NSRange m = marked_range(view);
+    id s = m.location == NSNotFound ? nil : substring(view, m, NULL);
+    return s ? sk_utf8(sk_msg(s, "string")) : "";
+}
+
+/* An input method answering as macOS's would, which a hidden window's
+ * synthetic keys never reach: the US layout's dead acute on Option+E,
+ * which E completes; a kana composition that K opens, A turns into か,
+ * Enter commits and Escape cancels; a full-width comma for ",". Any
+ * other key goes to AppKit's key bindings, as it would with no input
+ * method. */
+static int im_keys;
+
+static void toy_input_method(id view, id ev)
+{
+    im_keys++;
+    unsigned code = SK_MSG(unsigned short (*)(id, SEL))(ev, sk_sel("keyCode"));
+    bool option = sk_msg_ulong(ev, "modifierFlags") & NSEventModifierFlagOption;
+    const char *m = marked_text(view);
+    if (!*m && code == 0x0E && option)
+        set_marked(view, sk_nsstring("\xc2\xb4"), 1);
+    else if (!strcmp(m, "\xc2\xb4") && code == 0x0E && !option)
+        insert(view, "\xc3\xa9");
+    else if (!*m && code == 0x28)
+        set_marked(view, sk_nsstring("k"), 1);
+    else if (!strcmp(m, "k") && code == 0x00)
+        set_marked(view, sk_nsstring("\xe3\x81\x8b"), 1);
+    else if (*m && code == 0x24)
+        insert(view, m);
+    else if (*m && code == 0x35)
+        set_marked(view, sk_nsstring(""), 0);
+    else if (!*m && code == 0x2B)
+        insert(view, "\xef\xbc\x8c");
+    else
+        sk_msg_void_id(view, "interpretKeyEvents:",
+                       SK_MSG(id (*)(id, SEL, id))(sk_cls("NSArray"), sk_sel("arrayWithObject:"), ev));
+}
+
+/* A key pressed and let go, as AppKit sends them to the window. */
+static void type_key(sk_window *w, unsigned code, unsigned long flags, const char *chars, const char *plain)
+{
+    id nswin = sk_macos_nswindow(w);
+    sk_msg_void_id(nswin, "sendEvent:", key_event(w, NSEventTypeKeyDown, code, flags, chars, plain, false));
+    sk_msg_void_id(nswin, "sendEvent:", key_event(w, NSEventTypeKeyUp, code, flags, chars, plain, false));
+}
+
+typedef struct {
+    sk_event_type type;
+    const char *text; /* a key down's key.text */
+} want;
+
+/* The events since n_events was 0 are these, but the key ups; a key
+ * down named by its text. */
+static void expect(int line, const want *ws, size_t n)
+{
+    size_t j = 0;
+    for (size_t i = 0; i < n_events; i++) {
+        const sk_event *e = &events[i];
+        if (e->type == SK_EV_KEY_UP)
+            continue;
+        const char *text = e->type == SK_EV_KEY_DOWN ? e->key.text : e->text;
+        if (j >= n || e->type != ws[j].type || strcmp(text, ws[j].text)) {
+            sk_test_fail(__FILE__, line, "event %zu is %d \"%s\", not %d \"%s\"", j, e->type, text,
+                         j < n ? (int)ws[j].type : -1, j < n ? ws[j].text : "");
+            return;
+        }
+        j++;
+    }
+    if (j != n)
+        sk_test_fail(__FILE__, line, "%zu events, not %zu", j, n);
+}
+
+#define EXPECT(...) expect(__LINE__, (const want[]){__VA_ARGS__}, sizeof((const want[]){__VA_ARGS__}) / sizeof(want))
+#define EXPECT_NOTHING() expect(__LINE__, NULL, 0)
+
+static void test_the_view_takes_input_methods(void)
+{
+    if (!open_ui())
+        return;
+    sk_window *w = hidden_window(80, 60);
+    id view = view_of(w);
+    Protocol *client = objc_getProtocol("NSTextInputClient");
+    CHECK(client && SK_MSG(BOOL (*)(id, SEL, Protocol *))(view, sk_sel("conformsToProtocol:"), client));
+    CHECK(sk_msg(view, "inputContext") != nil);
+    CHECK_INT(sk_msg_ulong(sk_msg(view, "validAttributesForMarkedText"), "count"), 0);
+    unsigned long at = SK_MSG(unsigned long (*)(id, SEL, CGPoint))(view, sk_sel("characterIndexForPoint:"),
+                                                                    CGPointMake(5, 5));
+    CHECK_INT(at, NSNotFound);
+    close_ui();
+}
+
+static void test_a_dead_key_composes_through_the_input_method(void)
+{
+    if (!open_ui())
+        return;
+    sk_window *w = hidden_window(80, 60);
+    id view = view_of(w);
+    sk_macos_set_input_method(toy_input_method);
+    /* Option+E: the accent, marked; no key. */
+    n_events = 0;
+    type_key(w, 0x0E, NSEventModifierFlagOption, "", "e");
+    EXPECT({SK_EV_PREEDIT, "\xc2\xb4"});
+    CHECK_INT(count(SK_EV_KEY_UP), 1);
+    CHECK(sk_msg_bool(view, "hasMarkedText"));
+    CHECK_RANGE(marked_range(view), 0, 1);
+    CHECK_RANGE(selected_range(view), 1, 0);
+    /* E: the composition ends, then é is committed; no key. */
+    n_events = 0;
+    type_key(w, 0x0E, 0, "e", "e");
+    EXPECT({SK_EV_PREEDIT, ""}, {SK_EV_TEXT, "\xc3\xa9"});
+    CHECK_INT(count(SK_EV_KEY_UP), 1);
+    CHECK(!sk_msg_bool(view, "hasMarkedText"));
+    CHECK_RANGE(marked_range(view), NSNotFound, 0);
+
+    /* Plain text the input method types as the key's own stays the
+     * key's, once: so does an Option character outside a composition. */
+    n_events = 0;
+    type_key(w, 0x00, 0, "a", "a");
+    type_key(w, 0x00, NSEventModifierFlagShift, "A", "A");
+    type_key(w, 0x01, NSEventModifierFlagOption, "\xc3\x9f", "s");
+    type_key(w, 0x31, 0, " ", " ");
+    EXPECT({SK_EV_KEY_DOWN, "a"}, {SK_EV_KEY_DOWN, "A"}, {SK_EV_KEY_DOWN, "\xc3\x9f"}, {SK_EV_KEY_DOWN, " "});
+    if (n_events == 8)
+        CHECK_INT(events[4].key.mods, SK_MOD_ALT);
+
+    /* With no input method composing it, as a hidden window's real one
+     * does not, a dead key is a key with no text, as on Linux. */
+    sk_macos_set_input_method(NULL);
+    n_events = 0;
+    type_key(w, 0x0E, NSEventModifierFlagOption, "", "e");
+    EXPECT({SK_EV_KEY_DOWN, ""});
+    close_ui();
+}
+
+static void test_compositions_take_the_keys_they_use(void)
+{
+    if (!open_ui())
+        return;
+    sk_window *w = hidden_window(80, 60);
+    id view = view_of(w);
+    sk_macos_set_input_method(toy_input_method);
+    enum { FN = NSEventModifierFlagFunction, CTRL = NSEventModifierFlagControl, CMD = NSEventModifierFlagCommand };
+
+    /* Outside a composition, named keys and Ctrl and Cmd chords never
+     * reach the input method. */
+    im_keys = 0;
+    n_events = 0;
+    type_key(w, 0x7B, FN, "\xef\x9c\x82", "\xef\x9c\x82");
+    type_key(w, 0x24, 0, "\r", "\r");
+    type_key(w, 0x08, CTRL, "\x03", "c");
+    type_key(w, 0x28, CMD, "k", "k");
+    CHECK_INT(im_keys, 0);
+    EXPECT({SK_EV_KEY_DOWN, ""}, {SK_EV_KEY_DOWN, ""}, {SK_EV_KEY_DOWN, "c"}, {SK_EV_KEY_DOWN, "k"});
+    if (n_events == 8) {
+        CHECK_INT(events[0].key.key, SK_KEY_LEFT);
+        CHECK_INT(events[2].key.key, SK_KEY_ENTER);
+        CHECK_INT(events[4].key.mods, SK_MOD_CTRL);
+        CHECK_INT(events[6].key.mods, SK_MOD_SUPER);
+    }
+
+    /* K, A: a composition, shown as it changes; Enter commits it and is
+     * not a key. */
+    n_events = 0;
+    type_key(w, 0x28, 0, "k", "k");
+    type_key(w, 0x00, 0, "a", "a");
+    CHECK_STR(marked_text(view), "\xe3\x81\x8b");
+    type_key(w, 0x24, 0, "\r", "\r");
+    EXPECT({SK_EV_PREEDIT, "k"}, {SK_EV_PREEDIT, "\xe3\x81\x8b"}, {SK_EV_PREEDIT, ""}, {SK_EV_TEXT, "\xe3\x81\x8b"});
+    CHECK_INT(count(SK_EV_KEY_UP), 3);
+    CHECK_INT(im_keys, 3);
+
+    /* While a composition is open, named keys and Ctrl chords go to the
+     * input method, and those it passes on are keys as usual; Cmd
+     * chords stay the app's. Escape cancels: nothing is committed. */
+    type_key(w, 0x28, 0, "k", "k");
+    im_keys = 0;
+    n_events = 0;
+    type_key(w, 0x7B, FN, "\xef\x9c\x82", "\xef\x9c\x82");
+    type_key(w, 0x08, CTRL, "\x03", "c");
+    type_key(w, 0x28, CMD, "k", "k");
+    CHECK_INT(im_keys, 2);
+    EXPECT({SK_EV_KEY_DOWN, ""}, {SK_EV_KEY_DOWN, "c"}, {SK_EV_KEY_DOWN, "k"});
+    if (n_events == 6)
+        CHECK_INT(events[0].key.key, SK_KEY_LEFT);
+    CHECK_STR(marked_text(view), "k");
+    n_events = 0;
+    type_key(w, 0x35, 0, "\x1b", "\x1b");
+    EXPECT({SK_EV_PREEDIT, ""});
+    CHECK(!sk_msg_bool(view, "hasMarkedText"));
+
+    /* Enter again, with no composition: a key. */
+    n_events = 0;
+    type_key(w, 0x24, 0, "\r", "\r");
+    EXPECT({SK_EV_KEY_DOWN, ""});
+    if (last(SK_EV_KEY_DOWN))
+        CHECK_INT(last(SK_EV_KEY_DOWN)->key.key, SK_KEY_ENTER);
+
+    /* Text in place of the key's own is text, and the key is not. */
+    n_events = 0;
+    type_key(w, 0x2B, 0, ",", ",");
+    EXPECT({SK_EV_TEXT, "\xef\xbc\x8c"});
+
+    /* Text with no key at all, as the emoji picker inserts it; a command
+     * with no key in flight is nothing. */
+    n_events = 0;
+    insert(view, "\xf0\x9f\x98\x80");
+    SK_MSG(void (*)(id, SEL, SEL))(view, sk_sel("doCommandBySelector:"), sk_sel("insertNewline:"));
+    EXPECT({SK_EV_TEXT, "\xf0\x9f\x98\x80"});
+    close_ui();
+}
+
+static void test_marked_text_queries_agree(void)
+{
+    if (!open_ui())
+        return;
+    sk_window *w = hidden_window(80, 60);
+    id view = view_of(w);
+    /* With nothing marked: an empty text, the insertion point at 0. */
+    CHECK(!sk_msg_bool(view, "hasMarkedText"));
+    CHECK_RANGE(marked_range(view), NSNotFound, 0);
+    CHECK_RANGE(selected_range(view), 0, 0);
+    CHECK(substring(view, range(0, 1), NULL) == nil);
+
+    /* An attributed string, as some input methods pass, with a clause
+     * of it selected. */
+    n_events = 0;
+    id text = SK_MSG(id (*)(id, SEL, id))(sk_msg(sk_cls("NSAttributedString"), "alloc"), sk_sel("initWithString:"),
+                                         sk_nsstring("\xe3\x81\x8b\xe3\x81\xaa\xf0\x9f\x98\x80"));
+    SK_MSG(void (*)(id, SEL, id, NSRange, NSRange))(view, sk_sel("setMarkedText:selectedRange:replacementRange:"), text,
+                                                    range(1, 9), range(NSNotFound, 0));
+    sk_release(text);
+    EXPECT({SK_EV_PREEDIT, "\xe3\x81\x8b\xe3\x81\xaa\xf0\x9f\x98\x80"});
+    CHECK(sk_msg_bool(view, "hasMarkedText"));
+    /* UTF-16 units: the emoji is two. A selection past the end is cut
+     * to it. */
+    CHECK_RANGE(marked_range(view), 0, 4);
+    CHECK_RANGE(selected_range(view), 1, 3);
+    NSRange actual = range(99, 99);
+    id s = substring(view, range(0, 4), &actual);
+    CHECK_STR(s ? sk_utf8(sk_msg(s, "string")) : NULL, "\xe3\x81\x8b\xe3\x81\xaa\xf0\x9f\x98\x80");
+    CHECK_RANGE(actual, 0, 4);
+    s = substring(view, range(1, 50), &actual);
+    CHECK_STR(s ? sk_utf8(sk_msg(s, "string")) : NULL, "\xe3\x81\xaa\xf0\x9f\x98\x80");
+    CHECK_RANGE(actual, 1, 3);
+    CHECK(substring(view, range(4, 1), NULL) == nil);
+    CHECK(substring(view, range(NSNotFound, 0), NULL) == nil);
+
+    /* Changed, then accepted as it stands: committed. */
+    n_events = 0;
+    set_marked(view, sk_nsstring("\xe3\x81\x8b"), 1);
+    CHECK_RANGE(marked_range(view), 0, 1);
+    CHECK_RANGE(selected_range(view), 1, 0);
+    sk_msg_void(view, "unmarkText");
+    EXPECT({SK_EV_PREEDIT, "\xe3\x81\x8b"}, {SK_EV_PREEDIT, ""}, {SK_EV_TEXT, "\xe3\x81\x8b"});
+    CHECK(!sk_msg_bool(view, "hasMarkedText"));
+    CHECK_RANGE(marked_range(view), NSNotFound, 0);
+    CHECK_RANGE(selected_range(view), 0, 0);
+
+    /* With nothing open, ending it again is nothing. */
+    n_events = 0;
+    sk_msg_void(view, "unmarkText");
+    set_marked(view, sk_nsstring(""), 0);
+    EXPECT_NOTHING();
+
+    /* A window freed with a composition open lets it go. */
+    set_marked(view, sk_nsstring("k"), 1);
+    sk_window_free(w);
+    close_ui();
+}
+
+static void check_first_rect(sk_window *w, int x, int y, int width, int height)
+{
+    id nswin = sk_macos_nswindow(w);
+    NSRange actual = range(99, 99);
+    CGRect r = first_rect(view_of(w), range(0, 1), &actual);
+    CGRect frame = sk_msg_rect(nswin, "frame");
+    CGRect content = SK_MSG_STRET(CGRect (*)(id, SEL, CGRect))(nswin, sk_sel("contentRectForFrameRect:"), frame);
+    CHECK(r.origin.x == content.origin.x + x);
+    CHECK(r.origin.y == content.origin.y + content.size.height - y - height);
+    CHECK(r.size.width == width);
+    CHECK(r.size.height == height);
+    CHECK(CGRectContainsRect(frame, r));
+    CHECK_RANGE(actual, 0, 1);
+}
+
+static void test_candidates_go_by_the_text_cursor(void)
+{
+    if (!open_ui())
+        return;
+    sk_window *w = hidden_window(200, 100);
+    check_first_rect(w, 0, 0, 0, 0);
+    sk_window_set_ime_rect(w, 30, 40, 9, 18);
+    check_first_rect(w, 30, 40, 9, 18);
+    /* Moved and grown, the window keeps it from its top left. */
+    id nswin = sk_macos_nswindow(w);
+    SK_MSG(void (*)(id, SEL, CGPoint))(nswin, sk_sel("setFrameOrigin:"), CGPointMake(140, 90));
+    SK_MSG(void (*)(id, SEL, CGSize))(nswin, sk_sel("setContentSize:"), CGSizeMake(300, 160));
+    check_first_rect(w, 30, 40, 9, 18);
+    sk_window_set_ime_rect(w, 291, 142, 9, 18);
+    check_first_rect(w, 291, 142, 9, 18);
     close_ui();
 }
 
@@ -961,6 +1328,11 @@ const sk_test sk_suite_ui_macos[] = {
     T(test_a_resize_gives_a_new_frame),
     T(test_keys_come_back_as_the_window_got_them),
     T(test_cmd_q_asks_every_window_to_close),
+    T(test_the_view_takes_input_methods),
+    T(test_a_dead_key_composes_through_the_input_method),
+    T(test_compositions_take_the_keys_they_use),
+    T(test_marked_text_queries_agree),
+    T(test_candidates_go_by_the_text_cursor),
     T(test_mouse_events_from_the_top_left),
     T(test_scrolling_in_lines_and_points),
     T(test_close_asks_and_the_app_decides),
