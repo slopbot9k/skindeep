@@ -1,5 +1,6 @@
 #include "json.h"
 
+#include "map.h"
 #include "utf8.h"
 
 #include <math.h>
@@ -386,6 +387,23 @@ bool sk_jr_item(sk_jr *r)
     return next_member(r, '[', ']');
 }
 
+/* sk_jr_key for sk_jr_skip: checks the key without decoding it, so the
+ * caller's current key stays as it was. */
+static bool skip_key(sk_jr *r)
+{
+    if (!next_member(r, '{', '}'))
+        return false;
+    if (!at(r, '"'))
+        return fail(r, "expected a key");
+    if (!read_string(r, NULL, NULL))
+        return false;
+    ws(r);
+    if (!at(r, ':'))
+        return fail(r, "expected :");
+    r->i++;
+    return true;
+}
+
 bool sk_jr_skip(sk_jr *r)
 {
     unsigned base = r->depth;
@@ -418,7 +436,7 @@ bool sk_jr_skip(sk_jr *r)
                 return false;
             if (r->depth == base)
                 return true;
-            bool more = r->kind[r->depth - 1] == '{' ? sk_jr_key(r, NULL) : sk_jr_item(r);
+            bool more = r->kind[r->depth - 1] == '{' ? skip_key(r) : sk_jr_item(r);
             if (more)
                 break;
         }
@@ -434,6 +452,62 @@ bool sk_jr_done(sk_jr *r)
 }
 
 /* The tree */
+
+/* A key JavaScript treats as an array index: "0", or digits with no
+ * leading zero, at most 2^32 - 2. */
+static bool array_index(sk_str k, uint64_t *out)
+{
+    if (!k.len || k.len > 10 || (k.len > 1 && k.ptr[0] == '0'))
+        return false;
+    uint64_t v = 0;
+    for (size_t i = 0; i < k.len; i++) {
+        if (k.ptr[i] < '0' || k.ptr[i] > '9')
+            return false;
+        v = v * 10 + (uint64_t)(k.ptr[i] - '0');
+    }
+    if (v > 4294967294u)
+        return false;
+    *out = v;
+    return true;
+}
+
+typedef struct {
+    uint64_t index;
+    const sk_json_member *m;
+} indexed;
+
+static int by_index(const void *a, const void *b)
+{
+    uint64_t x = ((const indexed *)a)->index, y = ((const indexed *)b)->index;
+    return x < y ? -1 : x > y;
+}
+
+/* The members of from in the order a JavaScript object keeps them, and
+ * so JSON.stringify writes them: array-index keys first, ascending, then
+ * the other keys in the order they came. */
+static void js_order(sk_json_member *to, const sk_json_member *from, size_t n)
+{
+    SK_VEC(indexed) idx = {0};
+    for (size_t i = 0; i < n; i++) {
+        uint64_t k;
+        if (array_index(from[i].key, &k)) {
+            indexed e = {k, &from[i]};
+            sk_vec_push(&idx, e);
+        }
+    }
+    size_t out = 0;
+    if (idx.len) {
+        qsort(idx.ptr, idx.len, sizeof *idx.ptr, by_index);
+        for (size_t i = 0; i < idx.len; i++)
+            to[out++] = *idx.ptr[i].m;
+    }
+    for (size_t i = 0; i < n; i++) {
+        uint64_t k;
+        if (!array_index(from[i].key, &k))
+            to[out++] = from[i];
+    }
+    sk_vec_free(&idx);
+}
 
 static bool build(sk_jr *r, sk_arena *a, sk_json *v)
 {
@@ -480,6 +554,8 @@ static bool build(sk_jr *r, sk_arena *a, sk_json *v)
     }
     case SK_JSON_OBJECT: {
         SK_VEC(sk_json_member) members = {0};
+        sk_map seen; /* key -> position + 1, once the object grows */
+        bool mapped = false;
         sk_str key;
         sk_jr_object(r);
         while (sk_jr_key(r, &key)) {
@@ -487,8 +563,33 @@ static bool build(sk_jr *r, sk_arena *a, sk_json *v)
             m.key = sk_str_n(sk_arena_strndup(a, key.ptr, key.len), key.len);
             if (!build(r, a, &m.value))
                 break;
+            /* A repeated key keeps its first place and takes its last
+             * value, as JSON.parse leaves it. */
+            size_t at_pos = SIZE_MAX;
+            if (mapped) {
+                uintptr_t p = (uintptr_t)sk_map_get(&seen, m.key);
+                at_pos = p ? p - 1 : SIZE_MAX;
+            } else {
+                for (size_t i = 0; i < members.len && at_pos == SIZE_MAX; i++)
+                    if (sk_str_eq(members.ptr[i].key, m.key))
+                        at_pos = i;
+            }
+            if (at_pos != SIZE_MAX) {
+                members.ptr[at_pos].value = m.value;
+                continue;
+            }
             sk_vec_push(&members, m);
+            if (!mapped && members.len > 16) {
+                sk_map_init(&seen);
+                mapped = true;
+                for (size_t i = 0; i < members.len; i++)
+                    *sk_map_put(&seen, members.ptr[i].key) = (void *)(uintptr_t)(i + 1);
+            } else if (mapped) {
+                *sk_map_put(&seen, m.key) = (void *)(uintptr_t)members.len;
+            }
         }
+        if (mapped)
+            sk_map_free(&seen);
         if (sk_jr_failed(r)) {
             sk_vec_free(&members);
             return false;
@@ -498,7 +599,7 @@ static bool build(sk_jr *r, sk_arena *a, sk_json *v)
         v->object.members = NULL;
         if (members.len) {
             v->object.members = sk_arena_array(a, members.len, sizeof *members.ptr);
-            memcpy(v->object.members, members.ptr, members.len * sizeof *members.ptr);
+            js_order(v->object.members, members.ptr, members.len);
         }
         sk_vec_free(&members);
         return true;
@@ -747,6 +848,12 @@ void sk_jw_null(sk_jw *w)
     sk_buf_append_c(w->out, "null");
 }
 
+void sk_jw_raw(sk_jw *w, sk_str json)
+{
+    before_value(w);
+    sk_buf_append_str(w->out, json);
+}
+
 void sk_jw_value(sk_jw *w, const sk_json *v)
 {
     switch (v->type) {
@@ -780,11 +887,67 @@ void sk_jw_value(sk_jw *w, const sk_json *v)
     }
 }
 
+/* e is d in %e form with p digits, which does not read back as d. Tries
+ * the p-digit values one unit of the last digit above and below; when one
+ * reads back, writes it to e and returns true. Beside a power of two a
+ * double's interval is lopsided, so the correctly rounded p digits can
+ * miss it while a neighbour lands inside (2^-24 is 5.960464477539063e-8
+ * in JavaScript, not ...0625). */
+static bool neighbour(char *e, size_t cap, double d, int p)
+{
+    const char *s = e;
+    bool neg = *s == '-';
+    if (neg)
+        s++;
+    char dig[24];
+    int k = 0;
+    for (; *s && *s != 'e'; s++)
+        if (*s != '.' && k < (int)sizeof dig)
+            dig[k++] = *s;
+    if (*s != 'e' || k != p)
+        return false;
+    int exp = atoi(s + 1);
+    for (int step = 1; step >= -1; step -= 2) {
+        char c[24];
+        int x = exp;
+        memcpy(c, dig, (size_t)k);
+        int i = k - 1;
+        if (step > 0) {
+            while (i >= 0 && c[i] == '9')
+                c[i--] = '0';
+            if (i < 0) {
+                c[0] = '1'; /* 9.99 up is 10.0: one digit more to the left */
+                x++;
+            } else {
+                c[i]++;
+            }
+        } else {
+            while (i >= 0 && c[i] == '0')
+                c[i--] = '9';
+            if (i < 0)
+                continue;
+            c[i]--;
+            if (c[0] == '0') { /* 1.00 down is 0.999: all nines, one place lower */
+                memset(c, '9', (size_t)k);
+                x--;
+            }
+        }
+        char cand[48];
+        int n = snprintf(cand, sizeof cand, "%s%c%s%.*se%d", neg ? "-" : "", c[0], k > 1 ? "." : "",
+                         k - 1, c + 1, x);
+        if (n > 0 && (size_t)n < cap && strtod(cand, NULL) == d) {
+            memcpy(e, cand, (size_t)n + 1);
+            return true;
+        }
+    }
+    return false;
+}
+
 /* ECMAScript Number::toString: the fewest significant digits that read
  * back as the same double, then fixed or exponent form by the decimal
- * point's position. The digits come from the shortest %e that round-trips;
- * that matches JavaScript except in rare cases where a value has two
- * candidates of the same length and only the farther one reads back. */
+ * point's position. For each length the correctly rounded digits come
+ * first, then their neighbours in the last digit, so the shortest form
+ * that reads back is found even beside a power of two. */
 void sk_json_format_number(sk_buf *b, double d)
 {
     if (!isfinite(d)) {
@@ -798,7 +961,7 @@ void sk_json_format_number(sk_buf *b, double d)
     char e[40];
     for (int p = 1; p <= 17; p++) {
         snprintf(e, sizeof e, "%.*e", p - 1, d);
-        if (strtod(e, NULL) == d)
+        if (strtod(e, NULL) == d || (p < 17 && neighbour(e, sizeof e, d, p)))
             break;
     }
     const char *p = e;

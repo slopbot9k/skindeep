@@ -102,6 +102,7 @@ static void on_signal(int signo)
 {
     dump(signo == SIGALRM ? "hang" : "crash");
     signal(signo, SIG_DFL);
+    signal(SIGABRT, SIG_DFL); /* a hang ends in SIGABRT: not a second report */
     raise(signo == SIGALRM ? SIGABRT : signo);
 }
 

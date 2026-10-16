@@ -390,7 +390,94 @@ static void test_fixtures_round_trip(void)
     CHECK(lines >= 470);
 }
 
+static char *round_trip(const char *text)
+{
+    sk_arena a;
+    sk_arena_init(&a, 0);
+    sk_json *v = sk_json_parse(&a, text, strlen(text), NULL);
+    sk_buf out = {0};
+    if (v) {
+        sk_jw w;
+        sk_jw_init(&w, &out, 0);
+        sk_jw_value(&w, v);
+    }
+    sk_arena_free(&a);
+    return out.ptr;
+}
+
+/* What JSON.stringify(JSON.parse(text)) gives. */
+static void test_object_order_like_javascript(void)
+{
+    struct {
+        const char *in, *js;
+    } cases[] = {
+        {"{\"b\":1,\"2\":2,\"1\":3}", "{\"1\":3,\"2\":2,\"b\":1}"},
+        {"{\"a\":1,\"b\":2,\"a\":3}", "{\"a\":3,\"b\":2}"},
+        {"{\"01\":1,\"1\":2,\"-1\":3}", "{\"1\":2,\"01\":1,\"-1\":3}"},
+        {"{\"4294967295\":1,\"4294967294\":2,\"x\":3,\"0\":4}",
+         "{\"0\":4,\"4294967294\":2,\"4294967295\":1,\"x\":3}"},
+        {"{\"k\":{\"z\":1,\"9\":2,\"z\":{\"10\":0,\"2\":1}}}", "{\"k\":{\"9\":2,\"z\":{\"2\":1,\"10\":0}}}"},
+    };
+    for (size_t i = 0; i < SK_LEN(cases); i++) {
+        char *out = round_trip(cases[i].in);
+        CHECK_STR(out, cases[i].js);
+        free(out);
+    }
+    /* Past 16 members the duplicates are found through a map. */
+    sk_buf big = {0}, want = {0};
+    sk_buf_putc(&big, '{');
+    sk_buf_putc(&want, '{');
+    for (int i = 0; i < 40; i++)
+        sk_buf_printf(&big, "%s\"k%d\":%d", i ? "," : "", i, i);
+    for (int i = 0; i < 40; i += 2)
+        sk_buf_printf(&big, ",\"k%d\":\"again\"", i);
+    sk_buf_putc(&big, '}');
+    for (int i = 0; i < 40; i++)
+        i % 2 ? sk_buf_printf(&want, ",\"k%d\":%d", i, i)
+              : sk_buf_printf(&want, "%s\"k%d\":\"again\"", i ? "," : "", i);
+    sk_buf_putc(&want, '}');
+    char *out = round_trip(big.ptr);
+    CHECK_STR(out, want.ptr);
+    free(out);
+    sk_buf_free(&big);
+    sk_buf_free(&want);
+}
+
+static void test_numbers_beside_powers_of_two(void)
+{
+    CHECK_STR(formatted(ldexp(1, -24)), "5.960464477539063e-8");
+    /* Every power of two prints in a form that reads back exactly. */
+    int bad = 0;
+    for (int e = -1074; e <= 1023; e++) {
+        double d = ldexp(1, e);
+        sk_buf b = {0};
+        sk_json_format_number(&b, d);
+        bad += strtod(b.ptr, NULL) != d;
+        sk_buf_free(&b);
+    }
+    CHECK_INT(bad, 0);
+}
+
+static void test_skip_keeps_the_callers_key(void)
+{
+    const char *s = "{\"kA\":{\"innerB\":1,\"\\u00e9\":2},\"kC\":3}";
+    sk_jr r;
+    sk_jr_init(&r, s, strlen(s));
+    sk_str key;
+    CHECK(sk_jr_object(&r));
+    CHECK(sk_jr_key(&r, &key));
+    CHECK_MEM(key, "kA");
+    CHECK(sk_jr_skip(&r));
+    CHECK_MEM(key, "kA");
+    CHECK(sk_jr_key(&r, &key));
+    CHECK_MEM(key, "kC");
+    sk_jr_free(&r);
+}
+
 const sk_test sk_suite_json[] = {
+    T(test_object_order_like_javascript),
+    T(test_numbers_beside_powers_of_two),
+    T(test_skip_keeps_the_callers_key),
     T(test_scalars),
     T(test_strings),
     T(test_rejects),

@@ -22,7 +22,7 @@ static size_t round_up(size_t n)
 
 void sk_arena_init(sk_arena *a, size_t block_size)
 {
-    a->head = NULL;
+    a->head = a->first = NULL;
     a->block_size = block_size ? block_size : DEFAULT_BLOCK;
 }
 
@@ -59,6 +59,8 @@ void *sk_arena_alloc(sk_arena *a, size_t n)
     nb->next = b;
     a->head = nb;
     nb->used = n;
+    if (!a->first && nb->size == a->block_size)
+        a->first = nb;
     return nb->data;
 }
 
@@ -89,21 +91,17 @@ char *sk_arena_strndup(sk_arena *a, const char *s, size_t n)
 
 void sk_arena_reset(sk_arena *a)
 {
-    sk_arena_block *b = a->head;
-    if (!b)
-        return;
-    /* Keep the last block in the chain: the first one allocated, of the
-     * ordinary size unless a single large request made it. */
-    sk_arena_block *keep = b;
-    while (keep->next)
-        keep = keep->next;
-    while (b != keep) {
+    for (sk_arena_block *b = a->head; b;) {
         sk_arena_block *next = b->next;
-        free(b);
+        if (b != a->first)
+            free(b);
         b = next;
     }
-    keep->used = 0;
-    a->head = keep;
+    a->head = a->first;
+    if (a->first) {
+        a->first->next = NULL;
+        a->first->used = 0;
+    }
 }
 
 void sk_arena_free(sk_arena *a)
@@ -114,5 +112,5 @@ void sk_arena_free(sk_arena *a)
         free(b);
         b = next;
     }
-    a->head = NULL;
+    a->head = a->first = NULL;
 }

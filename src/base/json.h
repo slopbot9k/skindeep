@@ -7,7 +7,12 @@
  * before JSON.parse sees it. Numbers go through strtod, which needs the C
  * locale: nothing in the C tree may call setlocale for LC_NUMERIC.
  *
- * sk_json_parse builds a tree in an arena on top of the reader.
+ * sk_json_parse builds a tree in an arena on top of the reader. An
+ * object's members are in the order a JavaScript object keeps them:
+ * array-index keys ("0", "17") first, ascending, then the rest as they
+ * came, and a repeated key holds its first place with its last value. So
+ * walking a member list matches Object.keys, and writing the tree back
+ * matches JSON.stringify(JSON.parse(text)).
  *
  * sk_jw writes what JSON.stringify(value, null, indent) writes, byte for
  * byte, number formatting included. The generated settings files are
@@ -98,8 +103,7 @@ typedef struct {
 /* The whole of s as one value, in a, or NULL with *err set when err is
  * not NULL. */
 sk_json *sk_json_parse(sk_arena *a, const char *s, size_t n, sk_json_error *err);
-/* The member's value, the last one when a key repeats, as JSON.parse
- * keeps it; NULL when v is not an object or lacks the key. */
+/* The member's value; NULL when v is not an object or lacks the key. */
 const sk_json *sk_json_get(const sk_json *v, const char *key);
 /* Follows keys: sk_json_dig(v, "cost", "total_cost_usd", NULL). */
 const sk_json *sk_json_dig(const sk_json *v, ...);
@@ -130,6 +134,8 @@ void sk_jw_int(sk_jw *w, int64_t i);
 void sk_jw_bool(sk_jw *w, bool b);
 void sk_jw_null(sk_jw *w);
 void sk_jw_value(sk_jw *w, const sk_json *v);
+/* A value already written as JSON, such as a list a source stored. */
+void sk_jw_raw(sk_jw *w, sk_str json);
 /* Appends d formatted by ECMAScript's Number::toString. */
 void sk_json_format_number(sk_buf *b, double d);
 

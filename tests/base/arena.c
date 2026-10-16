@@ -64,7 +64,31 @@ static void test_reset_reuses(void)
     sk_arena_free(&a); /* twice is harmless */
 }
 
+/* A large request beside the first block must not be the one reset keeps:
+ * transcript lines can carry megabytes, one arena reset per line. */
+static void test_reset_keeps_the_ordinary_block(void)
+{
+    sk_arena a;
+    sk_arena_init(&a, 4096);
+    sk_arena_alloc(&a, 100);
+    sk_arena_block *first = a.first;
+    CHECK(first != NULL && a.head == first);
+    sk_arena_alloc(&a, 50 * 1024 * 1024);
+    sk_arena_reset(&a);
+    CHECK(a.head == first && a.first == first);
+    /* An arena whose first request was large keeps nothing. */
+    sk_arena big;
+    sk_arena_init(&big, 4096);
+    sk_arena_alloc(&big, 1024 * 1024);
+    CHECK(big.first == NULL);
+    sk_arena_reset(&big);
+    CHECK(big.head == NULL);
+    sk_arena_free(&a);
+    sk_arena_free(&big);
+}
+
 const sk_test sk_suite_arena[] = {
+    T(test_reset_keeps_the_ordinary_block),
     T(test_aligned_and_distinct),
     T(test_large_requests),
     T(test_strndup_and_zalloc),
