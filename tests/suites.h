@@ -33,4 +33,11 @@
     X(profiles)                                                              \
     X(sessions)                                                              \
     X(history)                                                               \
-    X(board)
+    X(board)                                                                 \
+    X(argv)                                                                  \
+    X(options)                                                               \
+    X(identity)                                                              \
+    X(runtime)                                                               \
+    X(appsettings)                                                           \
+    X(background)                                                            \
+    X(tabs)
