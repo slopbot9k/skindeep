@@ -113,7 +113,10 @@ void sk_macos_key_event(id ev, sk_key_event *out)
     out->mods = sk_macos_mods(flags);
     out->repeat = sk_msg_bool(ev, "isARepeat");
     out->key = sk_macos_key(code);
-    if (out->key != SK_KEY_NONE)
+    /* The keypad's keys but Enter type their character as well, as a
+     * browser's KeyboardEvent.key gives it: the key encoder reads it. */
+    bool keypad = out->key >= SK_KEY_KP_0 && out->key <= SK_KEY_KP_EQUAL && out->key != SK_KEY_KP_ENTER;
+    if (out->key != SK_KEY_NONE && !keypad)
         return;
 
     /* Ctrl and Cmd turn a key's characters into controls or nothing;

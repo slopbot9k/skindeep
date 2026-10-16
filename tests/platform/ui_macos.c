@@ -412,8 +412,11 @@ static void test_keys_come_back_as_the_window_got_them(void)
         sk_key_event k = press(w, named[i].code, named[i].flags, named[i].chars, named[i].chars);
         if (k.key != named[i].key)
             sk_test_fail(__FILE__, __LINE__, "key code 0x%x gave %d, not %d", named[i].code, k.key, named[i].key);
-        CHECK_STR(k.text, "");
-        CHECK_INT(k.base, 0);
+        /* The keypad's keys type their character too, as the key
+         * encoder reads it (ui.h). */
+        bool keypad = k.key >= SK_KEY_KP_0 && k.key <= SK_KEY_KP_EQUAL && k.key != SK_KEY_KP_ENTER;
+        CHECK_STR(k.text, keypad ? named[i].chars : "");
+        CHECK_INT(k.base, keypad ? (unsigned char)named[i].chars[0] : 0);
         CHECK_INT(k.mods, 0);
     }
     unsigned long fn_shift_cmd = NSEventModifierFlagFunction | NSEventModifierFlagShift | NSEventModifierFlagCommand;

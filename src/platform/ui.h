@@ -64,11 +64,14 @@ typedef struct {
     uint32_t mods;
     /* The character the key types with the layout's Shift, AltGr and
      * Option applied, as UTF-8; empty for a named key, a dead key, and
-     * any key held with Ctrl or Super whose layout gives nothing. */
+     * any key held with Ctrl or Super whose layout gives nothing. The
+     * keypad's keys but Enter are named and carry their character too,
+     * as a browser's KeyboardEvent.key does, since the key encoder
+     * reads it. */
     char text[16];
     /* The key's character on the layout with no modifier at all, a
      * letter in lower case: what a Ctrl or Cmd chord names. 0 for a
-     * named key. */
+     * named key that types nothing. */
     uint32_t base;
     bool repeat;
     /* The platform's own key code, for logs. */
