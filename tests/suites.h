@@ -96,4 +96,9 @@
     X(skinc_validate)                                                        \
     X(skinc_splits)                                                          \
     X(skinc_skins)                                                           \
-    X(skinc_program)
+    X(skinc_program)                                                         \
+    X(viz_math)                                                              \
+    X(viz_synth)                                                             \
+    X(viz_layout)                                                            \
+    X(viz_canvas)                                                            \
+    X(viz_modes)
