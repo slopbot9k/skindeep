@@ -133,13 +133,8 @@ typedef struct {
     size_t list_rows;
 } layout;
 
-/* A text field: its text, and the caret and the selection's other end,
- * byte offsets at characters. */
-typedef struct {
-    sk_buf text;
-    size_t caret, anchor;
-    double scroll; /* points the text is scrolled left */
-} field;
+/* A text field, as field.c edits it. */
+typedef sk_field field;
 
 typedef enum { PICK_FOLDER, PICK_PROFILE } pick_what;
 
@@ -172,135 +167,6 @@ struct sk_chooser {
  * thread's. */
 static SK_VEC(sk_chooser *) alive;
 static uintptr_t tokens;
-
-/* ---- Text fields ---- */
-
-static size_t prev_cp(const sk_buf *t, size_t i)
-{
-    if (!i)
-        return 0;
-    i--;
-    while (i && ((unsigned char)t->ptr[i] & 0xC0) == 0x80)
-        i--;
-    return i;
-}
-
-static size_t next_cp(const sk_buf *t, size_t i)
-{
-    if (i >= t->len)
-        return t->len;
-    i++;
-    while (i < t->len && ((unsigned char)t->ptr[i] & 0xC0) == 0x80)
-        i++;
-    return i;
-}
-
-/* A word's character: a letter, a digit, _, anything past ASCII but a
- * space. Paths break at / . - and ~. */
-static bool word_at(const sk_buf *t, size_t i)
-{
-    uint32_t cp;
-    sk_utf8_decode(t->ptr + i, t->len - i, &cp, NULL);
-    return (cp >= '0' && cp <= '9') || (cp >= 'A' && cp <= 'Z') || (cp >= 'a' && cp <= 'z') || cp == '_' ||
-           (cp >= 0x80 && !sk_js_space(cp));
-}
-
-/* The start of the word before i, and the end of the word after it, as
- * Alt+Left and Alt+Right move on macOS and Ctrl on Linux. */
-static size_t word_left(const sk_buf *t, size_t i)
-{
-    while (i && !word_at(t, prev_cp(t, i)))
-        i = prev_cp(t, i);
-    while (i && word_at(t, prev_cp(t, i)))
-        i = prev_cp(t, i);
-    return i;
-}
-
-static size_t word_right(const sk_buf *t, size_t i)
-{
-    while (i < t->len && !word_at(t, i))
-        i = next_cp(t, i);
-    while (i < t->len && word_at(t, i))
-        i = next_cp(t, i);
-    return i;
-}
-
-/* What a double click at i selects: its word, or the run of others. */
-static void word_around(const sk_buf *t, size_t i, size_t *lo, size_t *hi)
-{
-    if (i >= t->len && i)
-        i = prev_cp(t, i);
-    bool w = i < t->len && word_at(t, i);
-    size_t a = i, b = i;
-    while (a && word_at(t, prev_cp(t, a)) == w)
-        a = prev_cp(t, a);
-    while (b < t->len && word_at(t, b) == w)
-        b = next_cp(t, b);
-    *lo = a;
-    *hi = b;
-}
-
-static size_t sel_lo(const field *f)
-{
-    return SK_MIN(f->caret, f->anchor);
-}
-
-static size_t sel_hi(const field *f)
-{
-    return SK_MAX(f->caret, f->anchor);
-}
-
-static bool has_sel(const field *f)
-{
-    return f->caret != f->anchor;
-}
-
-static void field_init(field *f)
-{
-    memset(f, 0, sizeof *f);
-    sk_buf_reserve(&f->text, 0);
-}
-
-/* As input.value = s: the caret after it. */
-static void field_set(field *f, const char *s)
-{
-    sk_buf_clear(&f->text);
-    sk_buf_append_c(&f->text, s ? s : "");
-    f->caret = f->anchor = f->text.len;
-    f->scroll = 0;
-}
-
-/* [lo, hi) replaced with n bytes of s, the caret after them. */
-static void field_replace(field *f, size_t lo, size_t hi, const char *s, size_t n)
-{
-    sk_buf b = {0};
-    sk_buf_append(&b, f->text.ptr, lo);
-    sk_buf_append(&b, s, n);
-    sk_buf_append(&b, f->text.ptr + hi, f->text.len - hi);
-    sk_buf_free(&f->text);
-    f->text = b;
-    f->caret = f->anchor = lo + n;
-}
-
-/* Typed or pasted text in place of the selection. A text input's value
- * holds no line break, so pasted ones are dropped, as Chromium drops
- * them; invalid UTF-8 becomes U+FFFD. */
-static void field_insert(field *f, const char *s)
-{
-    sk_buf clean = {0}, text = {0};
-    sk_utf8_sanitize(&clean, s, strlen(s));
-    for (size_t i = 0; i < clean.len; i++)
-        if (clean.ptr[i] != '\n' && clean.ptr[i] != '\r')
-            sk_buf_putc(&text, clean.ptr[i]);
-    field_replace(f, sel_lo(f), sel_hi(f), text.ptr, text.len);
-    sk_buf_free(&clean);
-    sk_buf_free(&text);
-}
-
-static char *field_selection(const field *f)
-{
-    return sk_xstrndup(f->text.ptr + sel_lo(f), sel_hi(f) - sel_lo(f));
-}
 
 /* ---- The dialog's model, as chooser.js keeps it ---- */
 
@@ -361,7 +227,7 @@ static void pick_agent(sk_chooser *c, sk_profile_agent a)
 {
     c->agent = a;
     fill_profiles(c, c->st.agents[a].profile);
-    field_set(&c->line, c->st.agents[a].line);
+    sk_field_set(&c->line, c->st.agents[a].line);
     say(c, NULL);
 }
 
@@ -432,7 +298,7 @@ static void wrap(sk_fontset *set, int style, double size, double w, const char *
         do {
             size_t fit = a, space = SIZE_MAX;
             for (size_t j = a; j < end;) {
-                size_t k = next_cp(&t, j);
+                size_t k = sk_field_next(&t, j);
                 if (j > a && measure(set, style, size, s + a, k - a) > w + 0.01)
                     break;
                 if (s[j] == ' ')
@@ -612,10 +478,10 @@ static void shown_text(const sk_chooser *c, int k, sk_buf *out, size_t *caret)
         *caret = f->caret;
         return;
     }
-    sk_buf_append(out, f->text.ptr, sel_lo(f));
+    sk_buf_append(out, f->text.ptr, sk_field_sel_lo(f));
     sk_buf_append_c(out, c->preedit);
     *caret = out->len;
-    sk_buf_append(out, f->text.ptr + sel_hi(f), f->text.len - sel_hi(f));
+    sk_buf_append(out, f->text.ptr + sk_field_sel_hi(f), f->text.len - sk_field_sel_hi(f));
 }
 
 /* A field scrolls to keep its caret in view while it has the focus, and
@@ -677,7 +543,7 @@ static size_t offset_at(sk_chooser *c, int k, double x)
     double want = x - (c->lay.ctl[k].x + BORDER + FIELD_PAD - f->scroll);
     size_t best = 0;
     double best_d = fabs(want);
-    for (size_t i = next_cp(&f->text, 0); i > 0 && i <= f->text.len; i = next_cp(&f->text, i)) {
+    for (size_t i = sk_field_next(&f->text, 0); i > 0 && i <= f->text.len; i = sk_field_next(&f->text, i)) {
         double d = fabs(want - measure(c->style.mono, 0, CTL_FONT, f->text.ptr, i));
         if (d < best_d) {
             best = i;
@@ -863,8 +729,8 @@ static void draw_field(const sk_chooser *c, sk_image *dst, int k, const sk_rect 
     size_t at;
     shown_text(c, k, &t, &at);
     double tx = content.x - f->scroll, base = ctl_base(c, b);
-    if (focused && has_sel(f) && !comp) {
-        double a = measure(mono, 0, CTL_FONT, t.ptr, sel_lo(f)), z = measure(mono, 0, CTL_FONT, t.ptr, sel_hi(f));
+    if (focused && sk_field_has_sel(f) && !comp) {
+        double a = measure(mono, 0, CTL_FONT, t.ptr, sk_field_sel_lo(f)), z = measure(mono, 0, CTL_FONT, t.ptr, sk_field_sel_hi(f));
         sk_fill_rect(dst, px_of(c, (box){tx + a, content.y, z - a, content.h}), COL_SELECTION, SK_BLEND_SRC_OVER, &in);
     }
     text_at(c, dst, mono, 0, CTL_FONT, tx, base, t.ptr, t.len, COL_FIELD_TEXT, &in);
@@ -874,11 +740,11 @@ static void draw_field(const sk_chooser *c, sk_image *dst, int k, const sk_rect 
         double x = tx + measure(mono, 0, CTL_FONT, t.ptr, at);
         /* A composition is underlined, the caret after it. */
         if (comp) {
-            double p = measure(mono, 0, CTL_FONT, t.ptr, sel_lo(f));
+            double p = measure(mono, 0, CTL_FONT, t.ptr, sk_field_sel_lo(f));
             sk_fill_rect(dst, px_of(c, (box){tx + p, base + 1, x - (tx + p), 1}), COL_FIELD_TEXT, SK_BLEND_SRC_OVER,
                          &in);
         }
-        if (!has_sel(f) || comp) {
+        if (!sk_field_has_sel(f) || comp) {
             sk_rect caret = px_of(c, (box){x, base - m.ascent, 0, m.ascent + m.descent});
             caret.w = line_px(c);
             caret.x = (int)floor(x * s);
@@ -996,7 +862,7 @@ static void picked(void *ud, const char *dir, const char *err)
     } else if (c->picking == PICK_FOLDER) {
         sk_buf t = {0};
         sk_identity_tildify(&t, dir, c->st.home);
-        field_set(&c->folder, sk_buf_cstr(&t));
+        sk_field_set(&c->folder, sk_buf_cstr(&t));
         sk_buf_free(&t);
     } else {
         sk_newtab_profiles *p = profiles_of(c);
@@ -1043,7 +909,7 @@ static void pasted(void *ud, const char *utf8)
     field *f = focused_field(c);
     if (!c->open || !f || !utf8 || !*utf8)
         return;
-    field_insert(f, utf8);
+    sk_field_insert(f, utf8);
     changed(c);
 }
 
@@ -1055,21 +921,12 @@ static void paste(sk_chooser *c, bool primary)
     get(primary, pasted, (void *)c->paste_token);
 }
 
-static void copy(sk_chooser *c, const field *f)
-{
-    if (!has_sel(f))
-        return;
-    char *s = field_selection(f);
-    (c->cfg.clipboard_set ? c->cfg.clipboard_set : sk_clipboard_set)(s);
-    free(s);
-}
-
 /* X11's PRIMARY holds what was last selected, as Chromium sets it. */
 static void selected(sk_chooser *c, const field *f)
 {
-    if (!has_sel(f))
+    if (!sk_field_has_sel(f))
         return;
-    char *s = field_selection(f);
+    char *s = sk_field_selection(f);
     (c->cfg.primary_set ? c->cfg.primary_set : sk_primary_set)(s);
     free(s);
 }
@@ -1080,8 +937,8 @@ sk_chooser *sk_chooser_new(const sk_chooser_config *cfg)
 {
     sk_chooser *c = sk_xcalloc(1, sizeof *c);
     c->cfg = *cfg;
-    field_init(&c->folder);
-    field_init(&c->line);
+    sk_field_init(&c->folder);
+    sk_field_init(&c->line);
     c->focus = c->hover = c->pressed = -1;
     c->cursor = SK_CURSOR_ARROW;
     sk_vec_push(&alive, c);
@@ -1094,8 +951,8 @@ void sk_chooser_close(sk_chooser *c)
         return;
     c->open = false;
     sk_newtab_state_free(&c->st);
-    field_set(&c->folder, "");
-    field_set(&c->line, "");
+    sk_field_set(&c->folder, "");
+    sk_field_set(&c->line, "");
     say(c, NULL);
     free(c->preedit);
     c->preedit = NULL;
@@ -1134,7 +991,7 @@ void sk_chooser_open(sk_chooser *c, sk_newtab_state *st)
     memset(st, 0, sizeof *st);
     c->open = true;
     pick_agent(c, c->st.agent);
-    field_set(&c->folder, c->st.folder);
+    sk_field_set(&c->folder, c->st.folder);
     c->focus = K_LINE;
     relayout(c);
 }
@@ -1246,142 +1103,19 @@ static void step_focus(sk_chooser *c, int d)
     }
 }
 
-static void move_caret(sk_chooser *c, field *f, size_t to, bool extend)
+/* A key in a text field, as field.c edits one, with the clipboard's
+ * part done here. False when it is not a field's key. */
+static bool field_key(sk_chooser *c, field *f, const sk_key_event *k)
 {
-    f->caret = to;
-    if (!extend)
-        f->anchor = to;
-    else
+    sk_field_key_result r = sk_field_key(f, k);
+    if (r.copy)
+        (c->cfg.clipboard_set ? c->cfg.clipboard_set : sk_clipboard_set)(r.copy);
+    free(r.copy);
+    if (r.paste)
+        paste(c, false);
+    if (r.selected)
         selected(c, f);
-}
-
-static void delete_range(field *f, size_t lo, size_t hi)
-{
-    field_replace(f, lo, hi, NULL, 0);
-}
-
-/* A key in a text field, as Chromium edits one. False when it is not a
- * field's key. */
-static bool field_key(sk_chooser *c, field *f, const sk_key_event *k, uint32_t m)
-{
-    bool shift = m & SK_MOD_SHIFT;
-    uint32_t rest = m & ~(uint32_t)SK_MOD_SHIFT;
-    const uint32_t word = SK_CHOOSER_WORD_MOD, cmd = SK_CHOOSER_CMD_MOD;
-    sk_buf *t = &f->text;
-    switch (k->key) {
-    case SK_KEY_LEFT:
-    case SK_KEY_RIGHT: {
-        bool left = k->key == SK_KEY_LEFT;
-        size_t to;
-        if (rest == word)
-            to = left ? word_left(t, f->caret) : word_right(t, f->caret);
-#ifdef __APPLE__
-        else if (rest == SK_MOD_SUPER)
-            to = left ? 0 : t->len;
-#endif
-        else if (rest)
-            return false;
-        else if (!shift && has_sel(f))
-            to = left ? sel_lo(f) : sel_hi(f);
-        else
-            to = left ? prev_cp(t, f->caret) : next_cp(t, f->caret);
-        move_caret(c, f, to, shift);
-        return true;
-    }
-#ifdef __APPLE__
-    case SK_KEY_UP:
-    case SK_KEY_DOWN:
-        if (rest && rest != SK_MOD_SUPER)
-            return false;
-        move_caret(c, f, k->key == SK_KEY_UP ? 0 : t->len, shift);
-        return true;
-#endif
-    case SK_KEY_HOME:
-    case SK_KEY_END:
-        if (rest)
-            return false;
-        move_caret(c, f, k->key == SK_KEY_HOME ? 0 : t->len, shift);
-        return true;
-    case SK_KEY_BACKSPACE:
-        if (has_sel(f) && (!rest || rest == word))
-            delete_range(f, sel_lo(f), sel_hi(f));
-        else if (rest == word)
-            delete_range(f, word_left(t, f->caret), f->caret);
-#ifdef __APPLE__
-        else if (rest == SK_MOD_SUPER)
-            delete_range(f, 0, has_sel(f) ? sel_hi(f) : f->caret);
-#endif
-        else if (!rest)
-            delete_range(f, prev_cp(t, f->caret), f->caret);
-        else
-            return false;
-        return true;
-    case SK_KEY_DELETE:
-#ifndef __APPLE__
-        if (m == SK_MOD_SHIFT) {
-            copy(c, f);
-            delete_range(f, sel_lo(f), sel_hi(f));
-            return true;
-        }
-#endif
-        if (has_sel(f) && (!rest || rest == word))
-            delete_range(f, sel_lo(f), sel_hi(f));
-        else if (rest == word)
-            delete_range(f, f->caret, word_right(t, f->caret));
-        else if (!rest)
-            delete_range(f, f->caret, next_cp(t, f->caret));
-        else
-            return false;
-        return true;
-#ifndef __APPLE__
-    case SK_KEY_INSERT:
-        if (m == SK_MOD_SHIFT)
-            paste(c, false);
-        else if (m == SK_MOD_CTRL)
-            copy(c, f);
-        else
-            return false;
-        return true;
-#endif
-    default:
-        break;
-    }
-    if (rest == cmd) {
-        switch (k->base) {
-        case 'a':
-            f->anchor = 0;
-            f->caret = t->len;
-            selected(c, f);
-            return true;
-        case 'c':
-            copy(c, f);
-            return true;
-        case 'x':
-            copy(c, f);
-            delete_range(f, sel_lo(f), sel_hi(f));
-            return true;
-        case 'v':
-            paste(c, false);
-            return true;
-        default:
-            break;
-        }
-    }
-#ifdef __APPLE__
-    /* Cocoa's own bindings: Ctrl+A and Ctrl+E to either end. */
-    if (rest == SK_MOD_CTRL && (k->base == 'a' || k->base == 'e')) {
-        move_caret(c, f, k->base == 'a' ? 0 : t->len, shift);
-        return true;
-    }
-    const uint32_t not_typing = SK_MOD_CTRL | SK_MOD_SUPER;
-#else
-    const uint32_t not_typing = SK_MOD_CTRL | SK_MOD_SUPER | SK_MOD_ALT;
-#endif
-    if (k->text[0] && !(m & not_typing) && k->key == SK_KEY_NONE) {
-        field_insert(f, k->text);
-        return true;
-    }
-    return false;
+    return r.took;
 }
 
 static bool radio_key(sk_chooser *c, const sk_key_event *k, uint32_t m)
@@ -1520,7 +1254,7 @@ sk_chooser_result sk_chooser_key(sk_chooser *c, const sk_key_event *k)
     }
     field *f = focused_field(c);
     if (f && !enter) {
-        r.redraw = field_key(c, f, k, m);
+        r.redraw = field_key(c, f, k);
     } else if (c->focus >= K_AGENT && c->focus < K_PROFILE && !enter) {
         r.redraw = radio_key(c, k, m);
     } else if (c->focus == K_PROFILE && !enter) {
@@ -1540,7 +1274,7 @@ sk_chooser_result sk_chooser_text(sk_chooser *c, const char *utf8)
     field *f = c->open ? focused_field(c) : NULL;
     if (!f || !utf8 || !*utf8)
         return result(SK_CHOOSER_NONE, false);
-    field_insert(f, utf8);
+    sk_field_insert(f, utf8);
     relayout(c);
     return result(SK_CHOOSER_NONE, true);
 }
@@ -1626,7 +1360,7 @@ static sk_chooser_result mouse_down(sk_chooser *c, double x, double y, int butto
             f->caret = f->text.len;
             selected(c, f);
         } else if (clicks == 2) {
-            word_around(&f->text, at, &f->anchor, &f->caret);
+            sk_field_word_around(&f->text, at, &f->anchor, &f->caret);
             selected(c, f);
         } else {
             f->caret = at;
@@ -1717,7 +1451,7 @@ bool sk_chooser_ime_rect(const sk_chooser *c, int *x, int *y, int *w, int *h)
     /* The caret, or where a composition starts. */
     const field *f = c->focus == K_FOLDER ? &c->folder : &c->line;
     box b = c->lay.ctl[c->focus];
-    double at = measure(c->style.mono, 0, CTL_FONT, f->text.ptr, composing(c, c->focus) ? sel_lo(f) : f->caret);
+    double at = measure(c->style.mono, 0, CTL_FONT, f->text.ptr, composing(c, c->focus) ? sk_field_sel_lo(f) : f->caret);
     *x = (int)lround(b.x + BORDER + FIELD_PAD - f->scroll + at);
     *y = (int)lround(b.y + BORDER + CTL_PAD_Y);
     *w = 1;

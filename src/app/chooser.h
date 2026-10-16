@@ -25,17 +25,13 @@
 #include "../platform/picker.h"
 #include "../platform/ui.h"
 #include "../text/text.h"
+#include "field.h"
 #include "newtab.h"
 
 /* The modifier of word moves, and of the clipboard's and select all's
- * chords, on this system. */
-#ifdef __APPLE__
-#define SK_CHOOSER_WORD_MOD SK_MOD_ALT
-#define SK_CHOOSER_CMD_MOD SK_MOD_SUPER
-#else
-#define SK_CHOOSER_WORD_MOD SK_MOD_CTRL
-#define SK_CHOOSER_CMD_MOD SK_MOD_CTRL
-#endif
+ * chords, on this system: field.c's. */
+#define SK_CHOOSER_WORD_MOD SK_FIELD_WORD_MOD
+#define SK_CHOOSER_CMD_MOD SK_FIELD_CMD_MOD
 
 typedef struct {
     /* The window it is drawn in, the picker's parent, and the core

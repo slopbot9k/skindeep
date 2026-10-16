@@ -129,4 +129,5 @@
     X(viz_physics)                                                           \
     X(viz_modes)                                                             \
     X(skin_pack)                                                             \
-    X(skin_compile)
+    X(skin_compile)                                                          \
+    X(field)
