@@ -112,8 +112,9 @@ $(BUILD)/skinc-objs/%.o: skinc/%.c
 $(BUILD)/src/vendor/%.o: WARN := -w
 
 # The MilkDrop renderer feeds each frame into the next: no fused
-# multiply-add, so gcc and clang round its arithmetic alike.
-$(BUILD)/src/viz/milk%.o: OPT += -ffp-contract=off
+# multiply-add, so gcc and clang round its arithmetic alike. A pattern's
+# stem is never empty, so milk.o is named apart.
+$(BUILD)/src/viz/milk.o $(BUILD)/src/viz/milk%.o: OPT += -ffp-contract=off
 
 # Generated sources: tools/bin2c runs on the build machine.
 $(BIN2C): tools/bin2c.c
