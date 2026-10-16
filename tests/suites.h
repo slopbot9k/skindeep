@@ -47,6 +47,7 @@
     X(foreign)                                                               \
     X(headless)                                                              \
     X(term_recorded)                                                         \
+    X(window)                                                                \
     X(font)                                                                  \
     X(fonts)                                                                 \
     X(fontset)                                                               \
