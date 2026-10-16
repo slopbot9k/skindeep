@@ -101,19 +101,24 @@ bool sk_shot_load(sk_shot *s, const char *dir, const sk_shot_state *state, sk_di
     return true;
 }
 
-void sk_shot_paint(sk_shot *s, float scale, bool terminal, sk_image *out)
+void sk_shot_paint_area(sk_shot *s, sk_frect area, float scale, bool terminal, sk_image *out)
 {
-    int w = (int)ceilf(s->width * scale), h = (int)ceilf(s->height * scale);
+    int w = (int)ceilf(area.w * scale), h = (int)ceilf(area.h * scale);
     sk_image_init(out, w, h);
     sk_fill_rect(out, sk_image_bounds(out), SK_RGB(0, 0, 0), SK_BLEND_SRC, NULL);
     sk_paint_env env = {&s->layout, &s->lfonts, &s->images, s->glyphs};
-    sk_paint(out, &env, s->tree.root, scale, 0, 0);
+    sk_paint(out, &env, s->tree.root, scale, area.x, area.y);
     if (terminal && s->terminal_bg) {
         sk_frect r = s->terminal;
-        sk_rect d = sk_rect_make((int)lroundf(r.x * scale), (int)lroundf(r.y * scale), (int)lroundf(r.w * scale),
-                                 (int)lroundf(r.h * scale));
+        sk_rect d = sk_rect_make((int)lroundf((r.x - area.x) * scale), (int)lroundf((r.y - area.y) * scale),
+                                 (int)lroundf(r.w * scale), (int)lroundf(r.h * scale));
         sk_fill_rect(out, d, s->terminal_bg | 0xff000000u, SK_BLEND_SRC, NULL);
     }
+}
+
+void sk_shot_paint(sk_shot *s, float scale, bool terminal, sk_image *out)
+{
+    sk_shot_paint_area(s, (sk_frect){0, 0, s->width, s->height}, scale, terminal, out);
 }
 
 void sk_shot_free(sk_shot *s)

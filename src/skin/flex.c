@@ -255,7 +255,7 @@ float lay_flex(lay *L, uint32_t i, float cw, float ch)
                     content = (cross_avail - t->c0 - t->c1 - lay_bp_h(L, c)) * lay_svg_ratio(L, c) + lay_bp_w(L, c);
                 else {
                     float lo, hi;
-                    lay_intrinsic(L, c, &lo, &hi);
+                    lay_content_widths(L, c, &lo, &hi);
                     content = hi;
                 }
             } else {
@@ -274,7 +274,7 @@ float lay_flex(lay *L, uint32_t i, float cw, float ch)
                 float m;
                 if (row) {
                     float lo, hi;
-                    lay_intrinsic(L, c, &lo, &hi);
+                    lay_content_widths(L, c, &lo, &hi);
                     m = lay_is_svg(L, c) && !isnan(content) ? content : lo;
                 } else {
                     m = isnan(content) ? content_h(L, c, cross_w) : content;

@@ -82,6 +82,11 @@ TEST_SRC := $(filter-out tests/fuzz/%,$(wildcard tests/*.c tests/*/*.c))
 TEST_OBJ := $(TEST_SRC:%.c=$(BUILD)/%.o)
 TEST_BIN := $(BUILD)/tests/run
 
+# A shipped skin drawn whole (tools/shot.c), for skinshot and the skin
+# goldens, its images decoded by stb_image until skinc's own decoders
+# are in the library.
+SHOT_OBJ := $(BUILD)/tools/shot.o $(BUILD)/tools/imgdecode.o
+
 RELAY := $(BUILD)/skinned-relay
 HOOKDUMP := $(BUILD)/hookdump
 SKINNED := $(BUILD)/skinned
@@ -132,8 +137,8 @@ $(SKINC_LIB): $(SKINC_OBJ)
 	@rm -f $@
 	$(AR) rcs $@ $(SKINC_OBJ)
 
-$(TEST_BIN): $(TEST_OBJ) $(SKINC_LIB) $(LIB)
-	$(CC) $(OPT) $(LDFLAGS) -o $@ $(TEST_OBJ) $(SKINC_LIB) $(LIB) $(LDLIBS) $(UI_LIBS)
+$(TEST_BIN): $(TEST_OBJ) $(SHOT_OBJ) $(SKINC_LIB) $(LIB)
+	$(CC) $(OPT) $(LDFLAGS) -o $@ $(TEST_OBJ) $(SHOT_OBJ) $(SKINC_LIB) $(LIB) $(LDLIBS) $(UI_LIBS)
 
 $(SKINC): $(BUILD)/skinc-objs/main.o $(SKINC_LIB) $(LIB)
 	$(CC) $(OPT) $(LDFLAGS) -o $@ $^ $(LDLIBS)
@@ -166,10 +171,7 @@ $(BUILD)/gfxbench: $(BUILD)/tools/gfxbench.o $(LIB)
 	$(CC) $(OPT) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
 # A shipped skin laid out and painted at 1x and 2x, to look at beside the
-# Electron app's screenshots; not part of all. The tests' skin goldens
-# draw through the same tools/shot.c. stb_image decodes for both until
-# skinc's own decoders are in the library.
-SHOT_OBJ := $(BUILD)/tools/shot.o $(BUILD)/tools/imgdecode.o
+# Electron app's screenshots; not part of all.
 $(BUILD)/tools/imgdecode.o: WARN := -w
 skinshot: $(BUILD)/skinshot
 $(BUILD)/skinshot: $(BUILD)/tools/skinshot.o $(SHOT_OBJ) $(SKINC_LIB) $(LIB)

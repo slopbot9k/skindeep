@@ -35,6 +35,11 @@ static int channel_diff(sk_px a, sk_px b)
 
 void sk_test_golden(const char *file, int line, const char *name, const sk_image *im, int tolerance)
 {
+    sk_test_golden_near(file, line, name, im, tolerance, 0);
+}
+
+void sk_test_golden_near(const char *file, int line, const char *name, const sk_image *im, int tolerance, long ppm)
+{
     sk_buf path = {0};
     sk_buf_printf(&path, "tests/golden/%s.qoi", name);
     const char *update = getenv("SK_GOLDEN_UPDATE");
@@ -63,7 +68,9 @@ void sk_test_golden(const char *file, int line, const char *name, const sk_image
                 worst = SK_MAX(worst, d);
             }
     }
-    if (!have || want.w != im->w || want.h != im->h || bad) {
+    /* As many pixels in a million as ppm may lie past the tolerance. */
+    long allowed = (long)((long long)im->w * im->h * ppm / 1000000);
+    if (!have || want.w != im->w || want.h != im->h || bad > allowed) {
         mkdir("build", 0755);
         mkdir("build/golden-out", 0755);
         sk_buf out = {0};

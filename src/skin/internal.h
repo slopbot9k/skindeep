@@ -66,8 +66,12 @@ float lay_clamp_h(const lay *L, uint32_t i, float h, float cbh);
 /* Lays out node i's contents at a border-box width w and height h
  * (NAN: from its content). The border-box height it takes. */
 float lay_contents(lay *L, uint32_t i, float w, float h);
-/* The border box's min-content and max-content widths. */
+/* The border box's min-content and max-content contributions: its
+ * width when definite, held by min-width and max-width. */
 void lay_intrinsic(lay *L, uint32_t i, float *min_w, float *max_w);
+/* The min-content and max-content widths of its content, with its
+ * borders and padding, whatever its width says. */
+void lay_content_widths(lay *L, uint32_t i, float *min_w, float *max_w);
 /* Shrink-to-fit: the max-content width, no wider than avail, no
  * narrower than the min-content width. */
 float lay_fit_w(lay *L, uint32_t i, float avail);

@@ -37,6 +37,8 @@ bool sk_shot_load(sk_shot *s, const char *dir, const sk_shot_state *st, sk_diags
  * ceil(height * scale)) over opaque black, and the terminal's
  * background over its rect when terminal is true. */
 void sk_shot_paint(sk_shot *s, float scale, bool terminal, sk_image *out);
+/* The same of the skin area's CSS rectangle area alone. */
+void sk_shot_paint_area(sk_shot *s, sk_frect area, float scale, bool terminal, sk_image *out);
 void sk_shot_free(sk_shot *s);
 
 #endif

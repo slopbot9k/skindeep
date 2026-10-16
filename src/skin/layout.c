@@ -457,28 +457,24 @@ static void block_widths(lay *L, uint32_t b, float *min_w, float *max_w)
 
 /* ---- A box's contents ---- */
 
-void lay_intrinsic(lay *L, uint32_t i, float *min_w, float *max_w)
+/* The widths of i's content and its own borders and padding, its width
+ * property aside: min-content and max-content, measured with no
+ * containing block, so percentages count for nothing. The edges it was
+ * laid out with come back after. */
+static void measure(lay *L, uint32_t i)
 {
     lstate *st = &L->st[i];
-    if (st->measured) {
-        *min_w = st->min_w;
-        *max_w = st->max_w;
+    if (st->measured)
         return;
-    }
     const sk_css_style *s = lay_style(L, i);
-    /* Measured with no containing block, its percentages none; the
-     * edges it was laid out with come back after. */
     sk_lbox *box = &L->l->boxes[i];
     float keep[12];
     memcpy(keep, box->bw, sizeof box->bw);
     memcpy(keep + 4, box->pad, sizeof box->pad);
     memcpy(keep + 8, box->margin, sizeof box->margin);
     lay_edges(L, i, NAN);
-    float bp = lay_bp_w(L, i);
-    float w = lay_size_w(L, i, &s->width, KEY_WIDTH, NAN), lo, hi;
-    if (!isnan(w)) {
-        lo = hi = w;
-    } else if (L->depth > MAX_DEPTH) {
+    float bp = lay_bp_w(L, i), lo, hi;
+    if (L->depth > MAX_DEPTH) {
         lo = hi = bp;
     } else {
         L->depth++;
@@ -499,14 +495,45 @@ void lay_intrinsic(lay *L, uint32_t i, float *min_w, float *max_w)
         }
         L->depth--;
     }
+    memcpy(box->bw, keep, sizeof box->bw);
+    memcpy(box->pad, keep + 4, sizeof box->pad);
+    memcpy(box->margin, keep + 8, sizeof box->margin);
+    st->min_w = lo;
+    st->max_w = fmaxf(hi, lo);
+    st->measured = true;
+}
+
+void lay_content_widths(lay *L, uint32_t i, float *min_w, float *max_w)
+{
+    measure(L, i);
+    *min_w = L->st[i].min_w;
+    *max_w = L->st[i].max_w;
+}
+
+void lay_intrinsic(lay *L, uint32_t i, float *min_w, float *max_w)
+{
+    const sk_css_style *s = lay_style(L, i);
+    float lo, hi;
+    /* A definite width is the box's contribution, held by min and max. */
+    sk_lbox *box = &L->l->boxes[i];
+    float keep[12];
+    memcpy(keep, box->bw, sizeof box->bw);
+    memcpy(keep + 4, box->pad, sizeof box->pad);
+    memcpy(keep + 8, box->margin, sizeof box->margin);
+    lay_edges(L, i, NAN);
+    float w = lay_size_w(L, i, &s->width, KEY_WIDTH, NAN);
+    if (!isnan(w)) {
+        lo = hi = w;
+    } else {
+        measure(L, i);
+        lo = L->st[i].min_w;
+        hi = L->st[i].max_w;
+    }
     lo = lay_clamp_w(L, i, lo, NAN);
     hi = lay_clamp_w(L, i, fmaxf(hi, lo), NAN);
     memcpy(box->bw, keep, sizeof box->bw);
     memcpy(box->pad, keep + 4, sizeof box->pad);
     memcpy(box->margin, keep + 8, sizeof box->margin);
-    st->min_w = lo;
-    st->max_w = hi;
-    st->measured = true;
     *min_w = lo;
     *max_w = hi;
 }
