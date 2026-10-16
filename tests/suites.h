@@ -20,4 +20,9 @@
     X(codex_parse)                                                            \
     X(codex_thread_name)                                                      \
     X(codex_carry)                                                            \
-    X(codex_discovery)
+    X(codex_discovery)                                                       \
+    X(claude_carry)                                                           \
+    X(claude_parse)                                                           \
+    X(claude_core)                                                            \
+    X(claude_settings)                                                        \
+    X(claude_adapter)

@@ -1,0 +1,22 @@
+/* The Claude Code adapter (decisions 0009, 0021, 0030), as
+ * app/metrics/claude/ has it. sk_provider_claude, in agent.h, makes the
+ * part of a session the app starts. A session it did not start (decision
+ * 0027) is followed by its transcript alone, through the watch part
+ * below, as app/metrics/claude/watch.js does. */
+#ifndef SK_CLAUDE_H
+#define SK_CLAUDE_H
+
+#include "../agent.h"
+
+/* Names the transcript to follow: true with *file and *session
+ * malloc'd, else false while there is none. Asked at the first poll,
+ * then every 5 s, so a /clear, which starts a new transcript, is
+ * followed. */
+typedef bool (*sk_claude_find_fn)(void *ud, char **file, char **session);
+
+/* A read-only part on the transcript find names, read as when neither
+ * hooks nor a statusline were injected. Of ctx it takes bus, cmd (for
+ * the compaction rule), log and now. ud outlives the part. */
+sk_part sk_claude_watch(const sk_agent_ctx *ctx, sk_claude_find_fn find, void *ud);
+
+#endif
