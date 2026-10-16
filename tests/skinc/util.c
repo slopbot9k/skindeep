@@ -10,7 +10,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-void skt_write(const char *dir, const char *name, const char *text)
+void sk_test_write(const char *dir, const char *name, const char *text)
 {
     char *path = sk_path_join(dir, name);
     char *slash = strrchr(path, '/');
@@ -27,7 +27,7 @@ void skt_write(const char *dir, const char *name, const char *text)
     free(path);
 }
 
-const char *skt_skin(const char *panels, const char *widgets, const char *css)
+const char *sk_test_skin(const char *panels, const char *widgets, const char *css)
 {
     static unsigned n;
     static char dir[1024];
@@ -45,26 +45,26 @@ const char *skt_skin(const char *panels, const char *widgets, const char *css)
                   " \"panels\": %s,\n"
                   " \"widgets\": %s}\n",
                   panels ? panels : "[]", widgets ? widgets : "[]");
-    skt_write(dir, "skin.json", sk_buf_cstr(&m));
+    sk_test_write(dir, "skin.json", sk_buf_cstr(&m));
     sk_buf_free(&m);
-    skt_write(dir, "menu.svg", "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"24\" height=\"24\"/>\n");
-    skt_write(dir, "skin.css", css ? css : "");
+    sk_test_write(dir, "menu.svg", "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"24\" height=\"24\"/>\n");
+    sk_test_write(dir, "skin.css", css ? css : "");
     return dir;
 }
 
-bool skt_compile(sk_front *f, sk_diags *d, const char *panels, const char *widgets, const char *css)
+bool sk_test_compile(sk_front *f, sk_diags *d, const char *panels, const char *widgets, const char *css)
 {
-    const char *dir = skt_skin(panels, widgets, css);
+    const char *dir = sk_test_skin(panels, widgets, css);
     return sk_front_run(f, dir, d);
 }
 
-sk_css_rule *skt_rule(sk_css_sheet *sheet, const char *css, sk_diags *d)
+sk_css_rule *sk_test_rule(sk_css_sheet *sheet, const char *css, sk_diags *d)
 {
     sk_css_parse(sheet, "t.css", css, strlen(css), d);
     return sheet->rules.len ? &sheet->rules.ptr[0] : NULL;
 }
 
-const char *skt_prop(const sk_css_style *s, uint16_t prop)
+const char *sk_test_prop(const sk_css_style *s, uint16_t prop)
 {
     static sk_buf b;
     sk_buf_clear(&b);
@@ -89,14 +89,14 @@ static bool no_keyframes(void *data, sk_str name, uint32_t *index)
     return sk_str_eq_c(name, "spin");
 }
 
-const char *skt_value(const char *prop, const char *value)
+const char *sk_test_value(const char *prop, const char *value)
 {
     static sk_buf out;
     sk_buf css = {0};
     sk_buf_printf(&css, "x { %s: %s }", prop, value);
     sk_css_sheet sheet;
     sk_diags d = {0};
-    sk_css_rule *r = skt_rule(&sheet, sk_buf_cstr(&css), &d);
+    sk_css_rule *r = sk_test_rule(&sheet, sk_buf_cstr(&css), &d);
     sk_buf_free(&css);
     const char *result = NULL;
     if (r && r->ndecls == 1 && !d.items.len) {
@@ -139,7 +139,7 @@ const char *skt_value(const char *prop, const char *value)
     return result;
 }
 
-bool skt_said(const sk_diags *d, const char *needle)
+bool sk_test_said(const sk_diags *d, const char *needle)
 {
     for (size_t i = 0; i < d->items.len; i++)
         if (strstr(d->items.ptr[i], needle))

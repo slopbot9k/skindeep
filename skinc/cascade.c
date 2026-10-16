@@ -685,6 +685,18 @@ static computed compute(sk_front *f, sk_el *el, sk_el *origin, sk_match *m, cons
         apply(&c, id, win[id], d->inherited);
     }
     sk_style_finish(c.out);
+    /* CSS 2.1 9.7 and Flexbox 4: an absolute box does not float, and
+     * an absolute or floated box, a flex item and a grid item are
+     * block-level. ::before and ::after of a flex container are its
+     * items too. */
+    sk_css_style *o = c.out;
+    if (o->position == SK_POS_ABSOLUTE || o->position == SK_POS_FIXED)
+        o->float_ = SK_FLOAT_NONE;
+    bool item = el != f->els.ptr[0] && (parent->display == SK_DISPLAY_FLEX || parent->display == SK_DISPLAY_GRID);
+    if (o->display != SK_DISPLAY_NONE &&
+        (o->position == SK_POS_ABSOLUTE || o->position == SK_POS_FIXED || o->float_ != SK_FLOAT_NONE || item) &&
+        (o->display == SK_DISPLAY_INLINE || o->display == SK_DISPLAY_INLINE_BLOCK))
+        o->display = SK_DISPLAY_BLOCK;
     resolve_font(f, c.out);
     computed out = {c.out, {c.cc.items, c.cc.n}};
     sk_vec_free(&c.sh_decl);

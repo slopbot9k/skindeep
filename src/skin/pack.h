@@ -32,15 +32,18 @@
 #define SK_SECT_STRS SK_PACK_ID('S', 'T', 'R', 'S') /* string pool */
 #define SK_SECT_META SK_PACK_ID('M', 'E', 'T', 'A') /* manifest: window, menu, terminal */
 #define SK_SECT_SPLT SK_PACK_ID('S', 'P', 'L', 'T') /* splits */
+#define SK_SECT_SPAN SK_PACK_ID('S', 'P', 'A', 'N') /* the span classes SK_VAR_SPAN tells apart */
 #define SK_SECT_RECT SK_PACK_ID('R', 'E', 'C', 'T') /* rects and their follows */
 #define SK_SECT_WIDG SK_PACK_ID('W', 'I', 'D', 'G') /* widgets */
+#define SK_SECT_MARK SK_PACK_ID('M', 'A', 'R', 'K') /* gauges' marks */
 #define SK_SECT_ELEM SK_PACK_ID('E', 'L', 'E', 'M') /* the element tree */
 #define SK_SECT_SVGG SK_PACK_ID('S', 'V', 'G', 'G') /* SVG geometry */
 #define SK_SECT_INPT SK_PACK_ID('I', 'N', 'P', 'T') /* state inputs */
 #define SK_SECT_STAB SK_PACK_ID('S', 'T', 'A', 'B') /* state tables */
 #define SK_SECT_STYL SK_PACK_ID('S', 'T', 'Y', 'L') /* styles */
 #define SK_SECT_KEYF SK_PACK_ID('K', 'E', 'Y', 'F') /* keyframes */
-#define SK_SECT_IMGS SK_PACK_ID('I', 'M', 'G', 'S') /* images */
+#define SK_SECT_IMGS SK_PACK_ID('I', 'M', 'G', 'S') /* image sources */
+#define SK_SECT_VARI SK_PACK_ID('V', 'A', 'R', 'I') /* their decoded variants */
 #define SK_SECT_LAYR SK_PACK_ID('L', 'A', 'Y', 'R') /* pre-rendered layers */
 #define SK_SECT_FONT SK_PACK_ID('F', 'O', 'N', 'T') /* fonts */
 #define SK_SECT_SNDS SK_PACK_ID('S', 'N', 'D', 'S') /* sounds */
@@ -51,6 +54,7 @@
 #define SK_PACK_MAX_ELEMENTS 65535u
 #define SK_PACK_MAX_INPUTS 10u     /* state inputs of one element */
 #define SK_PACK_MAX_STATES 4096u   /* entries of one state table */
+#define SK_PACK_MAX_TOTAL_STATES 65536u /* entries of every state table */
 #define SK_PACK_MAX_LIST 256u      /* items of one value list */
 #define SK_PACK_MAX_PIXELS (1u << 26)
 #define SK_PACK_MAX_LIMITS 8u      /* meters of a limits widget */

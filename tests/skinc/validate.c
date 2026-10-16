@@ -165,10 +165,10 @@ static void test_broken_fixtures_name_file_and_field(void)
  * gives. */
 static sk_diags with(const char *json, const char *extra_file)
 {
-    const char *dir = skt_skin(NULL, NULL, "");
-    skt_write(dir, "skin.json", json);
+    const char *dir = sk_test_skin(NULL, NULL, "");
+    sk_test_write(dir, "skin.json", json);
     if (extra_file)
-        skt_write(dir, extra_file, "x");
+        sk_test_write(dir, extra_file, "x");
     sk_skin s;
     sk_diags d = {0};
     sk_skin_load(&s, dir, &d, NULL, NULL);
@@ -185,7 +185,7 @@ static sk_diags with(const char *json, const char *extra_file)
 static void expect(const char *json, const char *extra, const char *want)
 {
     sk_diags d = with(json, extra);
-    bool found = skt_said(&d, want);
+    bool found = sk_test_said(&d, want);
     if (!found) {
         sk_test_fail(__FILE__, __LINE__, "wanted \"%s\" among %zu errors:", want, d.items.len);
         for (size_t i = 0; i < d.items.len; i++)

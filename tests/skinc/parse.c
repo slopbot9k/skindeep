@@ -68,9 +68,9 @@ static void test_keyframes(void)
     sk_diags_free(&d);
 
     parse(&s, &d, "@keyframes none { from {} }\n@keyframes x { 120% {} }\n@keyframes y { a {} }\n");
-    CHECK(skt_said(&d, "t.css: line 1: @keyframes needs a name"));
-    CHECK(skt_said(&d, "t.css: line 2: a keyframe's selector must be from, to or percentages"));
-    CHECK(skt_said(&d, "t.css: line 3: a keyframe's selector"));
+    CHECK(sk_test_said(&d, "t.css: line 1: @keyframes needs a name"));
+    CHECK(sk_test_said(&d, "t.css: line 2: a keyframe's selector must be from, to or percentages"));
+    CHECK(sk_test_said(&d, "t.css: line 3: a keyframe's selector"));
     sk_css_sheet_free(&s);
     sk_diags_free(&d);
 }
@@ -90,8 +90,8 @@ static void test_at_rules(void)
     CHECK_INT(s.imports.ptr[0], 1);
     CHECK_INT(s.imports.ptr[1], 4);
     CHECK_INT(d.items.len, 2);
-    CHECK(skt_said(&d, "t.css: line 2: @font-face is not allowed: declare fonts in skin.json's fonts"));
-    CHECK(skt_said(&d, "t.css: line 3: @media is not supported"));
+    CHECK(sk_test_said(&d, "t.css: line 2: @font-face is not allowed: declare fonts in skin.json's fonts"));
+    CHECK(sk_test_said(&d, "t.css: line 3: @media is not supported"));
     CHECK_INT(s.rules.len, 1);
     sk_css_sheet_free(&s);
     sk_diags_free(&d);
@@ -129,13 +129,13 @@ static void test_errors(void)
           "  }\n"
           "g { background: url(a b) }\n"
           "{ color: red }\n");
-    CHECK(skt_said(&d, "t.css: line 1: \"color\" needs a : and a value"));
-    CHECK(skt_said(&d, "t.css: line 2: a rule inside a style rule is not supported"));
-    CHECK(skt_said(&d, "t.css: line 3: @apply inside a style rule is not supported"));
-    CHECK(skt_said(&d, "t.css: line 4: a number where a declaration should start"));
-    CHECK(skt_said(&d, "t.css: line 5: a string runs past the end of its line"));
-    CHECK(skt_said(&d, "t.css: line 7: a url() is malformed"));
-    CHECK(skt_said(&d, "t.css: line 8: a rule has no selector"));
+    CHECK(sk_test_said(&d, "t.css: line 1: \"color\" needs a : and a value"));
+    CHECK(sk_test_said(&d, "t.css: line 2: a rule inside a style rule is not supported"));
+    CHECK(sk_test_said(&d, "t.css: line 3: @apply inside a style rule is not supported"));
+    CHECK(sk_test_said(&d, "t.css: line 4: a number where a declaration should start"));
+    CHECK(sk_test_said(&d, "t.css: line 5: a string runs past the end of its line"));
+    CHECK(sk_test_said(&d, "t.css: line 7: a url() is malformed"));
+    CHECK(sk_test_said(&d, "t.css: line 8: a rule has no selector"));
     /* What parses still counts. */
     CHECK_INT(s.rules.len, 6);
     CHECK_INT(s.rules.ptr[3].ndecls, 1);
@@ -148,18 +148,18 @@ static void test_unclosed(void)
     sk_css_sheet s;
     sk_diags d;
     parse(&s, &d, "a { color: red\n");
-    CHECK(skt_said(&d, "t.css: line 1: a { block is not closed before the end of the file"));
+    CHECK(sk_test_said(&d, "t.css: line 1: a { block is not closed before the end of the file"));
     CHECK_INT(s.rules.len, 1);
     sk_css_sheet_free(&s);
     sk_diags_free(&d);
 
     parse(&s, &d, "a { color: red }\n.b\n");
-    CHECK(skt_said(&d, "t.css: line 2: a rule has no { block }"));
+    CHECK(sk_test_said(&d, "t.css: line 2: a rule has no { block }"));
     sk_css_sheet_free(&s);
     sk_diags_free(&d);
 
     parse(&s, &d, "a { color: red }\n/* open\n");
-    CHECK(skt_said(&d, "t.css: line 2: a comment, string or url() is not closed before the end of the file"));
+    CHECK(sk_test_said(&d, "t.css: line 2: a comment, string or url() is not closed before the end of the file"));
     sk_css_sheet_free(&s);
     sk_diags_free(&d);
 }
@@ -173,7 +173,7 @@ static void test_deep(void)
     sk_css_sheet s;
     sk_diags d;
     parse(&s, &d, sk_buf_cstr(&css));
-    CHECK(skt_said(&d, "blocks nest more than 64 deep"));
+    CHECK(sk_test_said(&d, "blocks nest more than 64 deep"));
     sk_css_sheet_free(&s);
     sk_diags_free(&d);
     sk_buf_free(&css);

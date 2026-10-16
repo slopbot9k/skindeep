@@ -144,7 +144,7 @@ typedef struct {
 } sk_front;
 
 /* A skin reaches at most this many states in all. */
-#define SK_FRONT_MAX_STATES 65536u
+#define SK_FRONT_MAX_STATES SK_PACK_MAX_TOTAL_STATES
 
 /* Checks the skin at dir and computes its styles. False with messages
  * in d for a skin that fails. f is ready for sk_front_free either way. */

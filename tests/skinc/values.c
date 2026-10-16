@@ -7,8 +7,8 @@
 
 #include <string.h>
 
-#define V(prop, value, want) CHECK_STR(skt_value(prop, value), want)
-#define BAD(prop, value) CHECK(skt_value(prop, value) == NULL)
+#define V(prop, value, want) CHECK_STR(sk_test_value(prop, value), want)
+#define BAD(prop, value) CHECK(sk_test_value(prop, value) == NULL)
 
 static void test_colors(void)
 {
@@ -209,7 +209,7 @@ static void test_borders(void)
     V("border-radius", "0 0 3px 3px", "0px 0px | 0px 0px | 3px 3px | 3px 3px");
     BAD("border-radius", "1px / ");
     /* border sets every side, and border-image to its initial value. */
-    CHECK(strstr(skt_value("border", "2px solid"), "2px | 2px | 2px | 2px | solid | solid | solid | solid | #ff0000"));
+    CHECK(strstr(sk_test_value("border", "2px solid"), "2px | 2px | 2px | 2px | solid | solid | solid | solid | #ff0000"));
     V("border-color", "#05070a #5c636d #5c636d #05070a", "#05070a | #5c636d | #5c636d | #05070a");
     V("border-bottom", "none", "3px | none | #ff0000");
     V("border-left", "2px solid rgba(58, 255, 126, 0.45)", "2px | solid | rgba(58, 255, 126, 0.45)");
