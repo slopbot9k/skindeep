@@ -1,5 +1,6 @@
 /* The skinc program: its summary of a skin that compiles, its messages
- * and status for one that does not, its usage. */
+ * and status for one that does not, its usage, and the pack -o writes. */
+#include "../../src/skin/pack.h"
 #include "../test.h"
 
 #include <fcntl.h>
@@ -98,18 +99,64 @@ static void test_usage(void)
     char *out, *err;
     const char *nothing[] = {NULL};
     CHECK_INT(run(b, nothing, &out, &err), 2);
-    CHECK_STR(err, "usage: skinc [-v] DIR\n");
+    CHECK_STR(err, "usage: skinc [-v] DIR [-o PACK]\n");
     free(out);
     free(err);
     const char *two[] = {"a", "b", NULL};
     CHECK_INT(run(b, two, &out, &err), 2);
     free(out);
     free(err);
+    const char *no_pack[] = {"skins/deck", "-o", NULL};
+    CHECK_INT(run(b, no_pack, &out, &err), 2);
+    free(out);
+    free(err);
+}
+
+/* -o writes the pack, quietly, and nothing for a skin that fails. */
+static void test_a_pack(void)
+{
+    const char *b = bin();
+    if (!b)
+        return;
+    char *out, *err;
+    sk_buf pack = {0};
+    sk_buf_printf(&pack, "%s/phosphor.pack", sk_test_tmpdir());
+    const char *args[] = {"skins/phosphor", "-o", pack.ptr, NULL};
+    CHECK_INT(run(b, args, &out, &err), 0);
+    CHECK_STR(out, "");
+    CHECK_STR(err, "");
+    free(out);
+    free(err);
+    size_t n = 0;
+    char *bytes = sk_test_read(pack.ptr, &n);
+    sk_pack p;
+    char why[300];
+    CHECK(bytes && sk_pack_load((const uint8_t *)bytes, n, &p, why, sizeof why));
+    if (bytes)
+        CHECK_STR(p.meta.name, "phosphor");
+    sk_pack_free(&p);
+    free(bytes);
+    sk_buf_clear(&pack);
+    sk_buf_printf(&pack, "%s/broken.pack", sk_test_tmpdir());
+    const char *broken[] = {"test/fixtures/skins/broken-css", "-o", pack.ptr, NULL};
+    CHECK_INT(run(b, broken, &out, &err), 1);
+    CHECK(access(pack.ptr, F_OK) != 0);
+    free(out);
+    free(err);
+    sk_buf_clear(&pack);
+    sk_buf_printf(&pack, "%s/no/such/dir/x.pack", sk_test_tmpdir());
+    const char *nowhere[] = {"skins/phosphor", "-o", pack.ptr, NULL};
+    CHECK_INT(run(b, nowhere, &out, &err), 1);
+    CHECK(err && strncmp(err, "skinc: cannot write ", 20) == 0);
+    free(out);
+    free(err);
+    sk_buf_free(&pack);
 }
 
 const sk_test sk_suite_skinc_program[] = {
     T(test_a_skin_that_compiles),
     T(test_a_skin_that_does_not),
     T(test_usage),
+    T(test_a_pack),
     {0},
 };

@@ -3,7 +3,7 @@
 # the system C compiler.
 #
 #   make              build the library, the tests, skinned, skinned-relay,
-#                     skinc and hookdump
+#                     skinc and hookdump, and the shipped skins' packs
 #   make test         run the tests (T=json runs the json suite)
 #   make debug        run the tests under AddressSanitizer and UBSan
 #   make fuzz         build the fuzz targets
@@ -65,7 +65,7 @@ PLATFORM := $(if $(filter Darwin,$(OS)),macos,linux)
 # run against a fake server, on every system; only Linux opens windows
 # with it.
 LIB_SRC := $(wildcard src/base/*.c src/core/*.c src/agents/*.c src/agents/*/*.c src/app/*.c src/sessions/*.c \
-    src/gfx/*.c src/text/*.c src/term/*.c src/ui/*.c src/audio/*.c src/viz/*.c src/vendor/*.c src/platform/x11/*.c \
+    src/gfx/*.c src/text/*.c src/term/*.c src/ui/*.c src/audio/*.c src/viz/*.c src/skin/*.c src/vendor/*.c src/platform/x11/*.c \
     src/platform/$(PLATFORM)/*.c) src/relay/relay.c
 # The embedded DejaVu, in sk_embedded_font's order (text/text.h).
 FONTS := $(addprefix third_party/dejavu/,DejaVuSansMono.ttf DejaVuSansMono-Bold.ttf DejaVuSansMono-Oblique.ttf \
@@ -81,6 +81,15 @@ SKINC_SRC := $(filter-out skinc/main.c,$(wildcard skinc/*.c))
 SKINC_OBJ := $(SKINC_SRC:skinc/%.c=$(BUILD)/skinc-objs/%.o)
 SKINC_LIB := $(BUILD)/libskinc.a
 SKINC := $(BUILD)/skinc
+
+# The shipped skins' packs (decision 0037), compiled by this build's
+# skinc and linked into skinned and the tests as generated C arrays;
+# not into libsk.a, which skinc links. A pack depends on every file of
+# its skin.
+SKINS := coffee deck library phosphor
+PACKS := $(SKINS:%=$(BUILD)/gen/%.pack)
+SHIPPED_OBJ := $(BUILD)/gen/packs.o
+rwildcard = $(foreach d,$(wildcard $(1)/*),$(call rwildcard,$(d)) $(d))
 
 TEST_SRC := $(filter-out tests/fuzz/%,$(wildcard tests/*.c tests/*/*.c))
 TEST_OBJ := $(TEST_SRC:%.c=$(BUILD)/%.o)
@@ -135,6 +144,17 @@ $(BUILD)/gen/fonts.c: $(FONTS) $(BIN2C)
 	@mkdir -p $(dir $@)
 	$(BIN2C) sk_embedded_fonts $(FONTS) > $@.tmp && mv $@.tmp $@
 
+define pack_rule
+$(BUILD)/gen/$(1).pack: $(call rwildcard,skins/$(1)) $(SKINC)
+	@mkdir -p $$(dir $$@)
+	$(SKINC) skins/$(1) -o $$@
+endef
+$(foreach s,$(SKINS),$(eval $(call pack_rule,$(s))))
+
+$(BUILD)/gen/packs.c: $(PACKS) $(BIN2C)
+	@mkdir -p $(dir $@)
+	$(BIN2C) sk_shipped_packs $(PACKS) > $@.tmp && mv $@.tmp $@
+
 $(BUILD)/gen/%.o: $(BUILD)/gen/%.c
 	$(COMPILE) -I. -c $< -o $@
 
@@ -149,8 +169,8 @@ $(SKINC_LIB): $(SKINC_OBJ)
 	@rm -f $@
 	$(AR) rcs $@ $(SKINC_OBJ)
 
-$(TEST_BIN): $(TEST_OBJ) $(SKINC_LIB) $(LIB)
-	$(CC) $(OPT) $(LDFLAGS) -o $@ $(TEST_OBJ) $(SKINC_LIB) $(LIB) $(LDLIBS) $(UI_LIBS)
+$(TEST_BIN): $(TEST_OBJ) $(SHIPPED_OBJ) $(SKINC_LIB) $(LIB)
+	$(CC) $(OPT) $(LDFLAGS) -o $@ $(TEST_OBJ) $(SHIPPED_OBJ) $(SKINC_LIB) $(LIB) $(LDLIBS) $(UI_LIBS)
 
 $(SKINC): $(BUILD)/skinc-objs/main.o $(SKINC_LIB) $(LIB)
 	$(CC) $(OPT) $(LDFLAGS) -o $@ $^ $(LDLIBS)
@@ -158,7 +178,7 @@ $(SKINC): $(BUILD)/skinc-objs/main.o $(SKINC_LIB) $(LIB)
 $(RELAY): $(BUILD)/src/relay/main.o $(LIB)
 	$(CC) $(OPT) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
-$(SKINNED): $(BUILD)/src/main/skinned.o $(LIB)
+$(SKINNED): $(BUILD)/src/main/skinned.o $(SHIPPED_OBJ) $(LIB)
 	$(CC) $(OPT) $(LDFLAGS) -o $@ $^ $(LDLIBS) $(UI_LIBS)
 
 $(HOOKDUMP): $(BUILD)/tools/hookdump.o $(LIB)

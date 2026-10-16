@@ -110,4 +110,6 @@
     X(milk_whirlpool)                                                        \
     X(adpcm)                                                                 \
     X(fontcheck)                                                             \
-    X(skinc_media)
+    X(skinc_media)                                                           \
+    X(skin_pack)                                                             \
+    X(skin_compile)

@@ -110,8 +110,8 @@ bool sk_shorthand_parse(const sk_shorthand *sh, sk_vctx *c, const sk_cv *cv, siz
 void sk_prop_copy(uint16_t id, sk_css_style *dst, const sk_css_style *src);
 /* True when the two styles hold the same value of the longhand. */
 bool sk_prop_equal(uint16_t id, const sk_css_style *a, const sk_css_style *b);
-/* Every field at its initial value, currentcolor as current. */
-void sk_style_initial(sk_css_style *s, sk_css_color current);
+/* sk_style_initial, every field at its initial value, is the
+ * library's: src/skin/pack.h. */
 /* The computed values that need the whole style: a border's or
  * outline's width is 0 while its style is none or hidden. */
 void sk_style_finish(sk_css_style *s);

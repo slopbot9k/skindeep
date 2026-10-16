@@ -12,9 +12,10 @@
  * runtime fills in: the rects a split moves, a bar's fill, a sprite's
  * frame. Lists (layers, shadows, transforms) are arrays the pack owns.
  *
- * The loader (phase 6, src/skin/pack.c) reads the file format of
- * decision 0037 into these structures and checks every count, index,
- * offset, string and float before anything uses it. */
+ * The loader (src/skin/pack.c) reads the file format of decision 0037
+ * into these structures and checks every count, index, offset, string
+ * and float before anything uses it. skinc's writer (skinc/write.c)
+ * makes the file; src/skin/packfmt.h holds what the two share. */
 #ifndef SK_SKIN_PACK_H
 #define SK_SKIN_PACK_H
 
@@ -57,7 +58,21 @@
 #define SK_PACK_MAX_TOTAL_STATES 65536u /* entries of every state table */
 #define SK_PACK_MAX_LIST 256u      /* items of one value list */
 #define SK_PACK_MAX_PIXELS (1u << 26)
+#define SK_PACK_MAX_SIDE 16384u    /* an image's width or height */
 #define SK_PACK_MAX_LIMITS 8u      /* meters of a limits widget */
+/* A style's number, other than an iteration count, is at most this far
+ * from 0: a length in px or percent, an angle in degrees, a time in
+ * seconds, a factor. Layout and paint can then add and scale them in
+ * float without overflow. */
+#define SK_PACK_MAX_FLOAT 1e6f
+/* The most sections, styles, keyframe tracks and images a pack holds:
+ * no table could reach more styles, and the loader bounds its memory. */
+#define SK_PACK_MAX_SECTIONS 64u
+#define SK_PACK_MAX_STYLES SK_PACK_MAX_TOTAL_STATES
+#define SK_PACK_MAX_KEYFRAMES 65536u
+#define SK_PACK_MAX_IMAGES 65536u
+/* What the loader allocates for a pack, at most. */
+#define SK_PACK_MAX_MEMORY (1u << 30)
 
 /* ---- Values ---- */
 
@@ -430,6 +445,11 @@ typedef struct {
     uint16_t ntr_property, ntr_duration, ntr_delay, ntr_timing;
 } sk_css_style;
 
+/* Every field at its initial value, currentcolor as current: what a
+ * pack's style holds for each property its record leaves out, current
+ * being the style's own colour. */
+void sk_style_initial(sk_css_style *s, sk_css_color current);
+
 /* Animation i of a style, below nanim_name, its other longhands
  * repeated as CSS repeats the shorter lists. */
 static inline sk_css_anim sk_style_anim(const sk_css_style *s, uint16_t i)
@@ -710,6 +730,10 @@ typedef enum {
     SK_TEXT_ITEM_TEXT,
 } sk_text_source;
 
+/* An element. The elements are skinc's, in its order: the tree as
+ * skin.js and widgets.js build it, then the pseudo-elements. Among a
+ * parent's children its ::before comes first and its ::after last, as
+ * their boxes do. */
 typedef struct {
     uint32_t parent, first_child, next_sibling; /* SK_PACK_NONE when absent */
     uint8_t kind, role;
@@ -923,13 +947,17 @@ typedef struct {
     uint32_t nfonts;
     const sk_pack_sound *sounds;
     uint32_t nsounds;
-    unsigned char source_hash[32]; /* SHA-256 of the skin's files */
+    const uint8_t *blob; /* BLOB, which variants and layers index */
+    uint32_t nblob;
+    unsigned char source_hash[32]; /* SHA-256 of the skin's files, the cache key (skin/compile.h) */
     void *mem_;                    /* what the loader allocated */
 } sk_pack;
 
-/* Reads a pack of n bytes, which must outlive it (fonts, sounds and
- * layers point into it). False with why in err (err_len bytes) for a
- * pack that fails any check of decision 0037; *out is then empty. */
+/* Reads a pack of n bytes, which must outlive it: its strings, fonts,
+ * sounds and BLOB are pointers into it. Everything else is in one
+ * allocation, which sk_pack_free frees. False with why in err (err_len
+ * bytes, which may be 0), naming the section and the record, for a pack
+ * that fails any check of decision 0037; *out is then empty. */
 bool sk_pack_load(const uint8_t *data, size_t n, sk_pack *out, char *err, size_t err_len);
 void sk_pack_free(sk_pack *p);
 
