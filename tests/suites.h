@@ -46,4 +46,7 @@
     X(dashboard)                                                             \
     X(foreign)                                                               \
     X(headless)                                                              \
-    X(width)
+    X(width)                                                                 \
+    X(keys)                                                                  \
+    X(keys_mouse)                                                            \
+    X(keys_paste)
