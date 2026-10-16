@@ -706,15 +706,24 @@ static void test_the_clipboard_goes_by_incr_to_another_client(void)
     CHECK(answer(f, &data, &len, &type));
     CHECK(data && len == 300000 && !memcmp(data, text, len));
     free(data);
-    /* The requestor's window was watched for the transfer, then let go. */
+    /* The requestor's window was watched for the transfer, then let go.
+     * The release follows the requestor's last PropertyNotify, which xui
+     * may not have handled when the answer is whole: rounds of its loop
+     * until it has, three seconds at most. */
     bool watched = false, released = false;
-    for (size_t i = 0; i < sk_xfake_count(f, 2, -1); i++) {
-        uint8_t *r = sk_xfake_request(f, 2, -1, i, &len);
-        if (r && sk_x11_get32(r + 4) == SK_XFAKE_REQUESTOR) {
-            watched = watched || sk_x11_get32(r + 12) == SK_X11_PROPERTY_CHANGE_MASK;
-            released = released || sk_x11_get32(r + 12) == 0;
+    for (uint64_t until = sk_now_ms() + 3000; !released && sk_now_ms() < until;) {
+        for (size_t i = 0; i < sk_xfake_count(f, 2, -1); i++) {
+            uint8_t *r = sk_xfake_request(f, 2, -1, i, &len);
+            if (r && sk_x11_get32(r + 4) == SK_XFAKE_REQUESTOR) {
+                watched = watched || sk_x11_get32(r + 12) == SK_X11_PROPERTY_CHANGE_MASK;
+                released = released || sk_x11_get32(r + 12) == 0;
+            }
+            free(r);
         }
-        free(r);
+        if (!released) {
+            sk_xui_once(20);
+            sk_xui_sync();
+        }
     }
     CHECK(watched);
     CHECK(released);
