@@ -28,8 +28,10 @@ static int f_prepare(void *self, sk_strv *args, char **notice)
     fake *f = self;
     f->prepared++;
     strcat(f->order, "p");
-    if (f->fail)
+    if (f->fail) {
+        sk_strv_push(args, "--half-done"); /* must not survive the failure */
         return -1;
+    }
     sk_strv_push(args, "--settings");
     sk_strv_push(args, "/x.json");
     *notice = sk_xstrdup("meters limited: test");
@@ -201,8 +203,8 @@ static void test_generic_on_a_fake_clock(void)
     sk_agent_tick(a, 0);
     CHECK_INT(sk_bus_count(bus), 0);
     sk_agent_attach(a, getpid());
-    sk_agent_on_output(a, 1000, 0);
-    sk_agent_on_output(a, 2000, 0);
+    sk_agent_on_output(a, 1000);
+    sk_agent_on_output(a, 2000);
     sk_agent_on_input(a);
     sk_bus_tick(bus, 1000);
     CHECK(num(bus, "pty.out_bps") == 3000);
@@ -215,7 +217,8 @@ static void test_generic_on_a_fake_clock(void)
     sk_agent_tick(a, 5500);
     CHECK(num(bus, "pty.idle_s") == 5.5);
     CHECK(num(bus, "session.clock_s") == 5);
-    sk_agent_on_output(a, 10, 5600); /* after silence: a new burst */
+    fake_now = 5600;
+    sk_agent_on_output(a, 10); /* after silence: a new burst */
     CHECK(num(bus, "event.output") == 2);
     int ev[8];
     CHECK_INT(sk_bus_drain_events(bus, ev, 8), 4);

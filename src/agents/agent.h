@@ -136,7 +136,8 @@ const char *sk_agent_kind(const sk_agent *a);
 void sk_agent_prepare(sk_agent *a, sk_strv *args, char **notice);
 /* Once, after the spawn, with the child's pid. */
 void sk_agent_attach(sk_agent *a, pid_t pid);
-void sk_agent_on_output(sk_agent *a, size_t n, uint64_t now);
+/* n bytes of terminal output, now on the agent's own clock. */
+void sk_agent_on_output(sk_agent *a, size_t n);
 void sk_agent_on_input(sk_agent *a);
 /* Polls every part, then recomputes the bus's rates. The timer calls
  * it; tests call it with their own clock. */

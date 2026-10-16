@@ -4,9 +4,9 @@
  * loop. The identity strip, the view and the last screen are the UI's;
  * it reads what it needs through the getters here.
  *
- * A window runs one session per tab (decision 0023), so every child is
- * reaped through one SIGCHLD path shared by all the sessions of the
- * process: each spawn takes SIGCHLD on its loop for it. */
+ * A window runs one session per tab (decision 0023). The loop reaps each
+ * child (sk_loop_child), so any number of sessions, and anything else
+ * that runs children, share one SIGCHLD. */
 #ifndef SK_SESSION_H
 #define SK_SESSION_H
 
@@ -102,9 +102,6 @@ const char *sk_session_label(const sk_session *s);
  * child behind (decision 0016). The agent is closed, not freed. */
 void sk_session_free(sk_session *s);
 
-/* Reaps the child of every session that has exited. The SIGCHLD path
- * calls it; code that takes SIGCHLD for itself must call it too. */
-void sk_session_reap(void);
 /* A wait status as the session reports it: the code, or 128+n. */
 int sk_session_exit_status(int wait_status);
 /* The child's environment: env with TERM and COLORTERM set, without

@@ -8,6 +8,8 @@
 
 #include "../base/base.h"
 
+#include <sys/types.h>
+
 typedef struct sk_loop sk_loop;
 
 /* revents: the poll() events that fired. */
@@ -37,6 +39,19 @@ void sk_loop_cancel(sk_loop *loop, int id);
  * take signals; a second sk_loop_signal for the same signo replaces the
  * first. Returns 0, or -1 when the signal cannot be caught. */
 int sk_loop_signal(sk_loop *loop, int signo, sk_signal_cb cb, void *ud);
+
+/* The exit of a child, reaped by the loop. wstatus is waitpid's status,
+ * or -1 when the child was reaped elsewhere and its status is lost. */
+typedef void (*sk_child_cb)(sk_loop *loop, pid_t pid, int wstatus, void *ud);
+
+/* Reaps pid when it exits and calls cb, once. The loop takes SIGCHLD
+ * for itself the first time, so no other code may take SIGCHLD; children
+ * nobody watches are left for whoever made them. A child that exited
+ * before the call is reaped on the next round. -1 when SIGCHLD cannot be
+ * caught. */
+int sk_loop_child(sk_loop *loop, pid_t pid, sk_child_cb cb, void *ud);
+/* Stops watching pid, for an owner that reaps it itself. */
+void sk_loop_unchild(sk_loop *loop, pid_t pid);
 
 /* Thread-safe: runs cb(ud) on the loop's thread, in the order posted. */
 void sk_loop_post(sk_loop *loop, sk_task_cb cb, void *ud);

@@ -131,7 +131,14 @@ void sk_agent_prepare(sk_agent *a, sk_strv *args, char **notice)
         if (*parts[i].closed || !p->ops->prepare)
             continue;
         char *n = NULL;
+        size_t had = args->len;
         if (p->ops->prepare(p->self, args, &n) != 0) {
+            /* What a failed part pushed goes with it, as agent.js never
+             * took a rejected prepare's args. */
+            while (args->len > had)
+                free(args->ptr[--args->len]);
+            if (args->ptr)
+                args->ptr[args->len] = NULL;
             logf_(a, "%s adapter failed", a->kind);
             close_part(a, p, parts[i].closed);
             a->failed = SK_AGENT_FAILED;
@@ -160,10 +167,10 @@ void sk_agent_attach(sk_agent *a, pid_t pid)
         a->generic.ops->attach(a->generic.self, pid);
 }
 
-void sk_agent_on_output(sk_agent *a, size_t n, uint64_t now)
+void sk_agent_on_output(sk_agent *a, size_t n)
 {
     if (!a->generic_closed)
-        sk_generic_on_output(a->generic.self, n, now);
+        sk_generic_on_output(a->generic.self, n, a->now ? a->now() : sk_now_ms());
 }
 
 void sk_agent_on_input(sk_agent *a)

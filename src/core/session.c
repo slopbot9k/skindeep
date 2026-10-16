@@ -7,8 +7,8 @@
  * process group exists, and node-pty's race between the spawn and
  * setsid is gone.
  *
- * The child is reaped through SIGCHLD, for every session at once. Its
- * last bytes can reach the master after the SIGCHLD, so the end waits
+ * The loop reaps the child (sk_loop_child) and calls back. Its last
+ * bytes can reach the master after the SIGCHLD, so the end waits
  * for the master's end of output, EIO or 0, at most DRAIN_MS, as
  * node-pty waits for its socket to close. */
 #include "session.h"
@@ -73,9 +73,6 @@ struct sk_session {
     bool hung_up, reaped, out_done;
     sk_buf queue; /* input not yet written */
 };
-
-/* Every session whose child is not yet reaped. */
-static SK_VEC(sk_session *) live;
 
 static void say(sk_session *s, sk_log_fn fn, const char *fmt, ...) SK_PRINTF(3, 4);
 static void say(sk_session *s, sk_log_fn fn, const char *fmt, ...)
@@ -152,18 +149,6 @@ static void cancel(sk_session *s, int *id)
     *id = 0;
 }
 
-static void live_remove(sk_session *s)
-{
-    for (size_t i = 0; i < live.len; i++) {
-        if (live.ptr[i] == s) {
-            live.ptr[i] = live.ptr[--live.len];
-            break;
-        }
-    }
-    if (!live.len)
-        sk_vec_free(&live);
-}
-
 /* Everything the session holds on the loop and the pty. */
 static void stop(sk_session *s)
 {
@@ -227,7 +212,7 @@ static void read_master(sk_session *s)
         if (n > 0) {
             total += (size_t)n;
             if (s->agent)
-                sk_agent_on_output(s->agent, (size_t)n, s->now ? s->now() : sk_now_ms());
+                sk_agent_on_output(s->agent, (size_t)n);
             if (s->on_output)
                 s->on_output(s->ud, buf, (size_t)n);
         } else if (n < 0 && errno == EINTR) {
@@ -307,38 +292,14 @@ static void reaped(sk_session *s)
         s->drain_id = sk_loop_timer(s->loop, DRAIN_MS, 0, on_drain, s);
 }
 
-void sk_session_reap(void)
+static void on_child(sk_loop *loop, pid_t pid, int wstatus, void *ud)
 {
-    /* Collected first, so the callbacks of one cannot change the list
-     * being walked. */
-    SK_VEC(sk_session *) done = {0};
-    for (size_t i = 0; i < live.len;) {
-        sk_session *s = live.ptr[i];
-        int ws = 0;
-        pid_t r;
-        while ((r = waitpid(s->pid, &ws, WNOHANG)) < 0 && errno == EINTR)
-            ;
-        if (r == 0) {
-            i++;
-            continue;
-        }
-        /* -1: reaped by someone else, its status lost. */
-        s->exit_code = r == s->pid ? sk_session_exit_status(ws) : SK_EXIT_APP;
-        s->reaped = true;
-        live.ptr[i] = live.ptr[--live.len];
-        sk_vec_push(&done, s);
-    }
-    if (!live.len)
-        sk_vec_free(&live);
-    for (size_t i = 0; i < done.len; i++)
-        reaped(done.ptr[i]);
-    sk_vec_free(&done);
-}
-
-static void on_sigchld(sk_loop *loop, int signo, void *ud)
-{
-    (void)loop, (void)signo, (void)ud;
-    sk_session_reap();
+    (void)loop, (void)pid;
+    sk_session *s = ud;
+    /* -1: reaped by someone else, its status lost. */
+    s->exit_code = wstatus >= 0 ? sk_session_exit_status(wstatus) : SK_EXIT_APP;
+    s->reaped = true;
+    reaped(s);
 }
 
 /* What the child needs, made before the fork: after it, in a process
@@ -484,11 +445,6 @@ static int spawn(sk_session *s, int cols, int rows, sk_buf *why)
     what = "cannot make a socket pair";
     if (report_channel(report) != 0)
         goto fail;
-    what = "cannot watch for the child's exit";
-    errno = 0;
-    if (sk_loop_signal(s->loop, SIGCHLD, on_sigchld, NULL) != 0)
-        goto fail;
-
     sk_envp env;
     sk_session_child_env(&s->env, &env);
     plan p;
@@ -539,7 +495,9 @@ static int spawn(sk_session *s, int cols, int rows, sk_buf *why)
         fcntl(master, F_SETFL, fl | O_NONBLOCK);
     s->master = master;
     s->pid = pid;
-    sk_vec_push(&live, s);
+    /* Fails only when SIGCHLD cannot be caught at all. */
+    if (sk_loop_child(s->loop, pid, on_child, s) != 0)
+        sk_die("cannot watch for the exit of child %ld", (long)pid);
     s->read_id = sk_loop_watch(s->loop, master, POLLIN, on_master, s);
     return 0;
 
@@ -680,11 +638,11 @@ void sk_session_free(sk_session *s)
     if (!s)
         return;
     if (s->pid && !s->reaped) {
+        sk_loop_unchild(s->loop, s->pid);
         signal_child(s, SIGKILL);
         while (waitpid(s->pid, NULL, 0) < 0 && errno == EINTR)
             ;
         s->reaped = true;
-        live_remove(s);
     }
     stop(s);
     cancel(s, &s->end_id);

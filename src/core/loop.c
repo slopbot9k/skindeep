@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 /* POSIX names no count of signals; Linux has 64, macOS 31. */
@@ -36,11 +37,20 @@ typedef struct task {
     void *ud;
 } task;
 
+typedef struct {
+    pid_t pid;
+    sk_child_cb cb;
+    void *ud;
+} child;
+
 struct sk_loop {
     SK_VEC(watcher) watchers;
     SK_VEC(timer) timers;
     SK_VEC(struct pollfd) fds;
     SK_VEC(int) fd_ids;
+    SK_VEC(child) children;
+    bool children_due; /* a SIGCHLD came, or a child was just added */
+    bool took_sigchld;
     int next_id;
     uint64_t round;
     bool stopped;
@@ -146,6 +156,7 @@ void sk_loop_free(sk_loop *loop)
     sk_vec_free(&loop->timers);
     sk_vec_free(&loop->fds);
     sk_vec_free(&loop->fd_ids);
+    sk_vec_free(&loop->children);
     free(loop);
 }
 
@@ -231,6 +242,62 @@ int sk_loop_signal(sk_loop *loop, int signo, sk_signal_cb cb, void *ud)
     return 0;
 }
 
+static void on_sigchld(sk_loop *loop, int signo, void *ud)
+{
+    (void)signo, (void)ud;
+    loop->children_due = true;
+}
+
+int sk_loop_child(sk_loop *loop, pid_t pid, sk_child_cb cb, void *ud)
+{
+    if (!loop->took_sigchld) {
+        if (sk_loop_signal(loop, SIGCHLD, on_sigchld, NULL) != 0)
+            return -1;
+        loop->took_sigchld = true;
+    }
+    child c = {pid, cb, ud};
+    sk_vec_push(&loop->children, c);
+    loop->children_due = true;
+    return 0;
+}
+
+void sk_loop_unchild(sk_loop *loop, pid_t pid)
+{
+    for (size_t i = 0; i < loop->children.len; i++) {
+        if (loop->children.ptr[i].pid == pid) {
+            loop->children.ptr[i] = loop->children.ptr[--loop->children.len];
+            return;
+        }
+    }
+}
+
+/* Every watched child that has exited, reaped, then told: the callbacks
+ * run after the list is settled, so one may add or remove others. */
+static void reap_children(sk_loop *loop)
+{
+    loop->children_due = false;
+    SK_VEC(child) done = {0};
+    SK_VEC(int) statuses = {0};
+    for (size_t i = 0; i < loop->children.len;) {
+        child c = loop->children.ptr[i];
+        int ws = 0;
+        pid_t r;
+        while ((r = waitpid(c.pid, &ws, WNOHANG)) < 0 && errno == EINTR)
+            ;
+        if (r == 0) {
+            i++;
+            continue;
+        }
+        loop->children.ptr[i] = loop->children.ptr[--loop->children.len];
+        sk_vec_push(&done, c);
+        sk_vec_push(&statuses, r == c.pid ? ws : -1);
+    }
+    for (size_t i = 0; i < done.len; i++)
+        done.ptr[i].cb(loop, done.ptr[i].pid, statuses.ptr[i], done.ptr[i].ud);
+    sk_vec_free(&done);
+    sk_vec_free(&statuses);
+}
+
 void sk_loop_post(sk_loop *loop, sk_task_cb cb, void *ud)
 {
     task *t = sk_xmalloc(sizeof *t);
@@ -254,7 +321,17 @@ void sk_loop_wake(sk_loop *loop)
     (void)w; /* a full pipe already wakes the loop */
 }
 
+static int timer_wait(const sk_loop *loop, int timeout_ms);
+
+/* How long poll may wait: not at all while children are due. */
 static int wait_ms(const sk_loop *loop, int timeout_ms)
+{
+    if (loop->children_due)
+        return 0;
+    return timer_wait(loop, timeout_ms);
+}
+
+static int timer_wait(const sk_loop *loop, int timeout_ms)
 {
     uint64_t now = sk_now_ms();
     int64_t best = timeout_ms;
@@ -345,6 +422,8 @@ void sk_loop_once(sk_loop *loop, int timeout_ms)
             }
         }
     }
+    if (loop->children_due)
+        reap_children(loop);
     run_timers(loop);
 }
 
