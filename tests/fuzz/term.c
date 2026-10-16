@@ -1,7 +1,8 @@
 /* The terminal: any bytes, fed in any pieces into a small terminal that
  * is now and then resized, scrolled or selected in, keep the screen
  * whole: the cursor in bounds, the buffers' counts consistent, every
- * line as wide as the screen, every combined cell with its text.
+ * line as wide as the screen, every combined cell with its text, every
+ * line referenced by the slots that hold it and freed with the last.
  *
  * The first two bytes size the terminal. The rest is fed to it, except
  * that 0xFE, which UTF-8 never holds, ends a feed and starts a command:
@@ -9,6 +10,7 @@
 #include "../../src/term/screen.h"
 #include "fuzz.h"
 
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -70,6 +72,37 @@ static void check(sk_term *t)
     need(!t->alt.lines.len || t->active == &t->alt, "alternate buffer left full");
 }
 
+static int by_address(const void *a, const void *b)
+{
+    uintptr_t x = (uintptr_t)*(sk_line *const *)a, y = (uintptr_t)*(sk_line *const *)b;
+    return (x > y) - (x < y);
+}
+
+/* Each line's references are the slots that hold it, and the lines
+ * alive beyond those there were before are the rings' lines. */
+static void check_lines(sk_term *t, long before)
+{
+    sk_lines *rings[2] = {&t->normal.lines, &t->alt.lines};
+    size_t n = 0, cap = (size_t)(rings[0]->max + rings[1]->max);
+    sk_line **all = sk_xcalloc(cap, sizeof *all);
+    for (int k = 0; k < 2; k++)
+        for (int i = 0; i < rings[k]->max; i++)
+            if (rings[k]->v[i])
+                all[n++] = rings[k]->v[i];
+    qsort(all, n, sizeof *all, by_address);
+    long distinct = 0;
+    for (size_t i = 0; i < n;) {
+        size_t run = 1;
+        while (i + run < n && all[i + run] == all[i])
+            run++;
+        need(all[i]->refs == (int)run, "line references");
+        distinct++;
+        i += run;
+    }
+    free(all);
+    need(sk_line_alive() - before == distinct, "lines leaked");
+}
+
 static void on_reply(void *ud, const char *data, size_t len)
 {
     (void)ud;
@@ -115,6 +148,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
     if (size < 2)
         return 0;
     sk_term_callbacks cb = {NULL, on_reply, NULL, NULL};
+    long before = sk_line_alive();
     sk_term *t = sk_term_new(2 + data[0] % 30, 1 + data[1] % 12, &cb);
     size_t i = 2;
     while (i < size) {
@@ -142,6 +176,8 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
     for (int y = 0; y < rows; y++)
         sk_term_row(t, y, row);
     free(row);
+    check_lines(t, before);
     sk_term_free(t);
+    need(sk_line_alive() == before, "lines left after the free");
     return 0;
 }

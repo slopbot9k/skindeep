@@ -383,8 +383,9 @@ static void scroll(sk_term *t, const sk_cell_data *erase, bool wrapped)
         } else if (t->user_scrolling) {
             b->ydisp = SK_MAX(b->ydisp - 1, 0);
         }
-    } else {
-        sk_lines_shift_up(r, top, bottom - top + 1);
+    } else if (sk_lines_shift(r, top + 1, bottom - top, -1)) {
+        /* Where shiftElements throws, as when the region starts past the
+         * lines of a ring the screen runs past, xterm.js sets nothing. */
         sk_lines_set(r, bottom, blank_line(t, erase, wrapped));
     }
     if (!t->user_scrolling)
@@ -502,7 +503,7 @@ static void print(void *ud, const uint32_t *data, size_t n)
                 /* The scroll may drop the old row; it is still read and
                  * cleared, as InputHandler.print's oldRow is. */
                 sk_line *old_row = row;
-                sk_lines_hold(&b->lines, old_row);
+                sk_line_hold(old_row);
                 int old_col = b->x - old_width;
                 b->x = old_width;
                 b->y++;
@@ -520,7 +521,7 @@ static void print(void *ud, const uint32_t *data, size_t n)
                 while (old_col < cols)
                     put(old_row, old_col++, 0, 1, cur);
                 sk_line_touch(old_row);
-                sk_lines_release(&b->lines);
+                sk_line_release(old_row);
             } else {
                 b->x = cols - 1;
                 if (width == 2)
@@ -667,9 +668,14 @@ static void reverse_index(sk_term *t)
     sk_buffer *b = t->active;
     restrict_cursor(t, t->cols - 1);
     if (b->y == b->scroll_top) {
+        /* Where the screen runs past a full ring's lines, the move down
+         * writes round onto the first lines and grows the ring, which
+         * trims: the blank then lands a line on, and one line sits in two
+         * slots, as xterm.js leaves them. Where shiftElements throws,
+         * nothing changes. */
         int height = b->scroll_bottom - b->scroll_top;
-        sk_lines_shift_down(&b->lines, b->ybase + b->y, height);
-        sk_lines_set(&b->lines, b->ybase + b->y, blank_line(t, erase_attr(t), false));
+        if (sk_lines_shift(&b->lines, b->ybase + b->y, height, 1))
+            sk_lines_set(&b->lines, b->ybase + b->y, blank_line(t, erase_attr(t), false));
     } else {
         b->y--;
         restrict_cursor(t, t->cols - 1);
