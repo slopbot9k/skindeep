@@ -1600,10 +1600,14 @@ int sk_gui_run(const sk_options *o, const sk_envp *env, const char *self)
     sk_loop_signal(g->loop, SIGHUP, on_stop, g);
     sk_control *ctl = NULL;
     const char *control = sk_envp_get(env, "SKINNED_CONTROL");
+    /* A check that asked for the socket and cannot have it would wait
+     * on a window it cannot reach: the app ends instead. */
     if (control && *control && !(ctl = sk_control_open(g->loop, control, on_control, g, &err))) {
         sk_tell("%s", err);
         free(err);
-        err = NULL;
+        sk_tabs_free(g->tabs);
+        sk_loop_free(g->loop);
+        goto out;
     }
 
     /* The first tab runs the command as typed (decision 0003). Until
