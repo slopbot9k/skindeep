@@ -99,6 +99,7 @@
     X(skinc_program)                                                         \
     X(milk_audio)                                                            \
     X(milk_render)                                                           \
+    X(milk_waves)                                                            \
     X(milk_drift)                                                            \
     X(milk_rings)                                                            \
     X(milk_plasma)                                                           \
