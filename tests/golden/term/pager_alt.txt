@@ -1,0 +1,8 @@
+cols 30 rows 6 cursor 1,5 buffer alt top 0 base 0 lines 6
+|line zero                     |
+|line one                      |
+|inserted                      |
+|line two                      |
+|line three                    |
+|:                             |
+attr 5 0-0: inverse

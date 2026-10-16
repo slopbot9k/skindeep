@@ -461,6 +461,20 @@ static uint32_t char_props(uint32_t cp, uint32_t preceding)
     return (uint32_t)(width & 3) << 1 | (join ? 1u : 0u);
 }
 
+/* Cells past either end of a typed array: JavaScript reads them as 0 and
+ * drops writes to them, which print meets when the cursor waits past the
+ * last column. */
+static int width_at(const sk_line *l, int i)
+{
+    return i >= 0 && i < l->len ? sk_line_width(l, i) : 0;
+}
+
+static void put(sk_line *l, int i, uint32_t cp, int width, const sk_cell_data *attr)
+{
+    if (i >= 0 && i < l->len)
+        sk_line_set_cp(l, i, cp, width, attr);
+}
+
 static void print(void *ud, const uint32_t *data, size_t n)
 {
     sk_term *t = ud;
@@ -469,8 +483,8 @@ static void print(void *ud, const uint32_t *data, size_t n)
     const uint32_t *charset = t->charset;
     sk_cell_data *cur = &t->cur;
     sk_line *row = cur_line(t);
-    if (b->x && n > 0 && sk_line_width(row, b->x - 1) == 2)
-        sk_line_set_cp(row, b->x - 1, 0, 1, cur);
+    if (b->x && n > 0 && width_at(row, b->x - 1) == 2)
+        put(row, b->x - 1, 0, 1, cur);
     uint32_t join = t->vt.join;
     for (size_t pos = 0; pos < n; ++pos) {
         uint32_t code = data[pos];
@@ -501,7 +515,7 @@ static void print(void *ud, const uint32_t *data, size_t n)
                 if (old_width > 0)
                     sk_line_copy_cells(row, old_row, old_col, 0, old_width, false);
                 while (old_col < cols)
-                    sk_line_set_cp(old_row, old_col++, 0, 1, cur);
+                    put(old_row, old_col++, 0, 1, cur);
                 sk_line_touch(old_row);
             } else {
                 b->x = cols - 1;
@@ -510,10 +524,11 @@ static void print(void *ud, const uint32_t *data, size_t n)
             }
         }
         if (should_join && b->x) {
-            int offset = sk_line_width(row, b->x - 1) ? 1 : 2;
-            sk_line_add_cp(row, b->x - offset, code, width);
+            int offset = width_at(row, b->x - 1) ? 1 : 2;
+            if (b->x - offset >= 0 && b->x - offset < row->len)
+                sk_line_add_cp(row, b->x - offset, code, width);
             for (int delta = width - old_width; --delta >= 0;)
-                sk_line_set_cp(row, b->x++, 0, 0, cur);
+                put(row, b->x++, 0, 0, cur);
             continue;
         }
         if (t->insert_mode) {
@@ -522,14 +537,14 @@ static void print(void *ud, const uint32_t *data, size_t n)
             if (sk_line_width(row, cols - 1) == 2)
                 sk_line_set_cp(row, cols - 1, 0, 1, cur);
         }
-        sk_line_set_cp(row, b->x++, code, width, cur);
+        put(row, b->x++, code, width, cur);
         if (width > 0)
             while (--width)
-                sk_line_set_cp(row, b->x++, 0, 0, cur);
+                put(row, b->x++, 0, 0, cur);
     }
     t->vt.join = join;
-    if (b->x < cols && n > 0 && sk_line_width(row, b->x) == 0 && !sk_line_has_content(row, b->x))
-        sk_line_set_cp(row, b->x, 0, 1, cur);
+    if (b->x < cols && n > 0 && width_at(row, b->x) == 0 && b->x < row->len && !sk_line_has_content(row, b->x))
+        put(row, b->x, 0, 1, cur);
     sk_line_touch(row);
 }
 

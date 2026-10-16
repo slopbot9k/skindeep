@@ -55,4 +55,5 @@
     X(term_replies)                                                          \
     X(term_osc)                                                              \
     X(term_reflow)                                                           \
-    X(term_select)
+    X(term_select)                                                           \
+    X(term_streams)

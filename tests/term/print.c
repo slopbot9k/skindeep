@@ -251,6 +251,22 @@ static void test_rep_huge(void)
     tt_close(&y);
 }
 
+static void test_zero_width_at_pending_wrap(void)
+{
+    /* A mark with nothing to join, at the pending wrap, is written past
+     * the line, where JavaScript drops it, and still moves the cursor. */
+    tt x;
+    tt_open(&x, 10, 3);
+    tt_feed(&x, "0123456789\x1b[m\xCC\x81");
+    CHECK_CURSOR(x.t, 11, 0);
+    CHECK_ROWS(x.t, "0123456789\n\n");
+    tt_feed(&x, "\x1b[6n");
+    CHECK_REPLY(&x, "\x1b[1;12R");
+    tt_feed(&x, "a");
+    CHECK_ROWS(x.t, "0123456789\na\n");
+    tt_close(&x);
+}
+
 static void test_wraparound_off(void)
 {
     tt x;
@@ -295,6 +311,7 @@ const sk_test sk_suite_term_print[] = {
     T(test_insert_mode),
     T(test_rep),
     T(test_rep_huge),
+    T(test_zero_width_at_pending_wrap),
     T(test_wraparound_off),
     T(test_split_utf8),
     {0},

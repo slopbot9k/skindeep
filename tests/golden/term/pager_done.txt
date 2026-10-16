@@ -1,0 +1,7 @@
+cols 30 rows 6 cursor 2,1 buffer normal top 0 base 0 lines 6
+|$ less notes.txt              |
+|$                             |
+|                              |
+|                              |
+|                              |
+|                              |

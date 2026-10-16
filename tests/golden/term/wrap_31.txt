@@ -1,0 +1,9 @@
+cols 31 rows 8 cursor 2,4 buffer normal top 0 base 0 lines 8
+|$ echo 日本語 and a long line t|
+>hat wraps twice over           |
+|日本語 and a long line that wra|
+>ps twice over                  |
+|$                              |
+|                               |
+|                               |
+|                               |
