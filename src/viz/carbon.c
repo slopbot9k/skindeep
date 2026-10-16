@@ -661,7 +661,9 @@ static void precision3(double x, char *out, size_t n)
 
 static void wl_text(double nm, char *out, size_t n)
 {
-    char v[32];
+    /* Below 100000 with at most two decimals: a few characters, so the
+     * unit always fits after them in out. */
+    char v[20];
     if (nm < 1000) {
         fixed(nm, 1, v, sizeof v);
         snprintf(out, n, "%s nm", v);
