@@ -43,5 +43,6 @@
     X(tabs)                                                                  \
     X(clitab)                                                                \
     X(monitor)                                                               \
+    X(dashboard)                                                             \
     X(foreign)                                                               \
     X(headless)
