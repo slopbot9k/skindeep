@@ -42,4 +42,6 @@
     X(background)                                                            \
     X(tabs)                                                                  \
     X(clitab)                                                                \
+    X(monitor)                                                               \
+    X(foreign)                                                               \
     X(headless)
