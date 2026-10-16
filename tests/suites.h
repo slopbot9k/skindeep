@@ -45,4 +45,9 @@
     X(monitor)                                                               \
     X(dashboard)                                                             \
     X(foreign)                                                               \
-    X(headless)
+    X(headless)                                                              \
+    X(font)                                                                  \
+    X(fonts)                                                                 \
+    X(fontset)                                                               \
+    X(glyphcache)                                                            \
+    X(textrun)
