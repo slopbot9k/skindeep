@@ -617,7 +617,7 @@ bool sk_x11_prop_get(sk_x11 *c, bool del, uint32_t win, uint32_t prop, uint32_t 
 
 /* ---- Events ---- */
 
-bool sk_x11_event_decode(const uint8_t *b, uint8_t shm_event, sk_x11_event *ev)
+bool sk_x11_event_decode(const uint8_t b[32], uint8_t shm_event, sk_x11_event *ev)
 {
     memset(ev, 0, sizeof *ev);
     ev->type = b[0] & 0x7f;
