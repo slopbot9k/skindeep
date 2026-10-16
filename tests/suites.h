@@ -45,6 +45,7 @@
     X(monitor)                                                               \
     X(dashboard)                                                             \
     X(foreign)                                                               \
+    X(newtab)                                                                \
     X(headless)                                                              \
     X(term_recorded)                                                         \
     X(window)                                                                \
