@@ -65,7 +65,7 @@ RELAY := $(BUILD)/skinned-relay
 HOOKDUMP := $(BUILD)/hookdump
 SKINNED := $(BUILD)/skinned
 
-FUZZ_TARGETS := json http utf8 base64
+FUZZ_TARGETS := json http utf8 base64 claude codex
 FUZZ_BINS := $(FUZZ_TARGETS:%=$(BUILD)/fuzz-%)
 FUZZ_DRIVER := $(BUILD)/tests/fuzz/driver.o
 FUZZ_SECONDS ?= 30

@@ -1,0 +1,16 @@
+{"type": "last-prompt", "sessionId": "4dfd8073-ba41-43f3-bcc3-3fdbc18033fc"}
+{"type": "mode", "sessionId": "4dfd8073-ba41-43f3-bcc3-3fdbc18033fc"}
+{"type": "permission-mode", "sessionId": "4dfd8073-ba41-43f3-bcc3-3fdbc18033fc"}
+{"type": "atis-latch", "sessionId": "4dfd8073-ba41-43f3-bcc3-3fdbc18033fc"}
+{"type": "bridge-session", "sessionId": "4dfd8073-ba41-43f3-bcc3-3fdbc18033fc"}
+{"type": "ai-title", "sessionId": "4dfd8073-ba41-43f3-bcc3-3fdbc18033fc"}
+{"type": "assistant", "isSidechain": false, "timestamp": "2026-10-12T03:09:09.740Z", "uuid": "40607bab-d585-4854-9f4f-493c2784503c", "sessionId": "4dfd8073-ba41-43f3-bcc3-3fdbc18033fc", "message": {"model": "claude-opus-5-5", "usage": {"input_tokens": 2, "cache_creation_input_tokens": 26911, "cache_read_input_tokens": 28421, "output_tokens": 66, "output_tokens_details": {"thinking_tokens": 0}, "server_tool_use": {"web_search_requests": 0, "web_fetch_requests": 0}, "service_tier": "standard", "cache_creation": {"ephemeral_1h_input_tokens": 26911, "ephemeral_5m_input_tokens": 0}, "inference_geo": "global", "iterations": [{"input_tokens": 2, "output_tokens": 66, "cache_read_input_tokens": 28421, "cache_creation_input_tokens": 26911, "cache_creation": {"ephemeral_5m_input_tokens": 0, "ephemeral_1h_input_tokens": 26911}, "type": "message"}], "speed": "standard", "fallback_credit": null}, "role": "assistant", "id": "msg_011CfwcCkoDo4KVUH4iZsweA", "content": [{"type": "tool_use", "name": "Read", "id": "toolu_01Ya7jCS237Ursh4rMskmLZd"}]}}
+{"type": "user", "isSidechain": false, "timestamp": "2026-10-12T03:09:09.856Z", "uuid": "5cb9712a-a2c8-4d2f-b0b0-eb13dd978466", "sessionId": "4dfd8073-ba41-43f3-bcc3-3fdbc18033fc", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "toolu_01Ya7jCS237Ursh4rMskmLZd"}]}}
+{"type": "attachment", "isSidechain": false, "timestamp": "2026-10-12T03:09:09.863Z", "uuid": "fd4a35f1-d917-4bc9-ae95-a4d4c9f331ae", "sessionId": "4dfd8073-ba41-43f3-bcc3-3fdbc18033fc"}
+{"type": "last-prompt", "sessionId": "4dfd8073-ba41-43f3-bcc3-3fdbc18033fc"}
+{"type": "ai-title", "sessionId": "4dfd8073-ba41-43f3-bcc3-3fdbc18033fc"}
+{"type": "mode", "sessionId": "4dfd8073-ba41-43f3-bcc3-3fdbc18033fc"}
+{"type": "permission-mode", "sessionId": "4dfd8073-ba41-43f3-bcc3-3fdbc18033fc"}
+{"type": "atis-latch", "sessionId": "4dfd8073-ba41-43f3-bcc3-3fdbc18033fc"}
+{"type": "bridge-session", "sessionId": "4dfd8073-ba41-43f3-bcc3-3fdbc18033fc"}
+{"type": "attachment", "isSidechain": false, "timestamp": "2026-10-12T03:09:09.883Z", "uuid": "6a73ed10-aa49-4ae9-a3ee-c850ca139880", "sessionId": "4dfd8073-ba41-43f3-bcc3-3fdbc18033fc"}
