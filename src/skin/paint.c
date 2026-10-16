@@ -655,23 +655,26 @@ static void add_mask(uint8_t *buf, int w, int h, int x, int y, const sk_mask *m)
     }
 }
 
-typedef struct {
-    const sk_glyph *g;
-    int x, y;
-} placed;
+/* Beyond this a glyph's place no longer fits an int: it is not drawn. */
+#define FAR 4194304.0f
 
 /* A run's glyphs drawn into coverage over r (a pixel rectangle), each
- * at its pen offset by (dx, dy) pixels. */
+ * at its pen offset by (dx, dy) pixels, its pen on a quarter pixel as
+ * src/text's runs place it. */
 static uint8_t *run_cover(painter *P, const sk_lrun *run, const sk_xform *m, float dx, float dy, sk_rect r)
 {
     uint8_t *buf = sk_xcalloc((size_t)r.w, (size_t)r.h);
     float px = run->px * sqrtf(fabsf(m->a * m->d - m->b * m->c));
     float by = m->b * run->x + m->d * run->y + m->f + dy;
+    if (!(fabsf(by) < FAR))
+        return buf;
     int base = (int)floorf(by + 0.5f);
     for (uint32_t k = 0; k < run->n; k++) {
         const sk_lglyph *g = &P->l->glyphs[run->first + k];
         float x = run->x + g->x;
         float gx = m->a * x + m->c * run->y + m->e + dx;
+        if (!(fabsf(gx) < FAR))
+            continue;
         float q = floorf(gx * 4 + 0.5f), whole = floorf(q / 4);
         sk_glyph_ref ref = {g->font, g->glyph, g->synth};
         const sk_glyph *gl = sk_glyph_get(P->env->glyphs, ref, px, (int)(q - whole * 4));
@@ -800,9 +803,13 @@ static void polar(const sk_pack_svg *g, double deg, float *x, float *y)
     *y = (float)(g->v[1] - g->v[2] * cos(r));
 }
 
-/* The arc from a0 to a1 degrees as cubics of at most 90 degrees. */
+/* The arc from a0 to a1 degrees as cubics of at most 90 degrees; no
+ * more than a whole turn. */
 static void arc_path(sk_path *p, const sk_pack_svg *g, double a0, double a1)
 {
+    if (!isfinite(a0) || !isfinite(a1))
+        return;
+    a1 = fmin(a1, a0 + 360);
     float x, y;
     polar(g, a0, &x, &y);
     sk_path_move(p, x, y);
