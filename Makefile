@@ -62,7 +62,7 @@ PLATFORM := $(if $(filter Darwin,$(OS)),macos,linux)
 # run against a fake server, on every system; only Linux opens windows
 # with it.
 LIB_SRC := $(wildcard src/base/*.c src/core/*.c src/agents/*.c src/agents/*/*.c src/app/*.c src/sessions/*.c \
-    src/gfx/*.c src/text/*.c src/term/*.c src/ui/*.c src/vendor/*.c src/platform/x11/*.c src/platform/$(PLATFORM)/*.c) src/relay/relay.c
+    src/gfx/*.c src/text/*.c src/skin/*.c src/term/*.c src/ui/*.c src/vendor/*.c src/platform/x11/*.c src/platform/$(PLATFORM)/*.c) src/relay/relay.c
 # The embedded DejaVu, in sk_embedded_font's order (text/text.h).
 FONTS := $(addprefix third_party/dejavu/,DejaVuSansMono.ttf DejaVuSansMono-Bold.ttf DejaVuSansMono-Oblique.ttf \
     DejaVuSansMono-BoldOblique.ttf DejaVuSans.ttf DejaVuSans-Bold.ttf)
@@ -91,7 +91,7 @@ FUZZ_BINS := $(FUZZ_TARGETS:%=$(BUILD)/fuzz-%)
 FUZZ_DRIVER := $(BUILD)/tests/fuzz/driver.o
 FUZZ_SECONDS ?= 30
 
-.PHONY: all test debug fuzz fuzz-run clean macdemo windemo
+.PHONY: all test debug fuzz fuzz-run clean macdemo windemo skinshot
 .SECONDARY:
 
 all: $(LIB) $(TEST_BIN) $(RELAY) $(HOOKDUMP) $(SKINNED) $(SKINC) $(BUILD)/qoi2png $(BUILD)/windemo
@@ -165,6 +165,16 @@ $(BUILD)/windemo: $(BUILD)/tools/windemo.o $(LIB)
 $(BUILD)/gfxbench: $(BUILD)/tools/gfxbench.o $(LIB)
 	$(CC) $(OPT) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
+# A shipped skin laid out and painted at 1x and 2x, to look at beside the
+# Electron app's screenshots; not part of all. The tests' skin goldens
+# draw through the same tools/shot.c. stb_image decodes for both until
+# skinc's own decoders are in the library.
+SHOT_OBJ := $(BUILD)/tools/shot.o $(BUILD)/tools/imgdecode.o
+$(BUILD)/tools/imgdecode.o: WARN := -w
+skinshot: $(BUILD)/skinshot
+$(BUILD)/skinshot: $(BUILD)/tools/skinshot.o $(SHOT_OBJ) $(SKINC_LIB) $(LIB)
+	$(CC) $(OPT) $(LDFLAGS) -o $@ $^ $(LDLIBS)
+
 test: $(TEST_BIN) $(RELAY) $(SKINNED) $(SKINC)
 	SK_RELAY_BIN=$(RELAY) SK_SKINNED_BIN=$(SKINNED) SK_SKINC_BIN=$(SKINC) ./$(TEST_BIN) $(T)
 
@@ -193,4 +203,5 @@ clean:
 -include $(LIB_OBJ:.o=.d) $(TEST_OBJ:.o=.d) $(SKINC_OBJ:.o=.d) $(BUILD)/skinc-objs/main.d $(BUILD)/src/relay/main.d $(BUILD)/tools/hookdump.d \
     $(BUILD)/src/main/skinned.d \
     $(BUILD)/tools/qoi2png.d $(BUILD)/tools/macdemo.d $(BUILD)/tools/windemo.d $(BUILD)/tools/gfxbench.d \
+    $(BUILD)/tools/skinshot.d $(BUILD)/tools/shot.d $(BUILD)/tools/imgdecode.d \
     $(wildcard $(BUILD)/tests/fuzz/*.d)
