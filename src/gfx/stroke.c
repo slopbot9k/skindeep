@@ -136,8 +136,20 @@ static void turn(stroker *s, pt p, pt din, pt dout, bool smooth)
         line_to(s, end);
         return;
     }
-    sk_join j = smooth ? SK_JOIN_ROUND : s->join;
     pt a = mul(perp(din), s->hw), b = mul(perp(dout), s->hw);
+    sk_join j = s->join;
+    if (smooth) {
+        /* Inside a curve the offset turns round, but where the turn is
+         * slight a miter strays from the arc by hw (1 / cos(turn / 2) -
+         * 1), which is hw (sqrt(2 / k) - 1): within the flattening's
+         * tolerance, the miter's one point will do. */
+        if (k > 0 && s->hw * (sqrt(2 / k) - 1) <= SK_GFX_TOLERANCE) {
+            line_to(s, add(p, mul(add(a, b), 1 / k)));
+            line_to(s, end);
+            return;
+        }
+        j = SK_JOIN_ROUND;
+    }
     if (j == SK_JOIN_ROUND) {
         if (c == 0) {
             /* Straight back: a half turn round the front. */

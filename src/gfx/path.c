@@ -261,13 +261,27 @@ static bool beside(const flat *f, const double *x, const double *y, int n)
     return y1 <= f->t || y0 >= f->b || x0 >= f->r || x1 <= f->l;
 }
 
-static void add_quad(flat *f, const double *x, const double *y)
+/* A curve needing more chords than this is halved first, so that halves
+ * beside the pixels drawn become chords: a huge curve crossing a small
+ * image costs a few dozen edges, not SK_GFX_MAX_STEPS. */
+#define SPLIT_STEPS 16
+#define MAX_DEPTH 24
+
+static void add_quad(flat *f, const double *x, const double *y, int depth)
 {
     if (beside(f, x, y, 3)) {
         add_edge(f, x[0], y[0], x[2], y[2]);
         return;
     }
     int n = sk_gfx_steps(sk_gfx_hypot(x[0] - 2 * x[1] + x[2], y[0] - 2 * y[1] + y[2]), false);
+    if (n > SPLIT_STEPS && depth < MAX_DEPTH) {
+        double ax = (x[0] + x[1]) / 2, bx = (x[1] + x[2]) / 2, mx = (ax + bx) / 2;
+        double ay = (y[0] + y[1]) / 2, by = (y[1] + y[2]) / 2, my = (ay + by) / 2;
+        double lx[3] = {x[0], ax, mx}, ly[3] = {y[0], ay, my}, rx[3] = {mx, bx, x[2]}, ry[3] = {my, by, y[2]};
+        add_quad(f, lx, ly, depth + 1);
+        add_quad(f, rx, ry, depth + 1);
+        return;
+    }
     double px = x[0], py = y[0];
     for (int i = 1; i < n; i++) {
         double t = (double)i / n;
@@ -281,7 +295,7 @@ static void add_quad(flat *f, const double *x, const double *y)
     add_edge(f, px, py, x[2], y[2]);
 }
 
-static void add_cubic(flat *f, const double *x, const double *y)
+static void add_cubic(flat *f, const double *x, const double *y, int depth)
 {
     if (beside(f, x, y, 4)) {
         add_edge(f, x[0], y[0], x[3], y[3]);
@@ -290,6 +304,17 @@ static void add_cubic(flat *f, const double *x, const double *y)
     double dd = fmax(sk_gfx_hypot(x[0] - 2 * x[1] + x[2], y[0] - 2 * y[1] + y[2]),
                      sk_gfx_hypot(x[1] - 2 * x[2] + x[3], y[1] - 2 * y[2] + y[3]));
     int n = sk_gfx_steps(dd, true);
+    if (n > SPLIT_STEPS && depth < MAX_DEPTH) {
+        double ax = (x[0] + x[1]) / 2, bx = (x[1] + x[2]) / 2, cx = (x[2] + x[3]) / 2;
+        double ay = (y[0] + y[1]) / 2, by = (y[1] + y[2]) / 2, cy = (y[2] + y[3]) / 2;
+        double abx = (ax + bx) / 2, bcx = (bx + cx) / 2, mx = (abx + bcx) / 2;
+        double aby = (ay + by) / 2, bcy = (by + cy) / 2, my = (aby + bcy) / 2;
+        double lx[4] = {x[0], ax, abx, mx}, ly[4] = {y[0], ay, aby, my};
+        double rx[4] = {mx, bcx, cx, x[3]}, ry[4] = {my, bcy, cy, y[3]};
+        add_cubic(f, lx, ly, depth + 1);
+        add_cubic(f, rx, ry, depth + 1);
+        return;
+    }
     double px = x[0], py = y[0];
     for (int i = 1; i < n; i++) {
         double t = (double)i / n;
@@ -354,11 +379,11 @@ static bool flatten(const sk_path *p, const sk_xform *m, sk_rect area, flat *f, 
             k++;
             break;
         case SK_PATH_QUAD:
-            add_quad(f, x + k - 1, y + k - 1);
+            add_quad(f, x + k - 1, y + k - 1, 0);
             k += 2;
             break;
         case SK_PATH_CUBIC:
-            add_cubic(f, x + k - 1, y + k - 1);
+            add_cubic(f, x + k - 1, y + k - 1, 0);
             k += 3;
             break;
         default: /* SK_PATH_CLOSE */
