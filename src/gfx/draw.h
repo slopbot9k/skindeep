@@ -7,7 +7,14 @@
  * Every function clips to the destination and, when clip is not NULL,
  * to *clip as well. Nothing is drawn outside both. Colours come as
  * sk_color (not premultiplied); results round to nearest, and the same
- * input draws the same pixels on every machine. */
+ * input draws the same pixels on every machine.
+ *
+ * The arithmetic, which every implementation keeps exactly, so golden
+ * images stay the same however the loops are written: mul(x, y) is
+ * x * y / 255 rounded, as t = x * y + 128, (t + (t >> 8)) >> 8. A
+ * colour is premultiplied by sk_premul; coverage or opacity k scales a
+ * premultiplied pixel channel by channel, mul(channel, k); source-over
+ * is dst = src + mul(dst, 255 - src alpha), channel by channel. */
 #ifndef SK_GFX_DRAW_H
 #define SK_GFX_DRAW_H
 

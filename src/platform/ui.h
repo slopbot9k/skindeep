@@ -166,9 +166,12 @@ typedef struct {
     int w, h;         /* points */
     int min_w, min_h; /* points; 0 for none */
     void *ud;         /* sk_window_ud */
+    /* Not shown on screen, for tests: it has its frame, takes presents
+     * and readbacks, and gets the events a test sends it. */
+    bool hidden;
 } sk_window_opts;
 
-/* A window, shown. NULL with *err a malloc'd reason. */
+/* A window, shown unless o->hidden. NULL with *err a malloc'd reason. */
 sk_window *sk_window_new(const sk_window_opts *o, char **err);
 /* Closes it at once; no event names it after. */
 void sk_window_free(sk_window *w);
