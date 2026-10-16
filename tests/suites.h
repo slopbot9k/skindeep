@@ -28,4 +28,9 @@
     X(claude_adapter)                                                        \
     X(command)                                                               \
     X(proctree)                                                              \
-    X(session)
+    X(session)                                                               \
+    X(procinfo)                                                              \
+    X(profiles)                                                              \
+    X(sessions)                                                              \
+    X(history)                                                               \
+    X(board)
