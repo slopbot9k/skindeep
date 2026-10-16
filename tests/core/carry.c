@@ -2,6 +2,7 @@
  * providers' tables are tested with their adapters), and the string
  * lists and environments the sessions pass around. */
 #include "../../src/agents/agent.h"
+#include "../../src/core/agentdirs.h"
 #include "../../src/core/carry.h"
 #include "../../src/core/env.h"
 #include "../test.h"
@@ -94,7 +95,35 @@ static void test_strv_and_env(void)
     sk_envp_free(&e);
 }
 
+static void test_agent_dirs(void)
+{
+    struct {
+        const char *cwd, *slug;
+    } cases[] = {
+        {"/home/user/project", "-home-user-project"},
+        {"/Users/j/my_app.v2", "-Users-j-my-app-v2"},
+        {"/tmp/caf\xC3\xA9", "-tmp-caf-"},
+        {"/x/\xF0\x9F\x98\x80", "-x---"},
+    };
+    for (size_t i = 0; i < SK_LEN(cases); i++) {
+        sk_buf b = {0};
+        sk_claude_slug(&b, sk_str_c(cases[i].cwd));
+        CHECK_STR(b.ptr, cases[i].slug);
+        sk_buf_free(&b);
+    }
+    char *base[] = {"CLAUDE_CONFIG_DIR=/p/work", "CODEX_HOME=", NULL};
+    sk_envp e;
+    sk_envp_from(&e, base);
+    char *claude = sk_claude_config_dir(&e), *codex = sk_codex_home(&e);
+    CHECK_STR(claude, "/p/work");
+    CHECK(codex && sk_str_suffix(sk_str_c(codex), SK_STR("/.codex"))); /* empty counts as unset */
+    free(claude);
+    free(codex);
+    sk_envp_free(&e);
+}
+
 const sk_test sk_suite_carry[] = {
+    T(test_agent_dirs),
     T(test_pick),
     T(test_plain_carries_nothing),
     T(test_strv_and_env),
