@@ -56,4 +56,8 @@
     X(term_osc)                                                              \
     X(term_reflow)                                                           \
     X(term_select)                                                           \
-    X(term_streams)
+    X(term_streams)                                                          \
+    X(term_xbuffer)                                                          \
+    X(term_xinput)                                                           \
+    X(term_xparser)                                                          \
+    X(term_xselect)

@@ -1,6 +1,7 @@
 /* The VT parser: xterm.js's transition table, parameters, strings and
  * UTF-8 decoding, each case worked out from xterm.js 6.0.0's
  * EscapeSequenceParser.ts and TextDecoder.ts. */
+#include "../../src/base/utf8.h"
 #include "../../src/term/parser.h"
 #include "../test.h"
 
@@ -146,6 +147,29 @@ static void test_utf8_invalid(void)
         sk_buf_free(&got);
         rig_close(&r);
     }
+}
+
+static void test_utf8_every_codepoint(void)
+{
+    /* xterm.js's full codepoint test: each one decodes to itself, but a
+     * surrogate, which UTF-8 cannot hold, and the BOM, which is dropped. */
+    rig r;
+    rig_open(&r);
+    uint32_t out[4];
+    for (uint32_t cp = 1; cp <= 0x10FFFF; cp++) {
+        if (cp >= 0xD800 && cp <= 0xDFFF)
+            continue;
+        char enc[4];
+        size_t n = sk_utf8_encode(cp, enc);
+        size_t k = sk_vt_decode(&r.p, (const unsigned char *)enc, n, out);
+        if (cp == 0xFEFF) {
+            CHECK_INT(k, 0);
+        } else if (k != 1 || out[0] != cp) {
+            sk_test_fail(__FILE__, __LINE__, "U+%04X decoded to %zu codepoints", cp, k);
+            break;
+        }
+    }
+    rig_close(&r);
 }
 
 static void test_utf8_split(void)
@@ -338,6 +362,7 @@ static void test_split_feeds(void)
 const sk_test sk_suite_term_parser[] = {
     T(test_utf8_valid),
     T(test_utf8_invalid),
+    T(test_utf8_every_codepoint),
     T(test_utf8_split),
     T(test_params),
     T(test_params_limit),
