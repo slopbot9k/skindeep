@@ -271,8 +271,8 @@ static void test_clipping_and_huge(void)
     }
     sk_path_clear(p);
     sk_path_rect(p, 1, 1, 5, 5);
-    sk_xform nan = {NAN, 0, 0, 1, 0, 0};
-    im = cover(p, &nan, SK_FILL_NONZERO, 8, 8, NULL);
+    sk_xform broken = {NAN, 0, 0, 1, 0, 0};
+    im = cover(p, &broken, SK_FILL_NONZERO, 8, 8, NULL);
     CHECK_INT(total(&im), 0);
     sk_image_free(&im);
     sk_path_free(p);
