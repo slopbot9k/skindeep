@@ -36,7 +36,7 @@ static const sk_image *image_pixels(void *data, uint32_t i, int w, int h)
     return decoded(data, i);
 }
 
-bool sk_shot_load(sk_shot *s, const char *dir, sk_diags *d)
+bool sk_shot_load(sk_shot *s, const char *dir, const sk_shot_state *state, sk_diags *d)
 {
     memset(s, 0, sizeof *s);
     if (!sk_front_run(&s->front, dir, d)) {
@@ -46,19 +46,39 @@ bool sk_shot_load(sk_shot *s, const char *dir, sk_diags *d)
     const sk_skin *k = &s->front.skin;
     s->width = k->width;
     s->height = k->height - SK_STRIP;
-    /* Every variable 0 but a list's nodata: a list with no items is
-     * hidden, as the app hides it. */
+    /* Every variable 0 but a list's nodata, a list with no items being
+     * hidden as the app hides it, and what state asks for. */
+    uint8_t count = state ? state->count : 0;
+    bool rows = state && state->row;
     SK_VEC(sk_assign) as = {0};
     for (size_t i = 0; i < s->front.els.len; i++) {
         const sk_el *e = s->front.els.ptr[i];
-        if (e->role == SK_ROLE_WIDGET && e->widget >= 0 && k->widgets[e->widget].w.type == SK_WIDGET_LIST) {
+        if (e->role == SK_ROLE_STAGE && rows) {
+            sk_assign a = {e, SK_VAR_LIST, 1};
+            sk_vec_push(&as, a);
+        }
+        if (e->role != SK_ROLE_WIDGET || e->widget < 0)
+            continue;
+        uint8_t type = k->widgets[e->widget].w.type;
+        if (type == SK_WIDGET_LIST && !rows) {
             sk_assign a = {e, SK_VAR_NODATA, 1};
+            sk_vec_push(&as, a);
+        } else if (type == SK_WIDGET_LIMITS && count) {
+            sk_assign a = {e, SK_VAR_COUNT, count};
             sk_vec_push(&as, a);
         }
     }
-    sk_render_state st = {as.ptr, as.len, false, NULL};
+    sk_render_state st = {as.ptr, as.len, rows, NULL};
     sk_render_tree_build(&s->tree, &s->front, &st, s->width, s->height);
     sk_vec_free(&as);
+    /* Text for what the state shows: a row's, a meter's label. */
+    for (uint32_t i = 0; i < s->tree.n; i++) {
+        const sk_el *e = s->front.els.ptr[i];
+        if (e->role == SK_ROLE_ITEM_TEXT && rows)
+            s->tree.nodes[i].text = state->row;
+        if (e->role == SK_ROLE_LABEL && e->parent && e->parent->role == SK_ROLE_METER)
+            s->tree.nodes[i].text = "limit";
+    }
     sk_render_fonts_open(&s->fonts, &s->front);
     s->lfonts.face = sk_render_face;
     s->lfonts.data = &s->fonts;

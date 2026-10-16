@@ -587,10 +587,20 @@ static void size_tracks(const sk_css_track *list, uint16_t nlist, const sk_css_t
     }
 }
 
+/* The length of span tracks from at, the gaps between them included. */
 static float span_size(const float *sizes, int at, int span, float gap)
 {
-    float v = gap * (float)(span - 1);
+    float v = span > 1 ? gap * (float)(span - 1) : 0;
     for (int k = at; k < at + span; k++)
+        v += sizes[k];
+    return v;
+}
+
+/* Where track at starts: the tracks before it and their gaps. */
+static float track_start(const float *sizes, int at, float gap)
+{
+    float v = gap * (float)at;
+    for (int k = 0; k < at; k++)
         v += sizes[k];
     return v;
 }
@@ -646,8 +656,8 @@ float lay_grid(lay *L, uint32_t i, float cw, float ch)
         uint32_t c = cells[k].node;
         const sk_lbox *cb = &L->l->boxes[c];
         const sk_css_style *cs = lay_style(L, c);
-        float x = cx + span_size(cols, 0, cells[k].col, cgap) + (cells[k].col ? cgap : 0);
-        float y = cy + span_size(rows, 0, cells[k].row, rgap) + (cells[k].row ? rgap : 0);
+        float x = cx + track_start(cols, cells[k].col, cgap);
+        float y = cy + track_start(rows, cells[k].row, rgap);
         float aw = span_size(cols, cells[k].col, cells[k].cspan, cgap);
         float ah = span_size(rows, cells[k].row, cells[k].rspan, rgap);
         float w = lay_size_w(L, c, &cs->width, KEY_WIDTH, aw);

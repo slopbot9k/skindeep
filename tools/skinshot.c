@@ -1,13 +1,15 @@
 /* skinshot: a skin drawn as the C port draws it, to look at beside the
  * Electron app's screenshots.
  *
- *   skinshot [-t] [-v] SKIN OUT
+ *   skinshot [-t] [-v] [-c COUNT] [-r ROW] SKIN OUT
  *
  * compiles SKIN with skinc's front end, lays it out at its skin.json
  * window size (less the identity strip), paints its default state at 1x
  * and 2x and writes OUT-1x.qoi and OUT-2x.qoi; build/<mode>/qoi2png
  * turns them into PNGs. -t fills the terminal's rect with its theme's
- * background, as the app shows it; -v prints every box laid out. */
+ * background, as the app shows it; -v prints every box laid out; -c
+ * shows COUNT meters in each limits widget; -r shows each list with one
+ * row of the text ROW. */
 #include "shot.h"
 
 #include <stdio.h>
@@ -58,23 +60,30 @@ static void dump(const sk_shot *s)
 int main(int argc, char **argv)
 {
     bool terminal = false, verbose = false;
+    sk_shot_state st = {0, NULL};
     int a = 1;
     for (; a < argc && argv[a][0] == '-'; a++) {
-        if (!strcmp(argv[a], "-t"))
+        if (!strcmp(argv[a], "-t")) {
             terminal = true;
-        else if (!strcmp(argv[a], "-v"))
+        } else if (!strcmp(argv[a], "-v")) {
             verbose = true;
-        else
+        } else if (!strcmp(argv[a], "-c") && a + 1 < argc) {
+            int c = atoi(argv[++a]);
+            st.count = (uint8_t)(c < 0 ? 0 : c > (int)SK_PACK_MAX_LIMITS ? (int)SK_PACK_MAX_LIMITS : c);
+        } else if (!strcmp(argv[a], "-r") && a + 1 < argc) {
+            st.row = argv[++a];
+        } else {
             break;
+        }
     }
     if (argc - a != 2) {
-        fprintf(stderr, "usage: skinshot [-t] [-v] SKIN OUT\n");
+        fprintf(stderr, "usage: skinshot [-t] [-v] [-c COUNT] [-r ROW] SKIN OUT\n");
         return 2;
     }
     sk_diags d = {0};
     sk_shot s;
     double t0 = now_ms();
-    if (!sk_shot_load(&s, argv[a], &d)) {
+    if (!sk_shot_load(&s, argv[a], &st, &d)) {
         for (size_t i = 0; i < d.items.len; i++)
             fprintf(stderr, "%s\n", d.items.ptr[i]);
         sk_diags_free(&d);

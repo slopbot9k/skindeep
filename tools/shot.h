@@ -22,8 +22,17 @@ typedef struct {
     uint32_t terminal_bg; /* the theme's background, 0xAARRGGBB */
 } sk_shot;
 
-/* Compiles and lays out the skin at dir; false with the messages in d. */
-bool sk_shot_load(sk_shot *s, const char *dir, sk_diags *d);
+/* The state drawn, beyond the default: each limits widget showing
+ * count meters (0: none, the widget hidden), and each list its row
+ * with the stage's .checklist, the row's text given. */
+typedef struct {
+    uint8_t count;
+    const char *row;
+} sk_shot_state;
+
+/* Compiles and lays out the skin at dir in state st (NULL: the
+ * default); false with the messages in d. */
+bool sk_shot_load(sk_shot *s, const char *dir, const sk_shot_state *st, sk_diags *d);
 /* The skin at scale into a new image (ceil(width * scale) by
  * ceil(height * scale)) over opaque black, and the terminal's
  * background over its rect when terminal is true. */
