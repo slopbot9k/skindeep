@@ -400,6 +400,7 @@ typedef struct {
     int view_level;
     double view_s, view_x, view_y, view_t;
     int clicks;
+    bool round;
     /* The picture when the pane's pixels pass PICTURE: drawn at a
      * smaller scale and stretched over them, as fern.js draws its light
      * into a buffer of at most 160000 pixels. Every level is a full
@@ -480,6 +481,10 @@ static void zoom_draw(sk_vmode *m, sk_synth *s, double dt)
 
     sk_vc_reset_transform(g);
     sk_vc_clear(g, SK_RGB(0, 0, 0));
+    /* The canvas keeps its state from frame to frame: once the
+     * snowflake has set round caps, every stroke after has them. */
+    if (zm->round)
+        sk_vc_cap(g, SK_CAP_ROUND);
     /* Each level's scale and offset on the pane: n + 1 is the
      * reference, the camera easing from n's anchor in it to its centre
      * as f runs from 0 to 1. at[k - n + 1] is level k's. */
@@ -598,6 +603,7 @@ static void zoom_draw(sk_vmode *m, sk_synth *s, double dt)
             }
         }
     sk_vc_alpha(g, 1);
+    zm->round = zm->round || g->st.cap == SK_CAP_ROUND;
     sk_vc_reset_transform(g);
     if (small)
         sk_blit_scaled(&m->canvas, sk_image_bounds(&m->canvas), &zm->pic, sk_image_bounds(&zm->pic), SK_FILTER_BILINEAR,

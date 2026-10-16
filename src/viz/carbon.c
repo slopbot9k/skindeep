@@ -1398,6 +1398,19 @@ static double col_x(const carbon *c, int col)
     return c->R.x0 + col * c->R.cw;
 }
 
+/* The pane's background. */
+#define BACKGROUND SK_RGB(0x03, 0x05, 0x0a)
+
+/* An opaque surface onto the pane at (x, y) points, replacing what is
+ * there, within the clip. */
+static void blit_opaque(sk_vc *g, const sk_image *im, double x, double y)
+{
+    double px, py;
+    sk_vc_apply(g, x, y, &px, &py);
+    sk_blit(g->im, (int)floor(px + 0.5), (int)floor(py + 0.5), im, sk_image_bounds(im), SK_BLEND_SRC, 255,
+            &g->st.clip);
+}
+
 static void surface_make(surface *s, double w, double h, double scale, double ox, double oy)
 {
     sk_image_free(&s->im);
@@ -1436,6 +1449,9 @@ static void draw_diagram(carbon *c, double scale)
 {
     const box *d = &c->R.diag;
     surface_make(&c->diag, d->w, d->h, scale, d->x, d->y);
+    /* Drawn over the pane's background, which is all it ever lies on,
+     * so the pane takes it as it is. */
+    sk_vc_clear(&c->diag.vc, BACKGROUND);
     sk_vc *g = &c->diag.vc;
     double W = c->diag.w;
     bool small = d->w < 260 || d->h < 200;
@@ -1870,7 +1886,7 @@ static void draw_atom(carbon *c, sk_vc *g, double dim, double scale)
     sk_vc_begin(g);
     sk_vc_rect(g, a->x, a->y, a->w, a->h);
     sk_vc_clip(g, SK_FILL_NONZERO);
-    sk_vc_image(g, &c->grain.im, a->x, a->y, a->w, a->h, false);
+    blit_opaque(g, &c->grain.im, a->x, a->y);
     /* A faint equator and meridian, for depth. */
     double dash35[2] = {3, 5};
     sk_vc_dash(g, dash35, 2);
@@ -2065,7 +2081,7 @@ static void labels(carbon *c, sk_vc *g)
 static void draw_diagram_now(carbon *c, sk_vc *g)
 {
     const box *d = &c->R.diag;
-    sk_vc_image(g, &c->diag.im, d->x, d->y, c->diag.w, SK_MAX(1, d->h), false);
+    blit_opaque(g, &c->diag.im, d->x, d->y);
     double cw = c->R.cw;
     /* The ensemble's populations: each level's bar as bright as its
      * share of the atoms. */
@@ -2169,7 +2185,7 @@ static void draw_diagram_now(carbon *c, sk_vc *g)
 static void draw_spectrum_now(carbon *c, sk_vc *g, double dt)
 {
     const box *s = &c->R.spec;
-    sk_vc_image(g, &c->spec.im, s->x, s->y, c->spec.w, SK_MAX(1, s->h), false);
+    blit_opaque(g, &c->spec.im, s->x, s->y);
     double top = 1;
     for (int k = 0; k < NLINES; k++)
         top = SK_MAX(top, c->counts[k]);
@@ -2330,7 +2346,7 @@ static void carbon_draw(sk_vmode *m, sk_synth *s, double dt)
     int ncaps = captions(c, g, w, caps);
     sk_vc_op(g, SK_BLEND_SRC_OVER);
     sk_vc_alpha(g, 1);
-    sk_vc_clear(g, SK_RGB(0x03, 0x05, 0x0a));
+    sk_vc_clear(g, BACKGROUND);
     draw_spectrum_now(c, g, dt);
     draw_diagram_now(c, g);
     draw_atom(c, g, 1 - 0.3 * L->idle, m->scale);

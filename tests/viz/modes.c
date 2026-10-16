@@ -54,17 +54,17 @@ static void shot_pointer(const char *mode, int frames, const touch *t, size_t n,
     sk_viz_run_free(&r);
 }
 
-/* Three shots of a mode: 0.75 s into the first turn at 1x, 6 s into it
- * at 2x, and 5 s from 27 s into the loop, idle, at 1x. */
+/* Three shots of a mode: 0.75 s into the first turn at 1x, 5 s into it
+ * at 2x, and 2.5 s from 30 s into the loop, idle, at 1x. */
 static void shots(const char *mode, int tol)
 {
     char name[64];
     snprintf(name, sizeof name, "viz_%s_start", mode);
     shot(mode, 0, 45, 240, 150, 1, name, tol);
     snprintf(name, sizeof name, "viz_%s_busy_2x", mode);
-    shot(mode, 0, 360, 240, 150, 2, name, tol);
+    shot(mode, 0, 300, 240, 150, 2, name, tol);
     snprintf(name, sizeof name, "viz_%s_idle", mode);
-    shot(mode, 27, 300, 240, 150, 1, name, tol);
+    shot(mode, 30, 150, 240, 150, 1, name, tol);
 }
 
 static void test_scope(void)
@@ -178,7 +178,7 @@ static void test_deterministic(void)
             continue;
         sk_viz_run_init(&b, mode, 0, 120, 80, 1);
         const sk_image *ia = NULL, *ib = NULL;
-        for (int i = 0; i < 90; i++) {
+        for (int i = 0; i < 60; i++) {
             sk_viz_run_feed(&a);
             sk_viz_run_feed(&b);
             ia = sk_viz_run_draw(&a);

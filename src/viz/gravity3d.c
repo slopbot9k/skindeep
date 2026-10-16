@@ -1325,6 +1325,10 @@ static void g3_draw(sk_vmode *m, sk_synth *s, double dt)
     sk_vc *c = &m->vc;
     sk_vc_op(c, SK_BLEND_SRC_OVER);
     sk_vc_clear(c, SK_RGB(0, 0, 0));
+    /* The canvas keeps its state from frame to frame: the round caps
+     * set below for the trails are still set as the sky is drawn. */
+    if (g->tick > 0)
+        sk_vc_cap(c, SK_CAP_ROUND);
 
     /* The holes on screen, far to near: a body or a grain is drawn after
      * every hole behind it and before every one in front. */
