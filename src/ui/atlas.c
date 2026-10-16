@@ -469,9 +469,12 @@ static void draw(sk_ui_atlas *a, entry *e, const uint32_t *cps)
     bool any = false;
     for (int y = 0; y < cvh; y++) {
         const sk_px *row = sk_image_row(&cv.im, y);
-        for (int x = 0; x < cvw; x++)
-            if (!is_back(row[x], back, threshold, check))
-                any = keep[(size_t)y * (size_t)cvw + (size_t)x] = 1;
+        for (int x = 0; x < cvw; x++) {
+            if (!is_back(row[x], back, threshold, check)) {
+                keep[(size_t)y * (size_t)cvw + (size_t)x] = 1;
+                any = true;
+            }
+        }
     }
     if (any) {
         /* _findGlyphBoundingBox, its scans kept as they are. */
