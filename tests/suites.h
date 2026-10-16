@@ -55,4 +55,9 @@
     X(x11)                                                                   \
     X(x11_keys)                                                              \
     X(x11_ui)                                                                \
-    X(ui_x11)
+    X(ui_x11)                                                                \
+    X(gfx_image)                                                             \
+    X(gfx_blend)                                                             \
+    X(gfx_draw)                                                              \
+    X(gfx_path)                                                              \
+    X(gfx_stroke)

@@ -79,7 +79,7 @@ RELAY := $(BUILD)/skinned-relay
 HOOKDUMP := $(BUILD)/hookdump
 SKINNED := $(BUILD)/skinned
 
-FUZZ_TARGETS := json http utf8 base64 claude codex text
+FUZZ_TARGETS := json http utf8 base64 claude codex text path
 FUZZ_BINS := $(FUZZ_TARGETS:%=$(BUILD)/fuzz-%)
 FUZZ_DRIVER := $(BUILD)/tests/fuzz/driver.o
 FUZZ_SECONDS ?= 30
@@ -142,6 +142,10 @@ windemo: $(BUILD)/windemo
 $(BUILD)/windemo: $(BUILD)/tools/windemo.o $(LIB)
 	$(CC) $(OPT) $(LDFLAGS) -o $@ $^ $(LDLIBS) $(UI_LIBS)
 
+# Times a full frame composited at Retina 2x: make build/release/gfxbench.
+$(BUILD)/gfxbench: $(BUILD)/tools/gfxbench.o $(LIB)
+	$(CC) $(OPT) $(LDFLAGS) -o $@ $^ $(LDLIBS)
+
 test: $(TEST_BIN) $(RELAY) $(SKINNED)
 	SK_RELAY_BIN=$(RELAY) SK_SKINNED_BIN=$(SKINNED) ./$(TEST_BIN) $(T)
 
@@ -169,5 +173,5 @@ clean:
 
 -include $(LIB_OBJ:.o=.d) $(TEST_OBJ:.o=.d) $(BUILD)/src/relay/main.d $(BUILD)/tools/hookdump.d \
     $(BUILD)/src/main/skinned.d \
-    $(BUILD)/tools/qoi2png.d $(BUILD)/tools/macdemo.d $(BUILD)/tools/windemo.d \
+    $(BUILD)/tools/qoi2png.d $(BUILD)/tools/macdemo.d $(BUILD)/tools/windemo.d $(BUILD)/tools/gfxbench.d \
     $(wildcard $(BUILD)/tests/fuzz/*.d)
