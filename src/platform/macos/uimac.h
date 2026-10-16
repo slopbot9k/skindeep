@@ -3,6 +3,7 @@
 #ifndef SK_MACOS_UIMAC_H
 #define SK_MACOS_UIMAC_H
 
+#include "../picker.h"
 #include "../ui.h"
 #include "objc.h"
 
@@ -27,5 +28,9 @@ void sk_macos_force_scale(sk_window *w, double scale);
  * and im calls the view's NSTextInputClient methods as AppKit would.
  * NULL goes back to interpretKeyEvents:. */
 void sk_macos_set_input_method(void (*im)(id view, id ev));
+
+/* picker.c: the NSOpenPanel sk_picker_folder begins, made for o and not
+ * shown, autoreleased. For tests too. */
+id sk_macos_folder_panel(const sk_picker_opts *o);
 
 #endif
