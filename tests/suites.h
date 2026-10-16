@@ -96,4 +96,6 @@
     X(skinc_validate)                                                        \
     X(skinc_splits)                                                          \
     X(skinc_skins)                                                           \
-    X(skinc_program)
+    X(skinc_program)                                                         \
+    X(adpcm)                                                                 \
+    X(fontcheck)
