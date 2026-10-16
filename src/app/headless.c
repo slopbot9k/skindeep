@@ -32,6 +32,11 @@ typedef struct {
     struct termios saved;
     int status;
     int stdin_id;
+    /* --record: the first tab's output, and where its resizes go. */
+    int record_fd;
+    FILE *resizes;
+    unsigned long long recorded;
+    int record_tab;
 } headless;
 
 static void log_line(void *ud, const char *msg)
@@ -81,6 +86,10 @@ static void on_spawn(void *ud, sk_tab *tab, pid_t pid)
 static void on_output(void *ud, sk_tab *tab, const char *bytes, size_t n)
 {
     headless *h = ud;
+    if (h->record_fd >= 0 && tab->id == h->record_tab) {
+        write_all(h->record_fd, bytes, n);
+        h->recorded += n;
+    }
     if (tab == sk_tabs_active(h->tabs))
         write_all(1, bytes, n);
     else
@@ -119,8 +128,12 @@ static void on_winch(sk_loop *loop, int signo, void *ud)
     headless *h = ud;
     int cols, rows;
     sk_session *s = active_session(h);
-    if (s && sk_pty_get_size(0, &cols, &rows) == 0)
-        sk_session_resize(s, cols, rows);
+    if (s && sk_pty_get_size(0, &cols, &rows) == 0) {
+        if (sk_session_resize(s, cols, rows) == 0 && h->resizes) {
+            fprintf(h->resizes, "%llu %d %d\n", h->recorded, cols, rows);
+            fflush(h->resizes);
+        }
+    }
 }
 
 /* As closing the window does (decision 0016). */
@@ -245,6 +258,26 @@ static char *relay_path(const sk_envp *env, const char *self)
     return p;
 }
 
+/* The record the terminal's tests replay (phase 4): a header line, then
+ * the tab's bytes, with FILE.resizes beside it. */
+static bool start_record(headless *h, const char *path, int tab, int cols, int rows)
+{
+    h->record_fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+    if (h->record_fd < 0)
+        return false;
+    sk_buf head = {0}, side = {0};
+    sk_buf_printf(&head, "skinned-record 1 %d %d\n", cols, rows);
+    write_all(h->record_fd, head.ptr, head.len);
+    sk_buf_printf(&side, "%s.resizes", path);
+    h->resizes = fopen(side.ptr, "w");
+    if (h->resizes)
+        fcntl(fileno(h->resizes), F_SETFD, FD_CLOEXEC);
+    sk_buf_free(&head);
+    sk_buf_free(&side);
+    h->record_tab = tab;
+    return h->resizes != NULL;
+}
+
 /* <dir>/headless-<pid>.<suffix> */
 static char *named(const char *dir, const char *suffix)
 {
@@ -255,7 +288,7 @@ static char *named(const char *dir, const char *suffix)
     return p;
 }
 
-int sk_headless_run(const sk_options *o, const char *metrics_path, const sk_envp *env, const char *self)
+int sk_headless_run(const sk_options *o, const sk_headless_opts *ho, const sk_envp *env, const char *self)
 {
     char *file = sk_resolve_command(o->cmd[0], sk_envp_get(env, "PATH"));
     if (!file) {
@@ -275,7 +308,7 @@ int sk_headless_run(const sk_options *o, const char *metrics_path, const sk_envp
         sk_tell("cannot make the app's directories: %s", strerror(errno));
         goto out;
     }
-    metrics = metrics_path ? sk_xstrdup(metrics_path) : named(state, "jsonl");
+    metrics = ho->metrics ? sk_xstrdup(ho->metrics) : named(state, "jsonl");
     log_path = named(state, "log");
     log_fd = open(log_path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0600);
     mf = fopen(metrics, "a");
@@ -299,6 +332,7 @@ int sk_headless_run(const sk_options *o, const char *metrics_path, const sk_envp
     h.loop = sk_loop_new();
     h.metrics = mf;
     h.status = SK_EXIT_APP;
+    h.record_fd = -1;
     h.cli.loop = h.loop;
     h.cli.run_dir = run_dir;
     h.cli.root = root;
@@ -333,9 +367,12 @@ int sk_headless_run(const sk_options *o, const char *metrics_path, const sk_envp
     spec.cwd = cwd;
     char *err = NULL;
     sk_tab *tab = sk_tabs_add(h.tabs, &spec, -1, &err);
-    if (tab) {
-        int cols = 80, rows = 24;
-        sk_pty_get_size(0, &cols, &rows);
+    int cols = 80, rows = 24;
+    sk_pty_get_size(0, &cols, &rows);
+    if (tab && ho->record && !start_record(&h, ho->record, tab->id, cols, rows)) {
+        sk_tell("cannot write %s: %s", ho->record, strerror(errno));
+        status = SK_EXIT_APP;
+    } else if (tab) {
         sk_tell("metrics in %s, log in %s", metrics, log_path);
         sk_log("headless: %s, relay %s", file, relay ? relay : "(none)");
         raw_mode(&h);
@@ -358,6 +395,10 @@ int sk_headless_run(const sk_options *o, const char *metrics_path, const sk_envp
      * nothing. */
     sk_tabs_free(h.tabs);
     sk_loop_free(h.loop);
+    if (h.record_fd >= 0)
+        close(h.record_fd);
+    if (h.resizes)
+        fclose(h.resizes);
 
 out:
     if (mf)

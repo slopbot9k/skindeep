@@ -11,10 +11,18 @@
 #include "../core/env.h"
 #include "options.h"
 
-/* metrics: the file for the JSON lines, NULL for
- * <state>/headless-<pid>.jsonl. self: argv[0], to find skinned-relay
- * beside it. Returns the exit status of decision 0003: the command's, or
- * 125 or 127. */
-int sk_headless_run(const sk_options *o, const char *metrics, const sk_envp *env, const char *self);
+typedef struct {
+    /* The file for the JSON lines, NULL for <state>/headless-<pid>.jsonl. */
+    const char *metrics;
+    /* NULL, or a file for the first tab's pty output, for the terminal's
+     * tests to replay (phase 4): a line "skinned-record 1 COLS ROWS",
+     * then the bytes as they came. Each resize appends a line "OFFSET
+     * COLS ROWS" to FILE.resizes, OFFSET counting the bytes before it. */
+    const char *record;
+} sk_headless_opts;
+
+/* self: argv[0], to find skinned-relay beside it. Returns the exit
+ * status of decision 0003: the command's, or 125 or 127. */
+int sk_headless_run(const sk_options *o, const sk_headless_opts *h, const sk_envp *env, const char *self);
 
 #endif

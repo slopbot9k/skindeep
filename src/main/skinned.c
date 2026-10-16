@@ -1,8 +1,10 @@
-/* skinned: the app (decision 0036). Until the window of phase 3 it runs
+/* skinned: the app (decision 0036). Until the window of phase 4 it runs
  * only headless:
  *
- *   skinned --headless[=FILE] [--statusline=always|chain-only] -- CMD [ARGS...]
+ *   skinned --headless[=FILE] [--record=FILE] [--statusline=always|chain-only]
+ *           -- CMD [ARGS...]
  *
+ * --record keeps the first tab's pty output for the terminal's tests.
  * The other options of bin/skinned are taken and do nothing yet. */
 #include "../app/headless.h"
 #include "../app/identity.h"
@@ -37,7 +39,7 @@ int main(int argc, char **argv)
     /* --headless is this build's own option, taken before the parser
      * that knows bin/skinned's options sees the rest. */
     sk_strv own = {0};
-    const char *metrics = NULL;
+    sk_headless_opts ho = {0};
     bool headless = false;
     size_t i = 0;
     for (; argv[i]; i++) {
@@ -49,7 +51,11 @@ int main(int argc, char **argv)
         }
         if (i > 0 && !strncmp(argv[i], "--headless=", 11)) {
             headless = true;
-            metrics = argv[i] + 11;
+            ho.metrics = argv[i] + 11;
+            continue;
+        }
+        if (i > 0 && !strncmp(argv[i], "--record=", 9)) {
+            ho.record = argv[i] + 9;
             continue;
         }
         sk_strv_push(&own, argv[i]);
@@ -66,10 +72,10 @@ int main(int argc, char **argv)
         sk_tell("%s", sk_buf_cstr(&err));
         status = SK_EXIT_APP;
     } else if (!headless) {
-        sk_tell("this build has no window yet: run skinned --headless[=FILE] -- CMD [ARGS...]");
+        sk_tell("this build has no window yet: run skinned --headless[=FILE] [--record=FILE] -- CMD [ARGS...]");
         status = SK_EXIT_APP;
     } else {
-        status = sk_headless_run(&o, metrics, &env, argv[0]);
+        status = sk_headless_run(&o, &ho, &env, argv[0]);
     }
     sk_buf_free(&err);
     sk_envp_free(&env);
