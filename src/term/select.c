@@ -201,10 +201,8 @@ static int col_to_index(const sk_line *l, int x)
     return index;
 }
 
-/* _getWordAt: the word's start column and length, which may reach into
- * the wrapped lines above and below. */
-static bool word_at(sk_term *t, int cx, int cy, bool allow_space, bool above, bool below, int *out_start,
-                    int *out_len)
+/* _getWordAt within one line: the word's start column and length. */
+static bool word_in_line(sk_term *t, int cx, int cy, bool allow_space, int *out_start, int *out_len)
 {
     int cols = t->cols;
     if (cx >= cols)
@@ -276,32 +274,62 @@ static bool word_at(sk_term *t, int cx, int cy, bool allow_space, bool above, bo
         }
     }
     sk_vec_free(&s);
-    if (above && start == 0 && codepoint_of(l, 0) != ' ') {
-        sk_line *prev = line_at(t, cy - 1);
-        int ps, pl;
-        if (prev && l->wrapped && codepoint_of(prev, cols - 1) != ' ' &&
-            word_at(t, cols - 1, cy - 1, false, true, false, &ps, &pl)) {
-            int off = cols - ps;
-            start -= off;
-            length += off;
-        }
-    }
-    if (below && start + length == cols && codepoint_of(l, cols - 1) != ' ') {
-        sk_line *next = line_at(t, cy + 1);
-        int ns, nl;
-        if (next && next->wrapped && codepoint_of(next, 0) != ' ' && word_at(t, 0, cy + 1, false, false, true, &ns, &nl))
-            length += nl;
-    }
     *out_start = start;
     *out_len = length;
     return true;
 }
 
-static void select_word(sk_term *t, int cx, int cy)
+/* _getWordAt: the word's start column and length, which may reach into
+ * the wrapped lines above and below; 1 for a word, 0 for none. xterm.js
+ * recurses a line at a time; thousands of wrapped lines would overflow a
+ * thread's stack here, so this walks them, summing what each recursion
+ * would have returned. In a full ring the line past the last is the
+ * first, so a word wrapped all round it never ends: xterm.js recurses
+ * until it throws, and this gives -1 for that. */
+static int word_at(sk_term *t, int cx, int cy, int *out_start, int *out_len)
 {
-    int start, len;
-    if (!word_at(t, cx, cy, true, true, true, &start, &len))
-        return;
+    int cols = t->cols, start, length;
+    if (!word_in_line(t, cx, cy, true, &start, &length))
+        return 0;
+    /* Each line above adds what its word reaches past its own start. */
+    int s = start, y = cy, off = 0;
+    for (;;) {
+        sk_line *l = line_at(t, y), *prev = line_at(t, y - 1);
+        int ps, pl;
+        if (s != 0 || codepoint_of(l, 0) == ' ' || !prev || !l->wrapped || codepoint_of(prev, cols - 1) == ' ' ||
+            !word_in_line(t, cols - 1, y - 1, false, &ps, &pl))
+            break;
+        off += cols - ps;
+        s = ps;
+        y--;
+    }
+    start -= off;
+    length += off;
+    /* And each line below, its whole word. */
+    int e = start + length;
+    y = cy;
+    for (;;) {
+        sk_line *l = line_at(t, y), *next = line_at(t, y + 1);
+        int ns, nl;
+        if (e != cols || codepoint_of(l, cols - 1) == ' ' || !next || !next->wrapped || codepoint_of(next, 0) == ' ' ||
+            !word_in_line(t, 0, y + 1, false, &ns, &nl))
+            break;
+        length += nl;
+        e = ns + nl;
+        if (++y - cy >= t->active->lines.len)
+            return -1;
+    }
+    *out_start = start;
+    *out_len = length;
+    return 1;
+}
+
+/* _selectWordAt; false where xterm.js throws. */
+static bool select_word(sk_term *t, int cx, int cy)
+{
+    int start, len, found = word_at(t, cx, cy, &start, &len);
+    if (found <= 0)
+        return found == 0;
     while (start < 0) {
         start += t->cols;
         cy--;
@@ -310,14 +338,16 @@ static void select_word(sk_term *t, int cx, int cy)
     t->sel.sy = cy;
     t->sel.has_start = true;
     t->sel.start_len = len;
+    return true;
 }
 
-static void select_to_word(sk_term *t, int cx, int cy)
+/* _selectToWordAt; false where xterm.js throws. */
+static bool select_to_word(sk_term *t, int cx, int cy)
 {
     sk_selection *s = &t->sel;
-    int start, len;
-    if (!word_at(t, cx, cy, true, true, true, &start, &len))
-        return;
+    int start, len, found = word_at(t, cx, cy, &start, &len);
+    if (found <= 0)
+        return found == 0;
     int row = cy;
     while (start < 0) {
         start += t->cols;
@@ -332,6 +362,7 @@ static void select_to_word(sk_term *t, int cx, int cy)
     s->ex = reversed(s) ? start : start + len;
     s->ey = row;
     s->has_end = true;
+    return true;
 }
 
 static void select_line(sk_term *t, int y)
@@ -378,7 +409,9 @@ void sk_term_select_start(sk_term *t, sk_select_kind kind, int col, int row)
         break;
     }
     case SK_SELECT_WORD:
-        select_word(t, x, y);
+        /* Where xterm.js throws, the click before stands. */
+        if (!select_word(t, x, y))
+            break;
         s->has_end = false;
         s->mode = SK_SEL_WORD;
         break;
@@ -406,8 +439,12 @@ void sk_term_select_move(sk_term *t, int col, int row)
     s->has_end = true;
     if (s->mode == SK_SEL_LINE)
         s->ex = s->ey < s->sy ? 0 : t->cols;
-    else if (s->mode == SK_SEL_WORD)
-        select_to_word(t, s->ex, s->ey);
+    else if (s->mode == SK_SEL_WORD && !select_to_word(t, s->ex, s->ey)) {
+        /* xterm.js throws here, the end left at the pointer. */
+        dirty(t);
+        sk_term_unlock(t);
+        return;
+    }
     if (s->mode != SK_SEL_COLUMN) {
         if (row >= t->rows)
             s->ex = t->cols;

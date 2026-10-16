@@ -4,6 +4,8 @@
 #include "../../src/term/screen.h"
 #include "screen.h"
 
+#include <pthread.h>
+
 #define CHECK_SELECTION(t, want)                                             \
     do {                                                                     \
         char *s_ = sk_term_selection_text(t);                                \
@@ -96,6 +98,59 @@ static void test_word_wrapped(void)
     CHECK_SELECTION(x.t, "abcdefgh");
     sk_term_select_start(x.t, SK_SELECT_WORD, 2, 0);
     CHECK_SELECTION(x.t, "abcdefgh");
+    tt_close(&x);
+}
+
+static void *select_far_word(void *ud)
+{
+    sk_term *t = ud;
+    sk_term_select_start(t, SK_SELECT_WORD, 1, 2);
+    return sk_term_selection_text(t);
+}
+
+static void test_word_wrapped_far(void)
+{
+    /* A word wrapped over the whole scrollback, selected on a thread
+     * with a small stack: the walk over its lines must not recurse. */
+    tt x;
+    tt_open(&x, 4, 3);
+    tt_feed(&x, "x\x1b[19999b");
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setstacksize(&attr, 256 * 1024);
+    pthread_t th;
+    CHECK(pthread_create(&th, &attr, select_far_word, x.t) == 0);
+    void *ret = NULL;
+    pthread_join(th, &ret);
+    pthread_attr_destroy(&attr);
+    char *s = ret;
+    CHECK_INT((int)strlen(s), 20000);
+    CHECK(strspn(s, "x") == 20000);
+    free(s);
+    tt_close(&x);
+}
+
+static void test_word_endless(void)
+{
+    /* A word wrapped all round a full ring, whose line past the last is
+     * the first: xterm.js recurses until it throws, so a word drag leaves
+     * its end at the pointer and a double click the click before it. */
+    tt x;
+    tt_open(&x, 4, 3);
+    tt_feed(&x, "ab\r\n");
+    sk_term_select_start(x.t, SK_SELECT_WORD, 0, 0);
+    tt_feed(&x, "x\x1b[29999b");
+    sk_term_select_move(x.t, 1, 3);
+    int x0, l0, x1, l1;
+    bool column;
+    CHECK(sk_term_selection_range(x.t, &x0, &l0, &x1, &l1, &column));
+    CHECK_INT(x0, 0);
+    CHECK_INT(l0, 0);
+    CHECK_INT(x1, 1);
+    CHECK_INT(l1, 5002);
+    sk_term_select_start(x.t, SK_SELECT_CHAR, 2, 1);
+    sk_term_select_start(x.t, SK_SELECT_WORD, 2, 1);
+    CHECK(!sk_term_has_selection(x.t));
     tt_close(&x);
 }
 
@@ -210,6 +265,8 @@ const sk_test sk_suite_term_select[] = {
     T(test_wide),
     T(test_word),
     T(test_word_wrapped),
+    T(test_word_wrapped_far),
+    T(test_word_endless),
     T(test_word_wide_and_emoji),
     T(test_line),
     T(test_all),
