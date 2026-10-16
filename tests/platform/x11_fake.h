@@ -1,8 +1,8 @@
 /* A fake X server in the test process, for the X11 tests on any system
  * (decision 0036). It listens on a Unix socket in the test's directory
  * and serves one client from a thread: a scripted setup, atoms, a US
- * keyboard with AltGr, its modifiers, RESOURCE_MANAGER, BIG-REQUESTS but
- * not MIT-SHM, windows, pixmaps and their pixels, properties and
+ * keyboard with AltGr, its modifiers, RESOURCE_MANAGER, BIG-REQUESTS and,
+ * when asked, MIT-SHM, windows, pixmaps and their pixels, properties and
  * selections, as a server does. It records every request. Another client
  * can be played: one that owns a selection, or one that asks for it. */
 #ifndef SK_TEST_X11_FAKE_H
@@ -12,6 +12,9 @@
 
 #define SK_XFAKE_ROOT 0x100u
 #define SK_XFAKE_VISUAL 0x21u
+#define SK_XFAKE_BIG_OPCODE 130
+#define SK_XFAKE_SHM_OPCODE 131
+#define SK_XFAKE_SHM_EVENT 80
 /* The other client's windows. */
 #define SK_XFAKE_OWNER 0xe00001u
 #define SK_XFAKE_REQUESTOR 0xe00002u
@@ -23,6 +26,8 @@ typedef struct {
     bool big_requests;     /* offer BIG-REQUESTS */
     uint16_t max_request;  /* the setup's maximum request length in words; 0 for 65535 */
     const char *refuse;    /* fail the setup with this reason */
+    bool shm;              /* offer MIT-SHM, which says no to it otherwise */
+    bool shm_refuse;       /* and refuse every segment */
 } sk_xfake_opts;
 
 sk_xfake *sk_xfake_start(const sk_xfake_opts *o);

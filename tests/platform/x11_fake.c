@@ -7,11 +7,14 @@
 #include <poll.h>
 #include <pthread.h>
 #include <stdatomic.h>
+#include <sys/ipc.h>
+#include <sys/shm.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
 
-#define BIG_OPCODE 130
+#define BIG_OPCODE SK_XFAKE_BIG_OPCODE
+#define SHM_OPCODE SK_XFAKE_SHM_OPCODE
 #define MAX_KEYCODE 255
 #define N_KEYCODES (MAX_KEYCODE - SK_XFAKE_MIN_KEYCODE + 1)
 #define CLIENT_BASE 0x00200000u
@@ -48,6 +51,11 @@ typedef struct {
     uint32_t atom, owner;
 } sel;
 
+typedef struct {
+    uint32_t id;
+    const uint8_t *addr;
+} segment;
+
 struct sk_xfake {
     sk_xfake_opts o;
     char *path, *display;
@@ -67,6 +75,7 @@ struct sk_xfake {
     SK_VEC(drawable) draws;
     SK_VEC(prop) props;
     SK_VEC(sel) sels;
+    SK_VEC(segment) segs;
     /* The other client, as owner. */
     char *own_text;
     size_t own_len, own_chunk;
@@ -616,7 +625,83 @@ static void query_extension(sk_xfake *f, sk_buf *out, const uint8_t *r, size_t l
         h[8] = 1;
         h[9] = BIG_OPCODE;
     }
+    if (8 + n <= len && n == 7 && !memcmp(r + 8, "MIT-SHM", 7) && f->o.shm) {
+        h[8] = 1;
+        h[9] = SHM_OPCODE;
+        h[10] = SK_XFAKE_SHM_EVENT;
+    }
     reply_out(f, out, h, NULL, 0);
+}
+
+static segment *find_seg(sk_xfake *f, uint32_t id)
+{
+    for (size_t i = 0; i < f->segs.len; i++)
+        if (f->segs.ptr[i].id == id)
+            return &f->segs.ptr[i];
+    return NULL;
+}
+
+/* MIT-SHM: the client's segments attached here, read on its puts. */
+static void shm_request(sk_xfake *f, sk_buf *out, const uint8_t *r)
+{
+    uint8_t h[32] = {0};
+    switch (r[1]) {
+    case 0: /* ShmQueryVersion */
+        sk_x11_set16(h + 8, 1);
+        sk_x11_set16(h + 10, 2);
+        reply_out(f, out, h, NULL, 0);
+        break;
+    case 1: { /* ShmAttach */
+        int shmid = (int)sk_x11_get32(r + 8);
+        void *addr = f->o.shm_refuse ? (void *)-1 : shmat(shmid, NULL, SHM_RDONLY);
+        if (addr == (void *)-1) {
+            error_out(f, out, 10 /* BadAccess */, r, sk_x11_get32(r + 8));
+            break;
+        }
+        segment s = {sk_x11_get32(r + 4), addr};
+        sk_vec_push(&f->segs, s);
+        break;
+    }
+    case 2: /* ShmDetach */
+        for (size_t i = 0; i < f->segs.len; i++) {
+            if (f->segs.ptr[i].id == sk_x11_get32(r + 4)) {
+                shmdt(f->segs.ptr[i].addr);
+                f->segs.ptr[i] = f->segs.ptr[--f->segs.len];
+                break;
+            }
+        }
+        break;
+    case 3: { /* ShmPutImage */
+        uint32_t id = sk_x11_get32(r + 4), seg_id = sk_x11_get32(r + 32);
+        drawable *d = find_draw(f, id);
+        segment *s = find_seg(f, seg_id);
+        int total_w = sk_x11_get16(r + 12), sx = sk_x11_get16(r + 16), sy = sk_x11_get16(r + 18);
+        int w = sk_x11_get16(r + 20), hh = sk_x11_get16(r + 22);
+        int dx = (int16_t)sk_x11_get16(r + 24), dy = (int16_t)sk_x11_get16(r + 26);
+        if (!d || !s || r[28] != 24 || r[29] != 2) {
+            error_out(f, out, 8 /* BadMatch */, r, id);
+            break;
+        }
+        const uint8_t *base = s->addr + sk_x11_get32(r + 36);
+        for (int j = 0; j < hh; j++)
+            for (int i = 0; i < w; i++)
+                if (d->px && dx + i >= 0 && dx + i < d->w && dy + j >= 0 && dy + j < d->h)
+                    d->px[(size_t)(dy + j) * (size_t)d->w + (size_t)(dx + i)] = sk_x11_get32(
+                        base + ((size_t)(sy + j) * (size_t)total_w + (size_t)(sx + i)) * 4);
+        if (r[30]) {
+            uint8_t ev[32] = {SK_XFAKE_SHM_EVENT};
+            sk_x11_set32(ev + 4, id);
+            sk_x11_set16(ev + 8, 3);
+            ev[10] = SHM_OPCODE;
+            sk_x11_set32(ev + 12, seg_id);
+            sk_x11_set32(ev + 16, sk_x11_get32(r + 36));
+            ev_out(f, out, ev);
+        }
+        break;
+    }
+    default:
+        break;
+    }
 }
 
 static void handle(sk_xfake *f, const uint8_t *r, size_t n, sk_buf *out)
@@ -708,6 +793,9 @@ static void handle(sk_xfake *f, const uint8_t *r, size_t n, sk_buf *out)
     case 119: /* GetModifierMapping */
         h[1] = SK_XFAKE_PER_MOD;
         reply_out(f, out, h, modifiers, sizeof modifiers);
+        break;
+    case SHM_OPCODE:
+        shm_request(f, out, r);
         break;
     case BIG_OPCODE: /* BigReqEnable */
         f->big = true;
@@ -955,6 +1043,9 @@ void sk_xfake_stop(sk_xfake *f)
         sk_buf_free(&f->props.ptr[i].data);
     sk_vec_free(&f->props);
     sk_vec_free(&f->sels);
+    for (size_t i = 0; i < f->segs.len; i++)
+        shmdt(f->segs.ptr[i].addr);
+    sk_vec_free(&f->segs);
     sk_buf_free(&f->ask_data);
     free(f->own_text);
     free(f->auth);

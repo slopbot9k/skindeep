@@ -310,6 +310,84 @@ static void test_big_frames_go_in_big_requests(void)
     finish(f);
 }
 
+static void test_frames_through_mit_shm(void)
+{
+    sk_xfake_opts o = {.shm = true};
+    sk_xfake *f = start(&o);
+    if (!f)
+        return;
+    CHECK(sk_xui_shm());
+    sk_window *w = window(80, 60, true);
+    CHECK(sk_xui_shm());
+    CHECK_INT(sk_xfake_count(f, SK_XFAKE_SHM_OPCODE, 1), 1);
+    sk_image *im = sk_xui_window_frame(w);
+    CHECK(!im->owned);
+    pattern(im, 5);
+    sk_xui_window_present(w, NULL, 0);
+    CHECK_INT(sk_xfake_count(f, SK_XFAKE_SHM_OPCODE, 3), 1);
+    CHECK_INT(sk_xfake_count(f, 72, -1), 0);
+    sk_image back;
+    CHECK(sk_xui_window_readback(w, &back));
+    CHECK(same(im, &back));
+    sk_image_free(&back);
+
+    /* Two rectangles: only the last asks for the completion. */
+    sk_image_row(im, 3)[4] = 0xff010203;
+    sk_image_row(im, 22)[21] = 0xff040506;
+    sk_rect dirty[] = {sk_rect_make(0, 0, 10, 10), sk_rect_make(20, 20, 5, 5)};
+    sk_xui_window_present(w, dirty, 2);
+    size_t len;
+    uint8_t *r = sk_xfake_request(f, SK_XFAKE_SHM_OPCODE, 3, 1, &len);
+    CHECK(r && len == 40 && r[30] == 0 && sk_x11_get16(r + 20) == 10);
+    free(r);
+    r = sk_xfake_request(f, SK_XFAKE_SHM_OPCODE, 3, 2, &len);
+    CHECK(r && r[30] == 1 && sk_x11_get16(r + 16) == 20 && sk_x11_get16(r + 22) == 5);
+    free(r);
+    CHECK(sk_xui_window_readback(w, &back));
+    CHECK(same(im, &back));
+    sk_image_free(&back);
+
+    /* A resize lets the segment go and attaches another. */
+    sk_xfake_configure(f, sk_xui_window_id(w), 40, 30);
+    CHECK(wait_for(SK_EV_RESIZE, 1, 2000) != NULL);
+    im = sk_xui_window_frame(w);
+    CHECK(im->w == 40 && !im->owned);
+    pattern(im, 6);
+    sk_xui_window_present(w, NULL, 0);
+    CHECK(sk_xui_window_readback(w, &back));
+    CHECK(same(im, &back));
+    sk_image_free(&back);
+    CHECK_INT(sk_xfake_count(f, SK_XFAKE_SHM_OPCODE, 2), 1);
+    CHECK_INT(sk_xfake_count(f, SK_XFAKE_SHM_OPCODE, 1), 2);
+    sk_xui_window_free(w);
+    CHECK(sk_xui_sync());
+    CHECK_INT(sk_xfake_count(f, SK_XFAKE_SHM_OPCODE, 2), 2);
+    finish(f);
+}
+
+static void test_a_refused_segment_falls_back_to_put_image(void)
+{
+    sk_xfake_opts o = {.shm = true, .shm_refuse = true};
+    sk_xfake *f = start(&o);
+    if (!f)
+        return;
+    CHECK(sk_xui_shm());
+    sk_window *w = window(30, 20, true);
+    CHECK(!sk_xui_shm());
+    sk_image *im = sk_xui_window_frame(w);
+    CHECK(im->owned);
+    pattern(im, 8);
+    sk_xui_window_present(w, NULL, 0);
+    CHECK(sk_xui_sync());
+    CHECK_INT(sk_xfake_count(f, 72, -1), 1);
+    CHECK_INT(sk_xfake_count(f, SK_XFAKE_SHM_OPCODE, 3), 0);
+    sk_image back;
+    CHECK(sk_xui_window_readback(w, &back));
+    CHECK(same(im, &back));
+    sk_image_free(&back);
+    finish(f);
+}
+
 static void test_a_shown_window_maps_and_redraws_what_is_exposed(void)
 {
     sk_xfake *f = start(NULL);
@@ -812,6 +890,8 @@ const sk_test sk_suite_x11_ui[] = {
     T(test_open_and_a_window_s_properties),
     T(test_present_and_readback_in_chunks),
     T(test_big_frames_go_in_big_requests),
+    T(test_frames_through_mit_shm),
+    T(test_a_refused_segment_falls_back_to_put_image),
     T(test_a_shown_window_maps_and_redraws_what_is_exposed),
     T(test_a_resize_brings_a_new_cleared_frame),
     T(test_keys_and_autorepeat),

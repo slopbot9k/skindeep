@@ -554,22 +554,28 @@ static void present(sk_window *w, const sk_rect *rects, size_t n)
     for (size_t i = 0; i < n; i++)
         if (!sk_rect_empty(sk_rect_intersect(rects[i], all)))
             last = i;
+    uint64_t put = 0;
     for (size_t i = 0; last != SIZE_MAX && i <= last; i++) {
         sk_rect r = sk_rect_intersect(rects[i], all);
         if (sk_rect_empty(r))
             continue;
         if (w->seg)
-            sk_x11_shm_put_image(ui.c, drawable_of(w), gc(drawable_of(w)), w->frame.w,
-                                 w->frame.h, r.x, r.y, r.w, r.h, r.x, r.y, 24, i == last, w->seg,
-                                 0);
+            put = sk_x11_shm_put_image(ui.c, drawable_of(w), gc(drawable_of(w)), w->frame.w,
+                                       w->frame.h, r.x, r.y, r.w, r.h, r.x, r.y, 24, i == last,
+                                       w->seg, 0);
         else
             put_chunks(w, r);
     }
-    if (w->seg && last != SIZE_MAX) {
+    if (put) {
+        /* The last put's completion says the server is done with the
+         * segment; a put the server refused completes nothing. */
+        int e = sk_x11_check(ui.c, put);
         shm_wait s = {ui.c->shm_event, drawable_of(w), w->seg};
         uint8_t ev[32];
-        if (!sk_x11_wait_event(ui.c, shm_done, &s, ev, SK_X11_TIMEOUT_MS))
+        if (e < 0 || (e == 0 && !sk_x11_wait_event(ui.c, shm_done, &s, ev, SK_X11_TIMEOUT_MS)))
             lose();
+        else if (e > 0)
+            sk_log("X error %d on MIT-SHM's PutImage", e);
     }
     settle();
 }
