@@ -18,5 +18,9 @@ typedef bool (*sk_claude_find_fn)(void *ud, char **file, char **session);
  * hooks nor a statusline were injected. Of ctx it takes bus, cmd (for
  * the compaction rule), log and now. ud outlives the part. */
 sk_part sk_claude_watch(const sk_agent_ctx *ctx, sk_claude_find_fn find, void *ud);
+/* The same with a ud the part owns, freed by free_ud when the part is,
+ * such as one that keeps ctx->cmd for it. */
+sk_part sk_claude_watch_owned(const sk_agent_ctx *ctx, sk_claude_find_fn find, void *ud,
+                              void (*free_ud)(void *));
 
 #endif

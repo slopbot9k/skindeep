@@ -91,6 +91,13 @@ typedef struct {
 
 typedef SK_VEC(sk_tab *) sk_tab_list;
 
+/* What a tab's identity strip shows, as the page's 'strip' takes it. A
+ * monitor and the dashboard say it themselves; a CLI tab's is the
+ * window's to build. */
+typedef struct {
+    const char *label, *cmdline, *cwd, *notice;
+} sk_tab_strip;
+
 /* What a tab is made from. The pointers are the caller's and need last
  * only through the call. */
 typedef struct {
