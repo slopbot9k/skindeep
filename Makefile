@@ -87,7 +87,7 @@ FUZZ_SECONDS ?= 30
 .PHONY: all test debug fuzz fuzz-run clean
 .SECONDARY:
 
-all: $(LIB) $(TEST_BIN) $(RELAY) $(HOOKDUMP) $(SKINNED)
+all: $(LIB) $(TEST_BIN) $(RELAY) $(HOOKDUMP) $(SKINNED) $(BUILD)/qoi2png
 
 $(BUILD)/%.o: %.c
 	@mkdir -p $(dir $@)
@@ -128,6 +128,10 @@ $(SKINNED): $(BUILD)/src/main/skinned.o $(LIB)
 $(HOOKDUMP): $(BUILD)/tools/hookdump.o $(LIB)
 	$(CC) $(OPT) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
+# A golden image or pack image as a PNG to look at.
+$(BUILD)/qoi2png: $(BUILD)/tools/qoi2png.o $(LIB)
+	$(CC) $(OPT) $(LDFLAGS) -o $@ $^ $(LDLIBS)
+
 test: $(TEST_BIN) $(RELAY) $(SKINNED)
 	SK_RELAY_BIN=$(RELAY) SK_SKINNED_BIN=$(SKINNED) ./$(TEST_BIN) $(T)
 
@@ -155,4 +159,5 @@ clean:
 
 -include $(LIB_OBJ:.o=.d) $(TEST_OBJ:.o=.d) $(BUILD)/src/relay/main.d $(BUILD)/tools/hookdump.d \
     $(BUILD)/src/main/skinned.d \
+    $(BUILD)/tools/qoi2png.d \
     $(wildcard $(BUILD)/tests/fuzz/*.d)
