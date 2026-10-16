@@ -99,4 +99,12 @@
     X(skinc_program)                                                         \
     X(audio_mixer)                                                           \
     X(audio_sounds)                                                          \
-    X(audio_output)
+    X(audio_output)                                                          \
+    X(milk_audio)                                                            \
+    X(milk_render)                                                           \
+    X(milk_waves)                                                            \
+    X(milk_drift)                                                            \
+    X(milk_rings)                                                            \
+    X(milk_plasma)                                                           \
+    X(milk_stardust)                                                         \
+    X(milk_whirlpool)

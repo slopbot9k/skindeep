@@ -817,5 +817,12 @@
     "author": "The xterm.js authors; SourceLair Private Company; Christopher Jeffrey",
     "license": "MIT",
     "notes": "the licence of @xterm/xterm 6.0.0 (sha512 integrity as in package-lock.json), file package/LICENSE, copied verbatim. The C terminal in src/term follows the behaviour of its parser, input handler, buffers, reflow and selection, ported from its TypeScript; no xterm.js file is vendored."
+  },
+  {
+    "path": "third_party/butterchurn/LICENSE",
+    "source": "https://registry.npmjs.org/butterchurn/-/butterchurn-2.6.7.tgz",
+    "author": "Jordan Berg",
+    "license": "MIT",
+    "notes": "the licence of butterchurn 2.6.7 (sha512 integrity as in package-lock.json), file package/LICENSE, copied verbatim. sha256 e5c204814d7119c939d9f111691e0c2008607d09c2f4679691e6dc5a10f24b98. The MilkDrop renderer in src/viz/milk*.c follows its audio levels, preset equation runner, warp mesh, blur, waveforms, borders, motion vectors, blend pattern and composite, ported from its JavaScript and GLSL; no butterchurn file is vendored."
   }
 ]
