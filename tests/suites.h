@@ -50,4 +50,5 @@
     X(fonts)                                                                 \
     X(fontset)                                                               \
     X(glyphcache)                                                            \
-    X(textrun)
+    X(textrun)                                                               \
+    X(ui_macos)
