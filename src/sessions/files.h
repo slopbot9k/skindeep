@@ -12,9 +12,8 @@ bool sk_files_list(const char *dir, sk_strv *names);
 /* The whole of a regular file, at most cap bytes; false when it cannot
  * be read or is larger. */
 bool sk_files_read(const char *path, size_t cap, sk_buf *out);
-/* stat's mtime in ms, links followed; false when path is gone. Whole
- * seconds: POSIX names the nanoseconds st_mtim and macOS
- * st_mtimespec. */
+/* stat's mtime in ms with its fraction, as Node's mtimeMs, links
+ * followed; false when path is gone. */
 bool sk_files_mtime_ms(const char *path, double *ms);
 /* True when path is a directory, links followed. */
 bool sk_files_is_dir(const char *path);

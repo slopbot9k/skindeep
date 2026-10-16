@@ -8,6 +8,7 @@
 #include "../../base/paths.h"
 #include "../../core/agentdirs.h"
 #include "../../platform/procfds.h"
+#include "../../platform/file.h"
 
 #include <errno.h>
 #include <fcntl.h>

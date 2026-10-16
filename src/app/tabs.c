@@ -11,6 +11,7 @@
 #include "tabs.h"
 
 #include "../agents/agent.h"
+#include "../core/command.h"
 #include "background.h"
 #include "identity.h"
 #include "js.h"
@@ -18,8 +19,6 @@
 #include <stdarg.h>
 #include <string.h>
 
-/* EXIT_APP of decision 0003, the status of an app error. */
-#define STATUS_APP_ERROR 125
 #define NAME_MAX_UNITS 120
 
 typedef struct {
@@ -472,7 +471,7 @@ void sk_tabs_fail(sk_tabs *t, const char *err)
         if (t->cfg.log)
             t->cfg.log(t->cfg.ud, msg.ptr);
     } else {
-        t->status = STATUS_APP_ERROR;
+        t->status = SK_EXIT_APP;
         if (t->cfg.tell)
             t->cfg.tell(t->cfg.ud, msg.ptr);
         sk_tabs_hangup_all(t);

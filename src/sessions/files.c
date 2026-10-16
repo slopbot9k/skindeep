@@ -2,6 +2,8 @@
  * app/board.js (decisions 0025, 0027, 0029). */
 #include "files.h"
 
+#include "../platform/file.h"
+
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -67,7 +69,7 @@ bool sk_files_mtime_ms(const char *path, double *ms)
     struct stat st;
     if (stat(path, &st) != 0)
         return false;
-    *ms = (double)st.st_mtime * 1000;
+    *ms = sk_stat_mtime_ms(&st);
     return true;
 }
 

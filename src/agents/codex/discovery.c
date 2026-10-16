@@ -13,6 +13,7 @@
 #include "../../base/map.h"
 #include "../../base/paths.h"
 #include "../../platform/procfds.h"
+#include "../../platform/file.h"
 #include "../../platform/proctree.h"
 
 #include <dirent.h>

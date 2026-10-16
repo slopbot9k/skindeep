@@ -49,8 +49,3 @@ void sk_proc_open_files(pid_t pid, sk_strv *paths)
     sk_vec_free(&files);
     free(fds);
 }
-
-double sk_stat_mtime_ms(const struct stat *st)
-{
-    return (double)st->st_mtimespec.tv_sec * 1000 + (double)st->st_mtimespec.tv_nsec / 1e6;
-}

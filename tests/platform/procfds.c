@@ -1,6 +1,7 @@
 /* The files a process holds open, on this process and on a child, and
  * the mtime to the fraction of a ms (decisions 0013, 0036). */
 #include "../../src/base/paths.h"
+#include "../../src/platform/file.h"
 #include "../../src/platform/procfds.h"
 #include "../test.h"
 
