@@ -84,7 +84,7 @@ FUZZ_BINS := $(FUZZ_TARGETS:%=$(BUILD)/fuzz-%)
 FUZZ_DRIVER := $(BUILD)/tests/fuzz/driver.o
 FUZZ_SECONDS ?= 30
 
-.PHONY: all test debug fuzz fuzz-run clean
+.PHONY: all test debug fuzz fuzz-run clean macdemo
 .SECONDARY:
 
 all: $(LIB) $(TEST_BIN) $(RELAY) $(HOOKDUMP) $(SKINNED) $(BUILD)/qoi2png
@@ -132,6 +132,11 @@ $(HOOKDUMP): $(BUILD)/tools/hookdump.o $(LIB)
 $(BUILD)/qoi2png: $(BUILD)/tools/qoi2png.o $(LIB)
 	$(CC) $(OPT) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
+# One window of platform/ui.h to look at by hand; not part of all.
+macdemo: $(BUILD)/macdemo
+$(BUILD)/macdemo: $(BUILD)/tools/macdemo.o $(LIB)
+	$(CC) $(OPT) $(LDFLAGS) -o $@ $^ $(LDLIBS) $(UI_LIBS)
+
 test: $(TEST_BIN) $(RELAY) $(SKINNED)
 	SK_RELAY_BIN=$(RELAY) SK_SKINNED_BIN=$(SKINNED) ./$(TEST_BIN) $(T)
 
@@ -159,5 +164,5 @@ clean:
 
 -include $(LIB_OBJ:.o=.d) $(TEST_OBJ:.o=.d) $(BUILD)/src/relay/main.d $(BUILD)/tools/hookdump.d \
     $(BUILD)/src/main/skinned.d \
-    $(BUILD)/tools/qoi2png.d \
+    $(BUILD)/tools/qoi2png.d $(BUILD)/tools/macdemo.d \
     $(wildcard $(BUILD)/tests/fuzz/*.d)
