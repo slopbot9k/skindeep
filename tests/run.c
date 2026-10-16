@@ -20,6 +20,8 @@ static const struct {
 
 static int failures;
 static char *tmpdir;
+/* The test running, for a death in it. */
+static const char *current;
 
 void sk_test_fail(const char *file, int line, const char *fmt, ...)
 {
@@ -96,6 +98,21 @@ void sk_test_sleep_ms(long ms)
         ;
 }
 
+/* A test that aborts, as glibc's fortify checks make it do, is named
+ * before the runner dies: its own output may be lost in stdio's buffer.
+ * Only SIGABRT: the sanitizers keep their own SIGSEGV report. */
+static void died(int sig)
+{
+    static const char what[] = "DIED in ";
+    ssize_t w = write(2, what, sizeof what - 1);
+    if (current)
+        w = write(2, current, strlen(current));
+    w = write(2, "\n", 1);
+    (void)w;
+    signal(sig, SIG_DFL);
+    raise(sig);
+}
+
 static bool selected(int argc, char **argv, const char *full)
 {
     if (argc < 2)
@@ -111,6 +128,7 @@ int main(int argc, char **argv)
     int run = 0, failed = 0;
     /* As the relays do: a peer that went away is an error, not a death. */
     signal(SIGPIPE, SIG_IGN);
+    signal(SIGABRT, died);
     for (size_t s = 0; s < SK_LEN(suites); s++) {
         for (const sk_test *t = suites[s].tests; t->name; t++) {
             const char *short_name = strncmp(t->name, "test_", 5) == 0 ? t->name + 5 : t->name;
@@ -118,7 +136,9 @@ int main(int argc, char **argv)
             sk_buf_printf(&full, "%s.%s", suites[s].name, short_name);
             if (selected(argc, argv, full.ptr)) {
                 failures = 0;
+                current = full.ptr;
                 t->fn();
+                current = NULL;
                 if (tmpdir) {
                     remove_tree(tmpdir);
                     free(tmpdir);

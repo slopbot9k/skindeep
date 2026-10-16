@@ -11,6 +11,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdlib.h>
@@ -725,7 +726,7 @@ static void test_working_directory(void)
 {
     rec r;
     rec_init(&r);
-    char real[1024];
+    char real[PATH_MAX]; /* glibc's fortified realpath wants no less */
     CHECK(realpath(sk_test_tmpdir(), real) != NULL);
     char *argv[] = {"pwd", "-P", NULL};
     sk_session_opts o = opts(&r, argv);
@@ -785,7 +786,10 @@ static void test_control_c_interrupts_the_child(void)
     rec r;
     rec_init(&r);
     /* stty's report goes first, so a failure shows the terminal's modes. */
-    char *argv[] = {"sh", "-c", "stty -a; echo ready; sleep 20", NULL};
+    /* exec: dash (Linux's sh) starts a command by vfork, and a SIGINT in
+     * that window is lost to the child and held by the shell until the
+     * child ends. */
+    char *argv[] = {"sh", "-c", "stty -a; echo ready; exec sleep 20", NULL};
     sk_session_opts o = opts(&r, argv);
     sk_session *s = make(&r, &o);
     sk_session_start(s, 80, 24);
