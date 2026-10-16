@@ -12,12 +12,14 @@ static const char *const ALLOWED[] = {
     "Zlib",      "Unlicense", "CC-BY-3.0", "CC-BY-4.0",    "public-domain", "project-original",
 };
 
-static bool allowed(sk_str licence)
+/* The Bitstream Vera license, for the embedded DejaVu alone (decision
+ * 0017). */
+static bool allowed(sk_str licence, sk_str path)
 {
     for (size_t i = 0; i < SK_LEN(ALLOWED); i++)
         if (sk_str_eq_c(licence, ALLOWED[i]))
             return true;
-    return false;
+    return sk_str_eq_c(licence, "Bitstream-Vera") && sk_str_prefix(path, SK_STR("third_party/dejavu/"));
 }
 
 static void test_manifest(void)
@@ -43,7 +45,7 @@ static void test_manifest(void)
         for (size_t k = 0; k < SK_LEN(needed); k++)
             if (!sk_json_as_string(sk_json_get(e, needed[k]), &s) || !s.len)
                 sk_test_fail(__FILE__, __LINE__, "%s: %s missing", path.ptr, needed[k]);
-        if (!sk_json_as_string(sk_json_get(e, "license"), &s) || !allowed(s))
+        if (!sk_json_as_string(sk_json_get(e, "license"), &s) || !allowed(s, path))
             sk_test_fail(__FILE__, __LINE__, "%s: licence not allowed", path.ptr);
         struct stat st;
         if (path.ptr && stat(path.ptr, &st) != 0)
@@ -51,7 +53,7 @@ static void test_manifest(void)
         if (path.ptr && sk_str_prefix(path, SK_STR("third_party/")))
             third_party++;
     }
-    CHECK_INT(third_party, 9);
+    CHECK_INT(third_party, 16);
     sk_arena_free(&a);
     free(text);
 }

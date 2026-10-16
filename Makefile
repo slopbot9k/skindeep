@@ -2,8 +2,8 @@
 # macOS ships as /usr/bin/make and Linux distributions ship as make, and
 # the system C compiler.
 #
-#   make              build the library, the tests, skinned (headless for now),
-#                     skinned-relay and hookdump
+#   make              build the library, the tests, skinned, skinned-relay
+#                     and hookdump
 #   make test         run the tests (T=json runs the json suite)
 #   make debug        run the tests under AddressSanitizer and UBSan
 #   make fuzz         build the fuzz targets
@@ -28,6 +28,12 @@ ifeq ($(OS),Darwin)
 DEFS += -D_DARWIN_C_SOURCE
 endif
 LDLIBS := -lpthread -lm
+# What a program with windows links besides (platform/ui.h): AppKit and
+# CoreGraphics through the Objective-C runtime on macOS; nothing on
+# Linux, where X11 is a socket. The relays link none of it.
+ifeq ($(OS),Darwin)
+UI_LIBS := -framework AppKit -framework QuartzCore -framework CoreGraphics -framework CoreFoundation -lobjc
+endif
 SANITIZE := -fsanitize=address,undefined -fno-sanitize-recover=undefined
 
 ifeq ($(MODE),release)
@@ -52,9 +58,17 @@ COMPILE = $(CC) $(CSTD) $(WARN) $(DEFS) $(OPT) $(CFLAGS) -MMD -MP
 # Code for one system lives in src/platform/<os>/ (decision 0036).
 PLATFORM := $(if $(filter Darwin,$(OS)),macos,linux)
 
+# X11's protocol code is plain C over a socket: it builds, and its tests
+# run against a fake server, on every system; only Linux opens windows
+# with it.
 LIB_SRC := $(wildcard src/base/*.c src/core/*.c src/agents/*.c src/agents/*/*.c src/app/*.c src/sessions/*.c \
-    src/platform/$(PLATFORM)/*.c) src/relay/relay.c
-LIB_OBJ := $(LIB_SRC:%.c=$(BUILD)/%.o)
+    src/gfx/*.c src/text/*.c src/vendor/*.c src/platform/x11/*.c src/platform/$(PLATFORM)/*.c) src/relay/relay.c
+# The embedded DejaVu, in sk_embedded_font's order (text/text.h).
+FONTS := $(addprefix third_party/dejavu/,DejaVuSansMono.ttf DejaVuSansMono-Bold.ttf DejaVuSansMono-Oblique.ttf \
+    DejaVuSansMono-BoldOblique.ttf DejaVuSans.ttf DejaVuSans-Bold.ttf)
+GEN_OBJ := $(BUILD)/gen/fonts.o
+LIB_OBJ := $(LIB_SRC:%.c=$(BUILD)/%.o) $(GEN_OBJ)
+BIN2C := $(BUILD)/bin2c
 LIB := $(BUILD)/libsk.a
 
 TEST_SRC := $(filter-out tests/fuzz/%,$(wildcard tests/*.c tests/*/*.c))
@@ -79,6 +93,22 @@ $(BUILD)/%.o: %.c
 	@mkdir -p $(dir $@)
 	$(COMPILE) -c $< -o $@
 
+# Single-file libraries of third_party/ compile in src/vendor/, one unit
+# each, with the warnings their authors' code meets.
+$(BUILD)/src/vendor/%.o: WARN := -w
+
+# Generated sources: tools/bin2c runs on the build machine.
+$(BIN2C): tools/bin2c.c
+	@mkdir -p $(dir $@)
+	$(CC) -O1 -o $@ $<
+
+$(BUILD)/gen/fonts.c: $(FONTS) $(BIN2C)
+	@mkdir -p $(dir $@)
+	$(BIN2C) sk_embedded_fonts $(FONTS) > $@.tmp && mv $@.tmp $@
+
+$(BUILD)/gen/%.o: $(BUILD)/gen/%.c
+	$(COMPILE) -I. -c $< -o $@
+
 # The driver holds the coverage callbacks, so it is not instrumented.
 $(FUZZ_DRIVER): COVERAGE :=
 
@@ -87,13 +117,13 @@ $(LIB): $(LIB_OBJ)
 	$(AR) rcs $@ $(LIB_OBJ)
 
 $(TEST_BIN): $(TEST_OBJ) $(LIB)
-	$(CC) $(OPT) $(LDFLAGS) -o $@ $(TEST_OBJ) $(LIB) $(LDLIBS)
+	$(CC) $(OPT) $(LDFLAGS) -o $@ $(TEST_OBJ) $(LIB) $(LDLIBS) $(UI_LIBS)
 
 $(RELAY): $(BUILD)/src/relay/main.o $(LIB)
 	$(CC) $(OPT) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
 $(SKINNED): $(BUILD)/src/main/skinned.o $(LIB)
-	$(CC) $(OPT) $(LDFLAGS) -o $@ $^ $(LDLIBS)
+	$(CC) $(OPT) $(LDFLAGS) -o $@ $^ $(LDLIBS) $(UI_LIBS)
 
 $(HOOKDUMP): $(BUILD)/tools/hookdump.o $(LIB)
 	$(CC) $(OPT) $(LDFLAGS) -o $@ $^ $(LDLIBS)

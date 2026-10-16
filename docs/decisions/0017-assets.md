@@ -31,6 +31,10 @@ terminal.
 - DejaVu Sans Mono and DejaVu Sans come from the system, as a
   prerequisite: `install.sh` looks for both with `fc-list` and, when
   either is missing, names the distribution's package and stops.
+- The C port embeds DejaVu Sans Mono and DejaVu Sans (decision 0036)
+  from `third_party/dejavu/`, the 2.37 release unchanged, beside its
+  licence. The Bitstream Vera license (`Bitstream-Vera`) is allowed for
+  those files alone.
 - A test walks `skins/` and fails for any file that is neither the
   manifest, the CSS, nor listed in `ASSETS.json` with an allowed license,
   and for any listed file that does not exist.

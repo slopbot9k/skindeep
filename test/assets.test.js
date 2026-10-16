@@ -20,7 +20,9 @@ test('every shipped skin file is the manifest, CSS, or a licensed asset', () => 
   const listed = new Map(assets.map(a => [a.path, a]))
   for (const a of assets) {
     for (const k of ['path', 'source', 'author', 'license']) assert.ok(a[k], `${a.path}: ${k} missing`)
-    assert.ok(ALLOWED.includes(a.license), `${a.path}: license ${a.license} not allowed`)
+    // The Bitstream Vera license, for the C port's embedded DejaVu alone (decision 0017).
+    const dejavu = a.license === 'Bitstream-Vera' && a.path.startsWith('third_party/dejavu/')
+    assert.ok(ALLOWED.includes(a.license) || dejavu, `${a.path}: license ${a.license} not allowed`)
     assert.ok(fs.existsSync(path.join(ROOT, a.path)), `${a.path}: listed but missing`)
   }
   for (const f of walk(path.join(ROOT, 'skins'))) {
