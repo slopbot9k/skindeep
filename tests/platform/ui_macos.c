@@ -1072,7 +1072,10 @@ static void test_frames_come_once_per_request_at_the_refresh(void)
     n_frames = 0;
     keep_drawing = true;
     sk_window_request_frame(w);
-    run_for(150);
+    /* Three frames, however slow the machine: a loaded runner under
+     * the sanitizers missed a fixed 150 ms. */
+    for (int waited = 0; n_frames < 3 && waited < 2000; waited += 20)
+        run_for(20);
     keep_drawing = false;
     CHECK(n_frames >= 3);
     for (size_t i = 1; i < n_frames; i++)
