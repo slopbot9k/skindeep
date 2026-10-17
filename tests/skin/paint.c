@@ -314,6 +314,29 @@ static void test_svg_arcs_and_dashes(void)
     /* The fill at 0 of 100 draws nothing; the middle is empty. */
     CHECK_INT(alpha(pixel(&im, 50, 30)), 0);
     sk_image_free(&im);
+    /* At 50 its dash is half the arc, -135 to 0 degrees, over the
+     * track: green at -90, the track's red still at 45. */
+    for (uint32_t i = 0; s.ok && i < s.t.n; i++)
+        if (s.t.nodes[i].role == SK_ROLE_ARC_FILL)
+            s.t.nodes[i].value = 50;
+    sk_layout_free(&s.l);
+    sk_layout_run(&s.l, s.t.nodes, s.t.n, s.t.root, 1000, 678, &s.lfonts);
+    sk_tskin_paint(&s, (sk_frect){0, 0, 100, 100}, 1, &im);
+    CHECK_COLOR(pixel(&im, 7, 50), 0xff4fd06au, 0);
+    CHECK_COLOR(pixel(&im, 80, 20), RED, 0);
+    CHECK_COLOR(pixel(&im, 93, 50), CLEAR, 0);
+    /* sk_paint_px paints the same pixels from a device offset. */
+    sk_image part;
+    sk_image_init(&part, 40, 40);
+    if (s.ok) {
+        sk_paint_env env = {&s.l, &s.lfonts, &s.images, s.glyphs};
+        sk_paint_px(&part, &env, s.t.root, 1, 3, 30);
+    }
+    for (int y = 0; y < 40; y += 3)
+        for (int x = 0; x < 40; x += 3)
+            CHECK_COLOR(pixel(&part, x, y), pixel(&im, x + 3, y + 30), 0);
+    sk_image_free(&part);
+    sk_image_free(&im);
     sk_tskin_close(&s);
 }
 

@@ -16,8 +16,8 @@
  * grayscale, sepia, invert, opacity, hue-rotate); polygon clip-paths;
  * overflow clips, rounded; transforms, a turned or skewed subtree drawn
  * into a layer and resampled; and the SVG the widgets draw: arcs, lines
- * and circles filled and stroked with caps, joins and dashes, text and
- * images. Painting order is CSS 2.1's Appendix E: stacking contexts by
+ * and circles filled and stroked with caps, joins and dashes (a dash of
+ * -sk-value() the node's value long), text and images. Painting order is CSS 2.1's Appendix E: stacking contexts by
  * z-index, positioned boxes in tree order above the flow.
  *
  * Blur is Skia's (src/skin/blur.h): a true Gaussian below a sigma of
@@ -50,5 +50,9 @@ typedef struct {
  * painted as a stacking context of its own. dst is drawn over, not
  * cleared. */
 void sk_paint(sk_image *dst, const sk_paint_env *env, uint32_t root, float scale, float ox, float oy);
+/* The same with the skin area's origin at device pixel (-px, -py) of
+ * dst: a part of a frame painted again lands on the whole pixels the
+ * frame's first paint put it on, whatever the scale. */
+void sk_paint_px(sk_image *dst, const sk_paint_env *env, uint32_t root, float scale, int px, int py);
 
 #endif
