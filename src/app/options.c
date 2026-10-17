@@ -7,6 +7,7 @@
 #include <fcntl.h>
 #include <stdarg.h>
 #include <stdatomic.h>
+#include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -73,6 +74,23 @@ int sk_tell_adopt(int fd)
     if (old > 2 && old != to)
         close(old);
     return to;
+}
+
+void sk_tell_now(const char *a, const char *b)
+{
+    char line[640];
+    int n = snprintf(line, sizeof line, "skinned: %s%s\n", a, b);
+    if (n <= 0)
+        return;
+    size_t len = SK_MIN((size_t)n, sizeof line - 1);
+    line[len - 1] = '\n';
+    int fd = atomic_load(&user_fd);
+    for (size_t done = 0; done < len;) {
+        ssize_t w = write(fd, line + done, len - done);
+        if (w <= 0)
+            break;
+        done += (size_t)w;
+    }
 }
 
 void sk_tell(const char *fmt, ...)

@@ -23,11 +23,13 @@
 #include <pthread.h>
 #include <signal.h>
 #include <stdarg.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 /* POSIX names no count of signals; Linux has 64, macOS 31. */
@@ -187,6 +189,71 @@ static void finish(sk_session *s, int code)
 /* As session.js signals: the group, or the child alone while its group
  * does not exist. Never once the child is reaped, when its pid may name
  * another process. */
+/* The children alive, for the end an internal error makes: a slot per
+ * pid, taken at the spawn and given back at the reap, read with no lock
+ * or allocation from whatever thread dies. */
+#define LIVE_SLOTS 256
+static atomic_int live[LIVE_SLOTS];
+
+static void live_add(pid_t pid)
+{
+    for (int i = 0; i < LIVE_SLOTS; i++) {
+        int none = 0;
+        if (atomic_compare_exchange_strong(&live[i], &none, (int)pid))
+            return;
+    }
+}
+
+static void live_drop(pid_t pid)
+{
+    for (int i = 0; i < LIVE_SLOTS; i++) {
+        int p = (int)pid;
+        if (atomic_compare_exchange_strong(&live[i], &p, 0))
+            return;
+    }
+}
+
+static void signal_group(int pid, int sig)
+{
+    if (kill(-pid, sig) != 0 && errno == ESRCH)
+        kill(pid, sig);
+}
+
+void sk_session_hangup_every(uint64_t grace_ms)
+{
+    for (int i = 0; i < LIVE_SLOTS; i++) {
+        int p = atomic_load(&live[i]);
+        if (p > 0)
+            signal_group(p, SIGHUP);
+    }
+    struct timespec t0, now, nap = {0, 20 * 1000000L};
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    for (;;) {
+        bool any = false;
+        for (int i = 0; i < LIVE_SLOTS; i++) {
+            int p = atomic_load(&live[i]);
+            if (p <= 0)
+                continue;
+            /* Reaped here, or already by the loop. */
+            pid_t r = waitpid(p, NULL, WNOHANG);
+            if (r == p || (r < 0 && errno == ECHILD))
+                atomic_store(&live[i], 0);
+            else
+                any = true;
+        }
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        uint64_t ms = (uint64_t)(now.tv_sec - t0.tv_sec) * 1000 + (uint64_t)((now.tv_nsec - t0.tv_nsec) / 1000000L);
+        if (!any || ms >= grace_ms)
+            break;
+        nanosleep(&nap, NULL);
+    }
+    for (int i = 0; i < LIVE_SLOTS; i++) {
+        int p = atomic_load(&live[i]);
+        if (p > 0)
+            signal_group(p, SIGKILL);
+    }
+}
+
 static void signal_child(sk_session *s, int sig)
 {
     if (!s->pid || s->reaped)
@@ -299,6 +366,7 @@ static void on_child(sk_loop *loop, pid_t pid, int wstatus, void *ud)
     /* -1: reaped by someone else, its status lost. */
     s->exit_code = wstatus >= 0 ? sk_session_exit_status(wstatus) : SK_EXIT_APP;
     s->reaped = true;
+    live_drop(s->pid);
     reaped(s);
 }
 
@@ -495,6 +563,7 @@ static int spawn(sk_session *s, int cols, int rows, sk_buf *why)
         fcntl(master, F_SETFL, fl | O_NONBLOCK);
     s->master = master;
     s->pid = pid;
+    live_add(pid);
     /* Fails only when SIGCHLD cannot be caught at all. */
     if (sk_loop_child(s->loop, pid, on_child, s) != 0)
         sk_die("cannot watch for the exit of child %ld", (long)pid);
@@ -648,6 +717,7 @@ void sk_session_free(sk_session *s)
         while (waitpid(s->pid, NULL, 0) < 0 && errno == EINTR)
             ;
         s->reaped = true;
+        live_drop(s->pid);
     }
     stop(s);
     cancel(s, &s->end_id);

@@ -41,5 +41,8 @@ bool sk_options_parse(sk_options *o, char *const *argv, const sk_envp *env, sk_b
 int sk_tell_adopt(int fd);
 /* "skinned: <msg>\n" to the user, in one write. */
 void sk_tell(const char *fmt, ...) SK_PRINTF(1, 2);
+/* "skinned: <a><b>\n" the same, cut to fit 640 bytes, allocating
+ * nothing: for an internal error, when memory may be what ran out. */
+void sk_tell_now(const char *a, const char *b);
 
 #endif

@@ -19,10 +19,12 @@ typedef struct {
     char cwd[PATH_MAX];
 } sk_launch;
 
-/* 0 with *l set and the log going to <state>/<name>-<pid>.log, or the
- * exit status of decision 0003 (127 for a command not found, else 125)
- * after telling the user why, *l closed. self: argv[0], to find
- * skinned-relay beside it. */
+/* 0 with *l set and the log going to <state>/<stamp>-<pid>.log, as
+ * decision 0016 names it, the newest 10 kept; or the exit status of
+ * decision 0003 (127 for a command not found, else 125) after telling
+ * the user why, *l closed. self: argv[0], to find skinned-relay beside
+ * it. name: NULL for the app's window, else a mode's name, which goes
+ * in its log's: <stamp>-<name>-<pid>.log. */
 int sk_launch_open(sk_launch *l, const sk_options *o, const sk_envp *env, const char *self, const char *name);
 /* <state>/<name>-<pid>.<suffix>, malloc'd. */
 char *sk_launch_named(const sk_launch *l, const char *name, const char *suffix);

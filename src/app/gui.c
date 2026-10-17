@@ -1067,11 +1067,34 @@ static void on_active(void *ud, sk_tab *tab)
     post_snapshot(ud);
 }
 
+/* A CLI that exited on its own with a status other than 0, while other
+ * tabs remain, under Housekeeping with the dot (decision 0023), as
+ * app/main.js tells it: why it could not start, its command line and its
+ * folder. */
+static void exit_problem(gui *g, const sk_tab *tab, int code)
+{
+    sk_session *s = sk_clitab_session(tab);
+    const char *home = sk_envp_get(g->env, "HOME");
+    sk_buf title = {0}, detail = {0};
+    sk_buf_printf(&title, "%s exited with status %d", tab->label, code);
+    const char *why = s ? sk_session_failure(s) : NULL;
+    if (why)
+        sk_buf_printf(&detail, "cannot start %s: %s\n", tab->cmd.ptr[0], why);
+    char *const *argv = s && sk_session_argv(s) ? sk_session_argv(s) : tab->cmd.ptr;
+    sk_identity_quote_argv(&detail, argv);
+    sk_buf_append_c(&detail, "\nin ");
+    sk_identity_tildify(&detail, tab->cwd, home);
+    add_problem(g, title.ptr, detail.ptr);
+    sk_buf_free(&title);
+    sk_buf_free(&detail);
+}
+
 static void on_gone(void *ud, sk_tab *tab, int code, sk_tab *next)
 {
-    (void)code, (void)next;
     gui *g = ud;
     viz_tabs(g, tab);
+    if (!next && !tab->closed && code != 0 && tab->kind == SK_TAB_CLI && sk_tabs_count(g->tabs) > 0)
+        exit_problem(g, tab, code);
     for (size_t i = 0; i < g->ctabs.len; i++) {
         if (g->ctabs.ptr[i].id != tab->id)
             continue;
@@ -4688,6 +4711,10 @@ static void on_control(void *ud, sk_control_req *req, const sk_json *msg)
         sk_control_ok(req, NULL);
         return;
     }
+    /* For the live checks: an internal error, as a broken invariant
+     * would make one. */
+    if (sk_str_eq_c(op, "die"))
+        sk_die("asked to by the control socket");
     ctl_msg *m = sk_xcalloc(1, sizeof *m);
     m->g = g;
     m->req = req;
@@ -4735,6 +4762,12 @@ static void on_control(void *ud, sk_control_req *req, const sk_json *msg)
             sk_jw_array_end(&jw);
             sk_jw_object_end(&jw);
         }
+        sk_jw_array_end(&jw);
+        /* Housekeeping's problems, by title. */
+        sk_jw_key(&jw, SK_STR("problems"));
+        sk_jw_array(&jw);
+        for (size_t i = 0; i < g->problems.len; i++)
+            sk_jw_string(&jw, sk_str_c(g->problems.ptr[i].title));
         sk_jw_array_end(&jw);
         sk_jw_object_end(&jw);
         /* The object's members alone, comma first, for the UI to wrap. */
@@ -4820,7 +4853,7 @@ static void echo_screen(const char *text)
 int sk_gui_run(const sk_options *o, const sk_envp *env, const char *self)
 {
     sk_launch l;
-    int status = sk_launch_open(&l, o, env, self, "skinned");
+    int status = sk_launch_open(&l, o, env, self, NULL);
     if (status)
         return status;
     status = SK_EXIT_APP;

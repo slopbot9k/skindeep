@@ -91,6 +91,12 @@ static bool start(app *a, const char *const *cmd)
         int null = open("/dev/null", O_RDWR), err = open("skinned.err", O_WRONLY | O_CREAT | O_TRUNC, 0644);
         if (null < 0 || err < 0 || dup2(null, 0) < 0 || dup2(null, 1) < 0 || dup2(err, 2) < 0)
             _exit(98);
+        /* As a terminal starts it: no fd past stderr, so sk_tell writes
+         * to stderr too. */
+        if (null > 2)
+            close(null);
+        if (err > 2)
+            close(err);
         execve(whole, sk_strv_argv(&argv), sk_strv_argv(&env));
         _exit(99);
     }
@@ -926,6 +932,74 @@ static void test_the_skin(void)
     CHECK_INT(finish(&a, 5000), 128 + SIGHUP);
 }
 
+/* A CLI that exits on its own with a status other than 0 while another
+ * tab remains is a problem under Housekeeping (decision 0023); one the
+ * user closed is none. */
+static void test_a_failed_cli_is_a_problem(void)
+{
+    app a;
+    const char *cmd[] = {"sh", NULL};
+    if (!start(&a, cmd))
+        return;
+    sk_arena ar;
+    sk_arena_init(&ar, 0);
+    ok(&a, "{\"op\":\"key\",\"key\":\"t\",\"mods\":" APP_MODS "}");
+    const sk_json *p = NULL;
+    for (uint64_t until = sk_now_ms() + 5000; sk_now_ms() < until; sk_test_sleep_ms(50)) {
+        p = probe(&a, &ar);
+        double pid = 0;
+        sk_json_as_number(sk_json_get(sk_json_at(sk_json_get(p, "tabs"), 1), "pid"), &pid);
+        if (len_of(sk_json_get(p, "tabs")) == 2 && pid > 0)
+            break;
+    }
+    CHECK_INT(len_of(sk_json_get(p, "tabs")), 2);
+    CHECK_INT(len_of(sk_json_get(p, "problems")), 0);
+    /* The new tab, active, ends with 3. */
+    sk_test_sleep_ms(300);
+    ok(&a, "{\"op\":\"type\",\"text\":\"exit 3\\n\"}");
+    sk_str title = {0};
+    for (uint64_t until = sk_now_ms() + 5000; sk_now_ms() < until && !title.len; sk_test_sleep_ms(50)) {
+        p = probe(&a, &ar);
+        sk_json_as_string(sk_json_at(sk_json_get(p, "problems"), 0), &title);
+    }
+    CHECK(sk_str_suffix(title, SK_STR(" exited with status 3")));
+    CHECK_INT(len_of(sk_json_get(p, "tabs")), 1);
+    CHECK_INT(len_of(sk_json_get(p, "problems")), 1);
+    sk_arena_free(&ar);
+    ok(&a, "{\"op\":\"hangup\"}");
+    CHECK_INT(finish(&a, 5000), 128 + SIGHUP);
+}
+
+/* An internal error (decision 0003): the user told, every CLI hung up by
+ * the kill policy of decision 0016, one that ignores the hang-up killed
+ * after the grace, and 125. */
+static void test_an_internal_error_ends_the_clis(void)
+{
+    app a;
+    const char *cmd[] = {"sh", "-c", "trap '' HUP; while :; do sleep 1; done", NULL};
+    if (!start(&a, cmd))
+        return;
+    sk_arena ar;
+    sk_arena_init(&ar, 0);
+    double pid = 0;
+    for (uint64_t until = sk_now_ms() + 5000; sk_now_ms() < until && pid <= 0; sk_test_sleep_ms(50))
+        sk_json_as_number(sk_json_get(sk_json_at(sk_json_get(probe(&a, &ar), "tabs"), 0), "pid"), &pid);
+    CHECK(pid > 0);
+    /* Answered by no one: the app is gone. */
+    (void)ask(&a, &ar, "{\"op\":\"die\"}");
+    sk_arena_free(&ar);
+    CHECK_INT(finish(&a, 6000), 125);
+    if (pid > 0)
+        CHECK(kill(-(pid_t)pid, 0) != 0 && errno == ESRCH);
+    sk_buf path = {0};
+    sk_buf_printf(&path, "%s/skinned.err", sk_test_tmpdir());
+    char *err = sk_test_read(path.ptr, NULL);
+    if (!(err && strstr(err, "skinned: internal error: asked to by the control socket\n")))
+        sk_test_fail(__FILE__, __LINE__, "the user was not told; stderr:\n%.2000s", err ? err : "(none)");
+    free(err);
+    sk_buf_free(&path);
+}
+
 /* A Claude Code that refuses to resume a session running in the
  * background, as 2.1.296 does, ends by itself: the tab reads the
  * refusal off its last screen and opens the session with `claude
@@ -1105,5 +1179,7 @@ const sk_test sk_suite_window[] = {
     T(test_the_skin),
     T(test_raced_skins),
     T(test_a_refused_background_session_opens_with_attach),
+    T(test_a_failed_cli_is_a_problem),
+    T(test_an_internal_error_ends_the_clis),
     {0},
 };

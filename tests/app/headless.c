@@ -202,7 +202,7 @@ static void test_the_relay_is_found_past_a_link(void)
     CHECK(d != NULL);
     bool named = false;
     for (struct dirent *e; d && (e = readdir(d));) {
-        if (strncmp(e->d_name, "headless-", 9) || !strstr(e->d_name, ".log"))
+        if (!strstr(e->d_name, "-headless-") || !strstr(e->d_name, ".log"))
             continue;
         sk_buf p = {0};
         sk_buf_printf(&p, "%s/%s", logs.ptr, e->d_name);
