@@ -1473,12 +1473,19 @@ void sk_window_set_min_size(sk_window *w, int min_w, int min_h)
     void *pool = objc_autoreleasePoolPush();
     CGSize least = CGSizeMake(SK_MAX(min_w, 1), SK_MAX(min_h, 1));
     SK_MSG(void (*)(id, SEL, CGSize))(w->win, sk_sel("setContentMinSize:"), least);
-    /* Grown to it when smaller, as main.js's growTo grows it. */
+    /* Grown to it when smaller, as main.js's growTo grows it: its top
+     * left corner where it is. AppKit's origin is the frame's bottom
+     * left, so the frame grows down by moving its origin. */
     int pw, ph;
     sk_window_size(w, &pw, &ph);
-    if (pw < least.width || ph < least.height)
-        SK_MSG(void (*)(id, SEL, CGSize))(w->win, sk_sel("setContentSize:"),
-                                          CGSizeMake(SK_MAX(pw, least.width), SK_MAX(ph, least.height)));
+    double dw = SK_MAX(0.0, least.width - pw), dh = SK_MAX(0.0, least.height - ph);
+    if (dw > 0 || dh > 0) {
+        CGRect f = sk_msg_rect(w->win, "frame");
+        f.origin.y -= dh;
+        f.size.width += dw;
+        f.size.height += dh;
+        SK_MSG(void (*)(id, SEL, CGRect, BOOL))(w->win, sk_sel("setFrame:display:"), f, YES);
+    }
     objc_autoreleasePoolPop(pool);
 }
 

@@ -209,11 +209,14 @@ typedef struct {
     sk_chooser *chooser;
     /* A tab's drop-down and its name edited in place (decision 0032). */
     sk_rename *rename;
-    bool strips; /* the strips alone are to be drawn again */
+    bool strips;   /* the strips alone are to be drawn again */
+    bool term_all; /* the strips and the terminal drawn whole */
+    bool term_press; /* a press the terminal took, held until its release */
     /* The skin in the stage (decision 0037), the timer of its next step,
      * the least size it gave the window, the pointer's shape. */
     sk_skinview *skin;
     int skin_timer;
+    uint64_t skin_due; /* when the timer fires, ms */
     int min_w, min_h;
     sk_cursor cursor;
     /* While a drop-down or a dialog is up, what is below it is drawn
@@ -870,7 +873,11 @@ static void post_skin(gui *g)
 /* The current skin recorded as this window's last (decision 0022). */
 static void remember_skin(gui *g)
 {
-    if (g->last_dir && sk_skins_remember(g->skins, g->last_dir, getpid(), (double)time(NULL) * 1000) != 0)
+    /* In ms, as last.js's Date.now(): records of one second still sort. */
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    double now = (double)ts.tv_sec * 1000 + (double)(ts.tv_nsec / 1000000);
+    if (g->last_dir && sk_skins_remember(g->skins, g->last_dir, getpid(), now) != 0)
         sk_log("last skin: %s", strerror(errno));
 }
 
@@ -1327,7 +1334,21 @@ static void file_rows(gui *g, row_vec *v)
     row_add(v, SK_ROW_RULE, NULL);
     row_add(v, SK_ROW_HEADING, "Settings");
     sk_setting_row rows[SK_SETTINGS_COUNT];
-    sk_appsettings_menu(&g->settings, NULL, rows);
+    /* The skin's own value, which Skin default names: settings.js reads
+     * it from the manifest, terminal.fontSize. */
+    sk_arena arena;
+    sk_arena_init(&arena, 0);
+    const sk_json *manifest = NULL;
+    sk_skinpack *current = g->skins ? sk_skins_current(g->skins) : NULL;
+    if (current) {
+        sk_skin_terminal t;
+        sk_skinpack_terminal(current, &t);
+        char text[64];
+        snprintf(text, sizeof text, "{\"terminal\":{\"fontSize\":%g}}", t.font_px);
+        manifest = sk_json_parse(&arena, text, strlen(text), NULL);
+    }
+    sk_appsettings_menu(&g->settings, manifest, rows);
+    sk_arena_free(&arena);
     for (size_t i = 0; i < SK_SETTINGS_COUNT; i++) {
         size_t at = v->len;
         row_add(v, SK_ROW_FLYOUT, rows[i].setting->label);
@@ -1845,7 +1866,17 @@ static sk_rect term_area(gwin *w)
     return sk_rect_make(s.x + in, s.y + in, SK_MAX(0, s.w - 2 * in), SK_MAX(0, s.h - 2 * in));
 }
 
+/* The strips and the terminal drawn whole, the skin as it changed:
+ * what a key, a blink, a selection or a tab's change asks. */
 static void redraw(gwin *w)
+{
+    w->term_all = true;
+    sk_window_request_frame(w->win);
+}
+
+/* Everything drawn whole, the skin too: a resize, a new skin, the
+ * stage moved by the tab strip or a split. */
+static void redraw_all(gwin *w)
 {
     w->all = true;
     sk_window_request_frame(w->win);
@@ -2102,7 +2133,7 @@ static void ui_take_skin(gui *g, sk_skinpack *p, const skin_msg *m)
         skin_view_make(w);
         skin_sounds(w);
         fit(w);
-        redraw(w);
+        redraw_all(w);
     }
     /* The glyphs are keyed by face: the cache goes before the faces. */
     sk_glyph_cache_free(old_cache);
@@ -2130,7 +2161,7 @@ static void ui_panels(void *ud)
             sk_skinview_set_panels(w->skin, (const char *const *)g->panel_ids.ptr, g->panel_sizes.ptr,
                                    g->panel_ids.len);
             fit(w);
-            redraw(w);
+            redraw_all(w);
         }
     }
     drop_skin(m);
@@ -2295,7 +2326,8 @@ static void ui_snapshot(void *ud)
             w->ime_x = w->ime_y = -1;
             focus_term(w);
         }
-        if (strip != tabs_shown(w) || fresh)
+        bool moved = strip != tabs_shown(w) || fresh;
+        if (moved)
             fit(w);
         /* The active tab's list choice and the problems' dot. */
         if (w->skin) {
@@ -2311,7 +2343,11 @@ static void ui_snapshot(void *ud)
         }
         if (fresh)
             sk_window_focus(w->win);
-        redraw(w);
+        /* The tab strip shown or gone moves the stage: everything. */
+        if (moved)
+            redraw_all(w);
+        else
+            redraw(w);
     }
     drop_dviews(g);
     /* A band for each tab with a session, every window's; the window
@@ -2723,10 +2759,13 @@ static void rename_finish(gwin *w, bool commit)
     sk_rename_end(w->rename);
     w->ime_x = w->ime_y = -1;
     focus_term(w);
-    /* The strip the edit held may go now. */
-    if (strip != tabs_shown(w))
+    /* The strip the edit held may go now, moving the stage. */
+    if (strip != tabs_shown(w)) {
         fit(w);
-    redraw(w);
+        redraw_all(w);
+    } else {
+        redraw(w);
+    }
 }
 
 /* The clipboard answers later, maybe after its window has gone: the
@@ -2795,10 +2834,15 @@ static bool rename_mouse(gwin *w, const sk_event *ev)
                 sk_term *term = active_term(w);
                 if (term)
                     sk_term_set_focus(term, false);
+                /* The field in the tab's place, and its caret for the
+                 * input method, come with the strip's drawing. */
+                redraw_strips(w);
             }
-            /* The strip the drop-down held may go now. */
-            if (strip != tabs_shown(w))
+            /* The strip the drop-down held may go now, moving the stage. */
+            if (strip != tabs_shown(w)) {
                 fit(w);
+                redraw_all(w);
+            }
             if (on)
                 return true;
         }
@@ -2895,12 +2939,12 @@ static bool skin_mouse(gwin *w, const sk_event *ev)
     }
     case SK_SKIN_SPLIT_MOVE:
         fit(w);
-        redraw(w);
+        redraw_all(w);
         break;
     case SK_SKIN_SPLIT_DONE:
         post_skin_act(w, do_panel, 0, false, e.size, e.split);
         fit(w);
-        redraw(w);
+        redraw_all(w);
         break;
     default:
         break;
@@ -3341,12 +3385,17 @@ static void draw(gwin *w)
     }
     sk_image *dst = overlay ? &w->base : f;
     double due = w->skin ? sk_skinview_step(w->skin, (double)sk_now_ms()) : -1;
-    if (w->all) {
+    /* whole: everything, the skin too; scene: the strips and the terminal
+     * whole, the skin left to its own damage. */
+    bool whole = w->all, scene = w->all || w->term_all;
+    if (scene) {
         draw_chrome(w, dst);
         /* Without a skin the stage is the page's black around the
          * terminal. */
         if (!w->skin)
             sk_fill_rect(dst, stage_area(w), SK_RGB(0, 0, 0), SK_BLEND_SRC, NULL);
+        if (!whole)
+            dirty[nd++] = sk_rect_make(0, 0, f->w, px(w, top_points(w)));
     } else if (w->strips) {
         draw_chrome(w, dst);
         dirty[nd++] = sk_rect_make(0, 0, f->w, px(w, top_points(w)));
@@ -3354,13 +3403,16 @@ static void draw(gwin *w)
     w->strips = false;
     /* The skin, never inside the terminal's rect, the terminal over it. */
     if (w->skin)
-        nd += sk_skinview_draw(w->skin, dst, w->all, dirty + nd, DIRTY_MAX - 4 - nd);
+        nd += sk_skinview_draw(w->skin, dst, whole, dirty + nd, DIRTY_MAX - 5 - nd);
     sk_term *t = active_term(w);
     snap_tab *at = active_tab(w);
     if (t && at->kind == SK_TAB_DASHBOARD) {
-        /* Drawn whole each time: every view and hover asks for all. */
-        if (w->all)
+        /* Drawn whole each time: every view and hover asks for it. */
+        if (scene) {
             draw_dash(w, dst, t);
+            if (!whole)
+                dirty[nd++] = term_area(w);
+        }
         t = NULL;
     }
     if (t) {
@@ -3383,7 +3435,7 @@ static void draw(gwin *w)
             w->sync_since = 0;
         }
         if (!hold) {
-            if (w->all) {
+            if (scene) {
                 sk_term_palette p;
                 sk_term_palette_of(t, &p);
                 sk_fill_rect(&area, sk_image_bounds(&area), (sk_color)(0xff000000u | p.bg), SK_BLEND_SRC, NULL);
@@ -3399,7 +3451,7 @@ static void draw(gwin *w)
                 .link_row1 = w->link_r1,
                 .link_col1 = w->link_c1,
             };
-            sk_rect r = sk_termview_draw(w->view, t, &area, &st, w->all);
+            sk_rect r = sk_termview_draw(w->view, t, &area, &st, scene);
             if (!sk_rect_empty(r))
                 dirty[nd++] = sk_rect_make(r.x + a.x, r.y + a.y, r.w, r.h);
         }
@@ -3445,7 +3497,7 @@ static void draw(gwin *w)
         /* The base into the frame where it changed and under the
          * overlays as they were and are, then the overlays over it. */
         sk_rect now = overlay_bounds(w, f), under = sk_rect_union(now, w->overlay);
-        if (w->all) {
+        if (whole) {
             copy_rect(f, &w->base, sk_image_bounds(f));
         } else {
             for (size_t i = 0; i < nd; i++)
@@ -3481,17 +3533,26 @@ static void draw(gwin *w)
             sk_window_set_ime_rect(w->win, ix, iy, iw, ih);
         }
     }
-    if (w->all)
+    if (whole)
         sk_window_present(w->win, NULL, 0);
     else if (nd)
         sk_window_present(w->win, dirty, nd);
-    w->all = false;
+    w->all = w->term_all = false;
     /* The skin's next step: at the next refresh while something moves,
      * else at its next timed change; a set or the pointer asks too. */
     if (due == 0) {
         skin_frame(w);
-    } else if (due > 0 && !w->skin_timer) {
-        w->skin_timer = sk_ui_timer((uint64_t)ceil(due), 0, on_skin_timer, w);
+    } else if (due > 0) {
+        /* A sooner change than the timer waits for takes its place. */
+        uint64_t when = sk_now_ms() + (uint64_t)ceil(due);
+        if (w->skin_timer && when < w->skin_due) {
+            sk_ui_cancel(w->skin_timer);
+            w->skin_timer = 0;
+        }
+        if (!w->skin_timer) {
+            w->skin_timer = sk_ui_timer((uint64_t)ceil(due), 0, on_skin_timer, w);
+            w->skin_due = when;
+        }
     }
 }
 
@@ -3918,7 +3979,7 @@ static void on_mouse(gwin *w, const sk_event *ev)
         return;
     /* The skin next, but not while the terminal's selection or a tab's
      * drag holds the pointer. */
-    if (!w->selecting && !w->drag_tab && skin_mouse(w, ev)) {
+    if (!w->selecting && !w->drag_tab && !w->term_press && skin_mouse(w, ev)) {
         pointer_shape(w, ev->mouse.y);
         return;
     }
@@ -3959,6 +4020,8 @@ static void on_mouse(gwin *w, const sk_event *ev)
 #endif
     switch (ev->type) {
     case SK_EV_MOUSE_DOWN:
+        /* The terminal holds the pointer until the release. */
+        w->term_press = true;
         if (sk_term_mouse_down(&w->mouse, &m, &grid, gx, gy, ev->mouse.button, ev->mouse.mods, &out))
             break;
 #ifndef __APPLE__
@@ -4028,6 +4091,7 @@ static void on_mouse(gwin *w, const sk_event *ev)
         break;
     }
     case SK_EV_MOUSE_UP:
+        w->term_press = false;
         sk_term_mouse_up(&w->mouse, &m, &grid, gx, gy, ev->mouse.button, ev->mouse.mods, &out);
         if (w->selecting && ev->mouse.button == 1) {
             w->selecting = false;
@@ -4096,8 +4160,15 @@ static void on_event(void *ud, const sk_event *ev)
     if (g->vizwin && sk_vizwin_event(g->vizwin, ev))
         return;
     gwin *w = ev->win ? sk_window_ud(ev->win) : NULL;
-    if (!w || chooser_event(w, ev))
+    if (!w)
         return;
+    /* A release ends the terminal's hold on the pointer, whoever took
+     * it. */
+    if (chooser_event(w, ev)) {
+        if (ev->type == SK_EV_MOUSE_UP)
+            w->term_press = false;
+        return;
+    }
     switch (ev->type) {
     case SK_EV_CLOSE:
         /* As closing a window does (decision 0016): its tabs hang up,
@@ -4111,7 +4182,7 @@ static void on_event(void *ud, const sk_event *ev)
             sk_termview_set_style(w->view, &w->style);
         }
         fit(w);
-        redraw(w);
+        redraw_all(w);
         break;
     }
     case SK_EV_FRAME:
@@ -4134,6 +4205,8 @@ static void on_event(void *ud, const sk_event *ev)
     case SK_EV_MOUSE_UP:
     case SK_EV_MOUSE_MOVE:
         on_mouse(w, ev);
+        if (ev->type == SK_EV_MOUSE_UP)
+            w->term_press = false;
         break;
     case SK_EV_MOUSE_LEAVE: {
         if (w->skin) {
@@ -4965,11 +5038,6 @@ int sk_gui_run(const sk_options *o, const sk_envp *env, const char *self)
     sk_vec_free(&g->ctabs);
     sk_vec_free(&g->cwins);
     free(g->strip_key);
-    for (size_t i = 0; i < g->problems.len; i++) {
-        free(g->problems.ptr[i].title);
-        free(g->problems.ptr[i].detail);
-    }
-    sk_vec_free(&g->problems);
     sk_control_close(ctl);
     sk_loop_free(g->loop);
 
@@ -4997,6 +5065,11 @@ out:
     sk_strv_free(&g->ui_dials);
     sk_strv_free(&g->dials);
     sk_skins_free(g->skins);
+    for (size_t i = 0; i < g->problems.len; i++) {
+        free(g->problems.ptr[i].title);
+        free(g->problems.ptr[i].detail);
+    }
+    sk_vec_free(&g->problems);
     sk_glyph_cache_free(g->cache);
     sk_fontset_free(g->mono);
     sk_fontset_free(g->sans);

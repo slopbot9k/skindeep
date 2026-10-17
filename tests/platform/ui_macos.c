@@ -283,9 +283,14 @@ static void test_a_resize_gives_a_new_frame(void)
     /* The minimum size the user can drag the window to. */
     CGSize min = SK_MSG(CGSize (*)(id, SEL))(sk_macos_nswindow(w), sk_sel("contentMinSize"));
     CHECK(min.width == 50 && min.height == 40);
-    /* A larger minimum later grows the window to it, a resize as any. */
+    /* A larger minimum later grows the window to it, a resize as any,
+     * its top edge where it was. */
     n_events = 0;
+    CGRect before = sk_msg_rect(sk_macos_nswindow(w), "frame");
     sk_window_set_min_size(w, 160, 120);
+    CGRect after = sk_msg_rect(sk_macos_nswindow(w), "frame");
+    CHECK(after.origin.y + after.size.height == before.origin.y + before.size.height);
+    CHECK(after.origin.x == before.origin.x);
     min = SK_MSG(CGSize (*)(id, SEL))(sk_macos_nswindow(w), sk_sel("contentMinSize"));
     CHECK(min.width == 160 && min.height == 120);
     sk_window_size(w, &pw, &ph);
