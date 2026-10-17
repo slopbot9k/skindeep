@@ -594,7 +594,18 @@ static void restyle(sk_skinview *v)
         const sk_css_style *base = sk_pack_style_of(p, e, vals);
         if (base == x->base)
             continue;
-        const sk_css_style *old = x->mo ? sk_motion_style(v, n, &(bool){false}, &(double){-1}) : x->base;
+        /* display none stops its animations and transitions, and an
+         * element displayed again starts with none of them, as CSS's. */
+        bool was_shown = x->base && x->base->display != SK_DISPLAY_NONE;
+        if (base->display == SK_DISPLAY_NONE) {
+            sk_motion_free(x->mo);
+            x->mo = NULL;
+            x->base = base;
+            continue;
+        }
+        const sk_css_style *old = !was_shown ? NULL
+                                  : x->mo    ? sk_motion_style(v, n, &(bool){false}, &(double){-1})
+                                             : x->base;
         sk_motion_restyle(v, n, old, base);
         x->base = base;
     }

@@ -805,6 +805,35 @@ static void test_animation(void)
     sk_skinview_free(v);
 }
 
+/* display none stops an animation; shown again it starts over. */
+static void test_animation_hidden(void)
+{
+    sk_skinview *v = view_of(pack_of(
+        NULL,
+        "[{\"id\": \"busy\", \"type\": \"led\", \"bind\": \"state.busy\", \"on\": 1, "
+        "\"rect\": {\"left\": 100, \"top\": 0, \"width\": 60, \"height\": 20}}]",
+        "@keyframes spin { to { transform: rotate(360deg) } }\n"
+        ".lamp { animation: spin 1s linear infinite }\n.lamp.on { display: none }\n"));
+    if (!v)
+        return;
+    uint32_t lamp = part(v, "busy", SK_ROLE_LAMP, 0);
+    metrics t = {0};
+    num(&t, "state.busy", 0);
+    give(v, &t, 0);
+    sk_skinview_step(v, 250);
+    CHECK_NEAR(style_of(v, lamp)->transform[0].v[0], 90, 1e-3);
+    t.m[0].value.num = 1;
+    give(v, &t, 100);
+    CHECK(!v->layout.boxes[lamp].generated);
+    CHECK(v->nodes[lamp].mo == NULL);
+    t.m[0].value.num = 0;
+    sk_skinview_set_metrics(v, t.m, t.n);
+    sk_skinview_step(v, 600);
+    sk_skinview_step(v, 850);
+    CHECK_NEAR(style_of(v, lamp)->transform[0].v[0], 90, 1e-3);
+    sk_skinview_free(v);
+}
+
 /* ---- The pointer ---- */
 
 static void test_hover_and_clicks(void)
@@ -1386,6 +1415,7 @@ const sk_test sk_suite_skin_view[] = {
     T(test_timing),
     T(test_transition),
     T(test_animation),
+    T(test_animation_hidden),
     T(test_hover_and_clicks),
     T(test_hover_follows_layout),
     T(test_splits),
