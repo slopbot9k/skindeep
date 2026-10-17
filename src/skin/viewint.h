@@ -179,6 +179,7 @@ struct sk_skinview {
     sk_pimages images;
     sk_vimage *decoded;
     sk_glyph_cache *glyphs;
+    sk_paint_cache *pcache;
     uint32_t *order;  /* the boxes in the order they paint, for hit tests */
     uint32_t norder;
     /* What changed. */

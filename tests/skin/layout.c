@@ -487,7 +487,7 @@ static void test_deep_tree(void)
     sk_image im;
     sk_image_init(&im, 300, 100);
     sk_glyph_cache *gc = sk_glyph_cache_new(1u << 20);
-    sk_paint_env env = {&l, NULL, NULL, gc};
+    sk_paint_env env = {&l, NULL, NULL, gc, NULL};
     sk_paint(&im, &env, 0, 1, 0, 0);
     CHECK(sk_image_row(&im, 50)[150] != 0);
     sk_glyph_cache_free(gc);

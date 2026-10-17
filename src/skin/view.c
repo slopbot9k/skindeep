@@ -290,6 +290,7 @@ sk_skinview *sk_skinview_new(sk_skinpack *sp, double now)
     v->images.data = v;
     v->decoded = sk_xcalloc(v->p->nimages ? v->p->nimages : 1, sizeof *v->decoded);
     v->glyphs = sk_glyph_cache_new(16u << 20);
+    v->pcache = sk_paint_cache_new(32u << 20);
     v->hover = v->pressed = NONE;
     v->handle_hover = v->drag_split = -1;
     v->next_due = -1;
@@ -340,6 +341,7 @@ void sk_skinview_free(sk_skinview *v)
         sk_image_free(&v->decoded[i].im);
     free(v->decoded);
     sk_glyph_cache_free(v->glyphs);
+    sk_paint_cache_free(v->pcache);
     free(v->order);
     sk_vec_free(&v->damage);
     sk_vec_free(&v->hovered);
@@ -1119,7 +1121,7 @@ static void paint_piece(sk_skinview *v, sk_image *frame, sk_rect st, sk_rect r)
     sk_image view = sk_image_view(frame, r);
     sk_fill_rect(&view, sk_image_bounds(&view), SK_RGB(0, 0, 0), SK_BLEND_SRC, NULL);
     if (v->laid && v->stage != NONE) {
-        sk_paint_env env = {&v->layout, &v->lfonts, &v->images, v->glyphs};
+        sk_paint_env env = {&v->layout, &v->lfonts, &v->images, v->glyphs, v->pcache};
         sk_paint_px(&view, &env, v->stage, (float)(v->k * v->scale), r.x - st.x, r.y - st.y);
     }
     for (uint32_t i = 0; i < SK_MIN(v->p->nsplits, SK_VIEW_MAX_SPLITS); i++)

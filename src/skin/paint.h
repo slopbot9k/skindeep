@@ -3,7 +3,7 @@
  * paints its layers with it and the runtime what changes, so the two
  * draw alike.
  *
- *   sk_paint_env env = {&layout, &fonts, &images, cache};
+ *   sk_paint_env env = {&layout, &fonts, &images, glyphs, NULL};
  *   sk_paint(&im, &env, root, 2, 0, 0);
  *
  * What it paints: background colours, images and linear and radial
@@ -38,11 +38,21 @@ typedef struct {
     void *data;
 } sk_pimages;
 
+/* Blurred shadows kept from one paint to the next of one caller, so a
+ * part of a frame painted again blurs nothing it blurred before: a box
+ * shadow's blurred corner patch, by its shape, offset and blur. At most
+ * max_bytes, the least recently used going first. One thread's. */
+typedef struct sk_paint_cache sk_paint_cache;
+
+sk_paint_cache *sk_paint_cache_new(size_t max_bytes);
+void sk_paint_cache_free(sk_paint_cache *c);
+
 typedef struct {
     const sk_layout *layout;
     const sk_lfonts *fonts;
     const sk_pimages *images; /* may be NULL */
     sk_glyph_cache *glyphs;   /* the caller's, the thread's own */
+    sk_paint_cache *cache;    /* may be NULL: blur every time */
 } sk_paint_env;
 
 /* Paints box root and its subtree into dst, at scale device pixels to

@@ -528,11 +528,109 @@ static int patch_at(int i, int cut, int k, int n)
     return j < 0 ? 0 : j >= n ? n - 1 : j;
 }
 
+/* ---- Blurred patches kept ---- */
+
+/* A blurred patch: what made it, its size and its coverage. */
+typedef struct {
+    float w, h, rx[4], ry[4], fx, fy, sigma;
+    int reach;
+    bool invert;
+    int pw, ph;
+    uint8_t *m;
+    uint64_t used;
+} patch;
+
+struct sk_paint_cache {
+    SK_VEC(patch) p;
+    size_t bytes, max;
+    uint64_t clock;
+};
+
+sk_paint_cache *sk_paint_cache_new(size_t max_bytes)
+{
+    sk_paint_cache *c = sk_xcalloc(1, sizeof *c);
+    c->max = max_bytes;
+    return c;
+}
+
+void sk_paint_cache_free(sk_paint_cache *c)
+{
+    if (!c)
+        return;
+    for (size_t i = 0; i < c->p.len; i++)
+        free(c->p.ptr[i].m);
+    sk_vec_free(&c->p);
+    free(c);
+}
+
+/* A patch's key: its rectangle's size and radii, where it lies within
+ * its pixel, the blur. */
+static patch patch_key(const pt_rrect *rr, float sigma, int reach, bool invert, int pw, int ph)
+{
+    patch k;
+    memset(&k, 0, sizeof k);
+    k.w = rr->w;
+    k.h = rr->h;
+    memcpy(k.rx, rr->rx, sizeof k.rx);
+    memcpy(k.ry, rr->ry, sizeof k.ry);
+    k.fx = rr->x - floorf(rr->x);
+    k.fy = rr->y - floorf(rr->y);
+    k.sigma = sigma;
+    k.reach = reach;
+    k.invert = invert;
+    k.pw = pw;
+    k.ph = ph;
+    return k;
+}
+
+static bool patch_same(const patch *a, const patch *b)
+{
+    return a->w == b->w && a->h == b->h && !memcmp(a->rx, b->rx, sizeof a->rx) &&
+           !memcmp(a->ry, b->ry, sizeof a->ry) && a->fx == b->fx && a->fy == b->fy && a->sigma == b->sigma &&
+           a->reach == b->reach && a->invert == b->invert && a->pw == b->pw && a->ph == b->ph;
+}
+
+static const uint8_t *patch_find(sk_paint_cache *c, const patch *k)
+{
+    for (size_t i = 0; c && i < c->p.len; i++)
+        if (patch_same(&c->p.ptr[i], k)) {
+            c->p.ptr[i].used = ++c->clock;
+            return c->p.ptr[i].m;
+        }
+    return NULL;
+}
+
+/* Keeps m (malloc'd, the cache's from now on) under k; false when it is
+ * larger than the cache, the caller's still. */
+static bool patch_keep(sk_paint_cache *c, const patch *k, uint8_t *m)
+{
+    size_t n = (size_t)k->pw * (size_t)k->ph;
+    if (!c || n > c->max)
+        return false;
+    while (c->p.len && c->bytes + n > c->max) {
+        size_t old = 0;
+        for (size_t i = 1; i < c->p.len; i++)
+            if (c->p.ptr[i].used < c->p.ptr[old].used)
+                old = i;
+        c->bytes -= (size_t)c->p.ptr[old].pw * (size_t)c->p.ptr[old].ph;
+        free(c->p.ptr[old].m);
+        c->p.ptr[old] = c->p.ptr[--c->p.len];
+    }
+    patch e = *k;
+    e.m = m;
+    e.used = ++c->clock;
+    sk_vec_push(&c->p, e);
+    c->bytes += n;
+    return true;
+}
+
 /* The coverage of rr over r, inverted first when invert, blurred by
  * sigma. A long rounded rectangle blurs as a nine-patch, as Skia blurs
  * one: along a straight edge the blur is the same at every point, so a
- * patch with a middle a pixel wide is blurred and stretched. */
-static uint8_t *blurred_rrect(const pt_rrect *rr, float sigma, int reach, sk_rect r, bool invert)
+ * patch with a middle a pixel wide is blurred and stretched; the patch
+ * is kept in cache, when there is one, for the next paint. */
+static uint8_t *blurred_rrect(sk_paint_cache *cache, const pt_rrect *rr, float sigma, int reach, sk_rect r,
+                              bool invert)
 {
     int padl = (int)ceilf(fmaxf(rr->rx[SK_TOP_LEFT], rr->rx[SK_BOTTOM_LEFT])) + reach + 2;
     int padr = (int)ceilf(fmaxf(rr->rx[SK_TOP_RIGHT], rr->rx[SK_BOTTOM_RIGHT])) + reach + 2;
@@ -553,11 +651,21 @@ static uint8_t *blurred_rrect(const pt_rrect *rr, float sigma, int reach, sk_rec
     small.w -= (float)kx;
     small.h -= (float)ky;
     sk_rect sr = grow(pt_round_out((sk_frect){small.x, small.y, small.w, small.h}), reach + 2);
-    uint8_t *sm = pt_cover_rrect(&small, sr);
-    if (invert)
-        for (size_t q = 0; q < (size_t)sr.w * (size_t)sr.h; q++)
-            sm[q] = (uint8_t)(255 - sm[q]);
-    sk_blur_a8(sm, sr.w, sr.h, sr.w, sigma);
+    patch key = patch_key(&small, sigma, reach, invert, sr.w, sr.h);
+    const uint8_t *kept = patch_find(cache, &key);
+    uint8_t *made = NULL;
+    if (!kept) {
+        made = pt_cover_rrect(&small, sr);
+        if (invert)
+            for (size_t q = 0; q < (size_t)sr.w * (size_t)sr.h; q++)
+                made[q] = (uint8_t)(255 - made[q]);
+        sk_blur_a8(made, sr.w, sr.h, sr.w, sigma);
+        if (patch_keep(cache, &key, made)) {
+            kept = made;
+            made = NULL;
+        }
+    }
+    const uint8_t *sm = kept ? kept : made;
     /* The middle runs from the patch's pad on, in pixels of r. */
     int cutx = (int)floorf(small.x) + padl, cuty = (int)floorf(small.y) + padt;
     uint8_t *m = sk_xmalloc((size_t)r.w * (size_t)r.h);
@@ -571,7 +679,7 @@ static uint8_t *blurred_rrect(const pt_rrect *rr, float sigma, int reach, sk_rec
             o[x] = src[col[x]];
     }
     free(col);
-    free(sm);
+    free(made);
     return m;
 }
 
@@ -606,7 +714,7 @@ void pt_shadows(painter *P, canvas *cv, uint32_t i, bool inset)
             e = sk_rect_intersect(e, grow(cv->clip, reach + 1));
             if (sk_rect_empty(sk_rect_intersect(e, cv->clip)))
                 continue;
-            uint8_t *cov = blurred_rrect(&S, sigma, reach, e, false);
+            uint8_t *cov = blurred_rrect(P->env->cache, &S, sigma, reach, e, false);
             uint8_t *hole = pt_cover_rrect(&outer, e);
             for (size_t q = 0; q < (size_t)e.w * (size_t)e.h; q++)
                 cov[q] = (uint8_t)pt_mul(cov[q], 255u - hole[q]);
@@ -626,7 +734,7 @@ void pt_shadows(painter *P, canvas *cv, uint32_t i, bool inset)
             sk_rect e = grow(a, reach + 1);
             uint8_t *cov;
             if (I.w > 0 && I.h > 0) {
-                cov = blurred_rrect(&I, sigma, reach, e, true);
+                cov = blurred_rrect(P->env->cache, &I, sigma, reach, e, true);
             } else {
                 cov = sk_xmalloc((size_t)e.w * (size_t)e.h);
                 memset(cov, 255, (size_t)e.w * (size_t)e.h);
