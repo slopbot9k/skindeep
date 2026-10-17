@@ -1468,6 +1468,20 @@ void sk_window_set_title(sk_window *w, const char *title)
     objc_autoreleasePoolPop(pool);
 }
 
+void sk_window_set_min_size(sk_window *w, int min_w, int min_h)
+{
+    void *pool = objc_autoreleasePoolPush();
+    CGSize least = CGSizeMake(SK_MAX(min_w, 1), SK_MAX(min_h, 1));
+    SK_MSG(void (*)(id, SEL, CGSize))(w->win, sk_sel("setContentMinSize:"), least);
+    /* Grown to it when smaller, as main.js's growTo grows it. */
+    int pw, ph;
+    sk_window_size(w, &pw, &ph);
+    if (pw < least.width || ph < least.height)
+        SK_MSG(void (*)(id, SEL, CGSize))(w->win, sk_sel("setContentSize:"),
+                                          CGSizeMake(SK_MAX(pw, least.width), SK_MAX(ph, least.height)));
+    objc_autoreleasePoolPop(pool);
+}
+
 void sk_window_focus(sk_window *w)
 {
     if (w->hidden)

@@ -211,6 +211,9 @@ sk_window *sk_window_new(const sk_window_opts *o, char **err);
 void sk_window_free(sk_window *w);
 void *sk_window_ud(const sk_window *w);
 void sk_window_set_title(sk_window *w, const char *title);
+/* The least size the user may make w, in points, and w grown to it when
+ * it is smaller. */
+void sk_window_set_min_size(sk_window *w, int min_w, int min_h);
 void sk_window_size(const sk_window *w, int *pw, int *ph);
 double sk_window_scale(const sk_window *w);
 void sk_window_set_cursor(sk_window *w, sk_cursor c);

@@ -707,6 +707,23 @@ uint32_t sk_xui_window_id(const sk_window *w)
     return w->id;
 }
 
+/* WM_NORMAL_HINTS's least size, and the window grown to it when it is
+ * smaller (main.js's setMinimumSize and growTo). */
+void sk_xui_window_set_min_size(sk_window *w, int min_w, int min_h)
+{
+    if (!ui.c)
+        return;
+    uint32_t size[18] = {0};
+    size[0] = 1 << 4; /* PMinSize */
+    size[5] = (uint32_t)px(SK_MAX(min_w, 1));
+    size[6] = (uint32_t)px(SK_MAX(min_h, 1));
+    put_card32(w->id, SK_X11_WM_NORMAL_HINTS, SK_X11_WM_SIZE_HINTS, size, SK_LEN(size));
+    if (w->pw < (int)size[5] || w->ph < (int)size[6]) {
+        uint32_t wh[2] = {(uint32_t)SK_MAX(w->pw, (int)size[5]), (uint32_t)SK_MAX(w->ph, (int)size[6])};
+        sk_x11_configure_window(ui.c, w->id, 1 << 2 | 1 << 3 /* width, height */, wh);
+    }
+}
+
 void sk_xui_window_set_title(sk_window *w, const char *title)
 {
     set_title(w, title ? title : "");

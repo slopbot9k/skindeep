@@ -80,6 +80,11 @@ void sk_window_set_title(sk_window *w, const char *title)
     sk_xui_window_set_title(w, title);
 }
 
+void sk_window_set_min_size(sk_window *w, int min_w, int min_h)
+{
+    sk_xui_window_set_min_size(w, min_w, min_h);
+}
+
 void sk_window_size(const sk_window *w, int *pw, int *ph)
 {
     sk_xui_window_size(w, pw, ph);
