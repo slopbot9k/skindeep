@@ -1062,6 +1062,28 @@ static void test_focus_follows_the_key_window(void)
     close_ui();
 }
 
+/* A window placed where it is asked (a tab dragged out, decision 0023):
+ * its content's top-left there, from the first screen's top-left, and
+ * read back so. */
+static void test_a_placed_window(void)
+{
+    if (!open_ui())
+        return;
+    char *err = NULL;
+    sk_window_opts o = {.title = "at", .w = 120, .h = 90, .hidden = true, .at = true, .x = 140, .y = 160};
+    sk_window *w = sk_window_new(&o, &err);
+    CHECK(w != NULL);
+    int x = 0, y = 0;
+    if (w) {
+        CHECK(sk_window_origin(w, &x, &y));
+        CHECK_INT(x, 140);
+        CHECK_INT(y, 160);
+    } else {
+        free(err);
+    }
+    close_ui();
+}
+
 /* The visualization's window (decision 0015): it opens without taking
  * the keyboard and a focus asked of it only raises it, but a click may
  * give it the keys as any window's, and that first click is a click. */
@@ -1548,6 +1570,7 @@ const sk_test sk_suite_ui_macos[] = {
     T(test_close_asks_and_the_app_decides),
     T(test_focus_follows_the_key_window),
     T(test_an_inactive_window),
+    T(test_a_placed_window),
     T(test_frames_come_once_per_request_at_the_refresh),
     T(test_posted_tasks_run_in_order_on_the_main_thread),
     T(test_timers_fire_repeat_and_cancel),

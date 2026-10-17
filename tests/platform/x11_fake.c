@@ -35,6 +35,7 @@ typedef struct {
 
 typedef struct {
     uint32_t id;
+    int x, y; /* a window's, as made */
     int w, h;
     bool pixmap, mapped;
     uint32_t mask;
@@ -283,7 +284,7 @@ static drawable *find_draw(sk_xfake *f, uint32_t id)
 
 static drawable *add_draw(sk_xfake *f, uint32_t id, int w, int h, bool pixmap)
 {
-    drawable d = {id, w, h, pixmap, false, 0, NULL};
+    drawable d = {id, 0, 0, w, h, pixmap, false, 0, NULL};
     if (w > 0 && h > 0)
         d.px = sk_xcalloc((size_t)w * (size_t)h, sizeof *d.px);
     sk_vec_push(&f->draws, d);
@@ -718,6 +719,8 @@ static void handle(sk_xfake *f, const uint8_t *r, size_t n, sk_buf *out)
         drawable *d = add_draw(f, sk_x11_get32(r + 4), sk_x11_get16(r + 16), sk_x11_get16(r + 18),
                                false);
         d->mask = mask;
+        d->x = (int16_t)sk_x11_get16(r + 12);
+        d->y = (int16_t)sk_x11_get16(r + 14);
         break;
     }
     case 2: { /* ChangeWindowAttributes */
@@ -774,6 +777,14 @@ static void handle(sk_xfake *f, const uint8_t *r, size_t n, sk_buf *out)
     case 25:
         send_event(f, out, r);
         break;
+    case 40: { /* TranslateCoordinates, to the root: where a window was made */
+        const drawable *d = find_draw(f, sk_x11_get32(r + 4));
+        h[1] = 1;
+        sk_x11_set16(h + 12, (uint16_t)((d ? d->x : 0) + (int16_t)sk_x11_get16(r + 12)));
+        sk_x11_set16(h + 14, (uint16_t)((d ? d->y : 0) + (int16_t)sk_x11_get16(r + 14)));
+        reply_out(f, out, h, NULL, 0);
+        break;
+    }
     case 43: /* GetInputFocus */
         h[1] = 1;
         sk_x11_set32(h + 8, SK_XFAKE_ROOT);

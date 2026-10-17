@@ -209,6 +209,12 @@ typedef struct {
      * and sk_window_focus only raises it. A click gives it the keyboard
      * as on any window, and that first click reaches it too. */
     bool inactive;
+    /* Where its content's top-left goes when at: in points, from the
+     * top-left of the screen the system counts from (the main display
+     * on macOS, the root window on X11). Else where the system puts
+     * it. */
+    bool at;
+    int x, y;
 } sk_window_opts;
 
 /* A window, shown unless o->hidden. NULL with *err a malloc'd reason. */
@@ -221,6 +227,9 @@ void sk_window_set_title(sk_window *w, const char *title);
  * it is smaller. */
 void sk_window_set_min_size(sk_window *w, int min_w, int min_h);
 void sk_window_size(const sk_window *w, int *pw, int *ph);
+/* Where w's content's top-left is, as sk_window_opts.x and y count it;
+ * false when the system cannot say. */
+bool sk_window_origin(const sk_window *w, int *x, int *y);
 double sk_window_scale(const sk_window *w);
 void sk_window_set_cursor(sk_window *w, sk_cursor c);
 /* Raise and give it the keyboard; an inactive window is only raised. */

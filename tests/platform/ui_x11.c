@@ -66,7 +66,7 @@ static void close_display(void)
 
 static sk_window *window(int w, int h, bool hidden)
 {
-    sk_window_opts o = {"skinned test", w, h, 0, 0, NULL, hidden, false};
+    sk_window_opts o = {"skinned test", w, h, 0, 0, NULL, hidden, false, false, 0, 0};
     char *err = NULL;
     sk_window *win = sk_window_new(&o, &err);
     if (!win) {

@@ -278,6 +278,9 @@ enum {
 };
 
 /* values: one per set bit of mask, in the order of the bits. */
+/* TranslateCoordinates: (x, y) of src in dst's coordinates; its reply's
+ * bytes 12 and 14 hold them, signed. */
+uint64_t sk_x11_translate_coordinates(sk_x11 *c, uint32_t src, uint32_t dst, int x, int y);
 uint64_t sk_x11_create_window(sk_x11 *c, uint8_t depth, uint32_t wid, uint32_t parent, int x, int y,
                               int w, int h, uint16_t cls, uint32_t visual, uint32_t mask,
                               const uint32_t *values);

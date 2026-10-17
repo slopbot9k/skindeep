@@ -72,7 +72,7 @@ static void finish(sk_xfake *f)
 
 static sk_window *window(int w, int h, bool hidden)
 {
-    sk_window_opts o = {"t", w, h, 0, 0, NULL, hidden, false};
+    sk_window_opts o = {"t", w, h, 0, 0, NULL, hidden, false, false, 0, 0};
     char *err = NULL;
     sk_window *win = sk_xui_window_new(&o, &err);
     if (!win) {
@@ -187,7 +187,7 @@ static void test_open_and_a_window_s_properties(void)
     CHECK_INT(sk_xfake_count(f, 101, -1), 1);
     CHECK_INT(sk_xfake_count(f, 119, -1), 1);
     CHECK_INT(sk_xfake_count(f, 16, -1), 24);
-    sk_window_opts wo = {"h\xc3\xa9llo", 40, 30, 20, 10, &rec, true, false};
+    sk_window_opts wo = {"h\xc3\xa9llo", 40, 30, 20, 10, &rec, true, false, false, 0, 0};
     char *err = NULL;
     sk_window *w = sk_xui_window_new(&wo, &err);
     CHECK(w != NULL);
@@ -605,13 +605,50 @@ static int input_hint(sk_xfake *f, uint32_t id)
 /* The visualization's window (decision 0015): it takes input as any
  * window does, but maps with _NET_WM_USER_TIME 0, so a window manager
  * gives it no keys then, and a focus asked of it only raises it. */
+/* A window placed where it is asked (a tab dragged out, decision 0023):
+ * made there, with USPosition so the window manager keeps it, and its
+ * origin read back from the server; one not placed asks nothing. */
+static void test_a_placed_window(void)
+{
+    sk_xfake *f = start(NULL);
+    if (!f)
+        return;
+    sk_window_opts at = {"at", 40, 30, 0, 0, NULL, true, false, true, 30, -12};
+    char *err = NULL;
+    sk_window *w = sk_xui_window_new(&at, &err), *plain = window(40, 30, true);
+    CHECK(w && plain);
+    if (!w || !plain) {
+        free(err);
+        finish(f);
+        return;
+    }
+    CHECK(sk_xui_sync());
+    size_t len;
+    /* The second CreateWindow: the first is the layer's own helper. */
+    uint8_t *r = sk_xfake_request(f, 1, -1, 1, &len);
+    CHECK(r && sk_x11_get32(r + 4) == sk_xui_window_id(w) && (int16_t)sk_x11_get16(r + 12) == 30 && (int16_t)sk_x11_get16(r + 14) == -12);
+    free(r);
+    uint32_t type;
+    uint8_t *h = sk_xfake_property(f, sk_xui_window_id(w), SK_X11_WM_NORMAL_HINTS, &len, &type);
+    CHECK(h && len == 72 && (sk_x11_get32(h) & 5) == 5 && sk_x11_get32(h + 4) == 30);
+    free(h);
+    h = sk_xfake_property(f, sk_xui_window_id(plain), SK_X11_WM_NORMAL_HINTS, &len, &type);
+    CHECK(h && len == 72 && (sk_x11_get32(h) & 5) == 0);
+    free(h);
+    int x = 0, y = 0;
+    CHECK(sk_xui_window_origin(w, &x, &y));
+    CHECK_INT(x, 30);
+    CHECK_INT(y, -12);
+    finish(f);
+}
+
 static void test_an_inactive_window(void)
 {
     sk_xfake *f = start(NULL);
     if (!f)
         return;
-    sk_window_opts plain = {"plain", 40, 30, 0, 0, NULL, false, false};
-    sk_window_opts viz = {"viz", 40, 30, 0, 0, NULL, false, true};
+    sk_window_opts plain = {"plain", 40, 30, 0, 0, NULL, false, false, false, 0, 0};
+    sk_window_opts viz = {"viz", 40, 30, 0, 0, NULL, false, true, false, 0, 0};
     char *err = NULL;
     sk_window *a = sk_xui_window_new(&plain, &err), *b = sk_xui_window_new(&viz, &err);
     CHECK(a && b);
@@ -1164,6 +1201,7 @@ const sk_test sk_suite_x11_ui[] = {
     T(test_mouse_clicks_and_the_wheel),
     T(test_close_ping_and_focus),
     T(test_an_inactive_window),
+    T(test_a_placed_window),
     T(test_cursors),
     T(test_the_clipboard_answers_another_client),
     T(test_the_clipboard_goes_by_incr_to_another_client),

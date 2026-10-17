@@ -227,6 +227,13 @@ static bool host_lsb(void)
     return b == 1;
 }
 
+/* A position in pixels, which may be 0 or less, as X11's int16. */
+static int pos_px(int points)
+{
+    long v = lround(points * ui.scale);
+    return (int)SK_MIN(SK_MAX(v, -32768), 32767);
+}
+
 static int px(int points)
 {
     long v = lround(points * ui.scale);
@@ -671,6 +678,12 @@ static void set_properties(sk_window *w, const sk_window_opts *o)
         size[5] = o->min_w > 0 ? (uint32_t)px(o->min_w) : 1;
         size[6] = o->min_h > 0 ? (uint32_t)px(o->min_h) : 1;
     }
+    /* Placed: USPosition, so the window manager keeps it there. */
+    if (o->at) {
+        size[0] |= 1 << 0 | 1 << 2; /* USPosition, PPosition */
+        size[1] = (uint32_t)pos_px(o->x);
+        size[2] = (uint32_t)pos_px(o->y);
+    }
     put_card32(w->id, SK_X11_WM_NORMAL_HINTS, SK_X11_WM_SIZE_HINTS, size, SK_LEN(size));
     /* Files may be dropped on it. */
     uint32_t xdnd = SK_X11_XDND_VERSION;
@@ -696,7 +709,8 @@ sk_window *sk_xui_window_new(const sk_window_opts *o, char **err)
     uint32_t values[4] = {0, 1 /* NorthWest */, EVENTS, ui.colormap};
     if (ui.colormap)
         mask |= SK_X11_CW_COLORMAP;
-    uint64_t made = sk_x11_create_window(c, 24, w->id, c->root, 0, 0, w->pw, w->ph,
+    int x = o->at ? pos_px(o->x) : 0, y = o->at ? pos_px(o->y) : 0;
+    uint64_t made = sk_x11_create_window(c, 24, w->id, c->root, x, y, w->pw, w->ph,
                                          1 /* InputOutput */, c->visual, mask, values);
     set_properties(w, o);
     int e = sk_x11_check(c, made);
@@ -776,6 +790,21 @@ void sk_xui_window_size(const sk_window *w, int *pw, int *ph)
 {
     *pw = points(w->pw);
     *ph = points(w->ph);
+}
+
+bool sk_xui_window_origin(const sk_window *w, int *x, int *y)
+{
+    sk_x11_reply r;
+    uint8_t e;
+    if (!ui.c || !sk_x11_reply_wait(ui.c, sk_x11_translate_coordinates(ui.c, w->id, ui.c->root, 0, 0), &r, &e))
+        return false;
+    bool ok = r.len >= 16;
+    if (ok) {
+        *x = points((int16_t)sk_x11_get16(r.data + 12));
+        *y = points((int16_t)sk_x11_get16(r.data + 14));
+    }
+    sk_x11_reply_free(&r);
+    return ok;
 }
 
 double sk_xui_window_scale(const sk_window *w)

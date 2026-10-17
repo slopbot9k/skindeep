@@ -314,6 +314,13 @@ struct gui {
     int unseen;
     /* Each dashboard tab's pane, by tab id. */
     SK_VEC(struct dview) dviews;
+    /* Where the window of a tab dragged out goes, until it opens: main.js's
+     * popTab put it at the drop, at its old window's size. */
+    struct {
+        bool pending;
+        int x, y, w, h;
+        uint64_t until;
+    } pop_at;
 };
 
 struct dview {
@@ -2324,6 +2331,16 @@ static gwin *gwin_new(gui *g, int id)
                          .min_h = sw.min_height,
                          .ud = w,
                          .hidden = g->hidden};
+    if (g->pop_at.pending) {
+        g->pop_at.pending = false;
+        if (sk_now_ms() < g->pop_at.until) {
+            wo.at = true;
+            wo.x = g->pop_at.x;
+            wo.y = g->pop_at.y;
+            wo.w = g->pop_at.w;
+            wo.h = g->pop_at.h;
+        }
+    }
     w->win = sk_window_new(&wo, &err);
     if (!w->win) {
         sk_tell("cannot open a window: %s", err ? err : "unknown");
@@ -4152,8 +4169,21 @@ static bool strip_mouse(gwin *w, const sk_event *ev)
         int ww, wh;
         sk_window_size(w->win, &ww, &wh);
         bool outside = ev->mouse.x < 0 || ev->mouse.y < 0 || ev->mouse.x >= ww || ev->mouse.y >= wh;
-        if (w->dragging && outside)
+        if (w->dragging && outside) {
+            /* The new window opens at the drop, a little up and left of
+             * it, at this one's size, as popTab placed it. */
+            int ox, oy, cw, ch;
+            if (sk_window_origin(w->win, &ox, &oy)) {
+                sk_window_size(w->win, &cw, &ch);
+                g->pop_at.pending = true;
+                g->pop_at.x = SK_MAX(0, ox + (int)lround(ev->mouse.x) - 40);
+                g->pop_at.y = SK_MAX(0, oy + (int)lround(ev->mouse.y) - 10);
+                g->pop_at.w = cw;
+                g->pop_at.h = ch;
+                g->pop_at.until = sk_now_ms() + 2000;
+            }
             post_tab(g, do_pop, w->drag_tab, win);
+        }
         w->drag_tab = 0;
         w->dragging = false;
         return true;
@@ -4565,6 +4595,14 @@ static void window_json(sk_jw *jw, gwin *w)
     sk_jw_int(jw, ph);
     sk_jw_key(jw, SK_STR("scale"));
     sk_jw_number(jw, sk_window_scale(w->win));
+    /* Where it is on the screen, in points; 0, 0 when the system cannot
+     * say. */
+    int sx = 0, sy = 0;
+    sk_window_origin(w->win, &sx, &sy);
+    sk_jw_key(jw, SK_STR("x"));
+    sk_jw_int(jw, sx);
+    sk_jw_key(jw, SK_STR("y"));
+    sk_jw_int(jw, sy);
     sk_jw_key(jw, SK_STR("cols"));
     sk_jw_int(jw, w->ui_cols);
     sk_jw_key(jw, SK_STR("rows"));

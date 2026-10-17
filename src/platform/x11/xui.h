@@ -30,6 +30,7 @@ void *sk_xui_window_ud(const sk_window *w);
 void sk_xui_window_set_title(sk_window *w, const char *title);
 void sk_xui_window_set_min_size(sk_window *w, int min_w, int min_h);
 void sk_xui_window_size(const sk_window *w, int *pw, int *ph);
+bool sk_xui_window_origin(const sk_window *w, int *x, int *y);
 double sk_xui_window_scale(const sk_window *w);
 void sk_xui_window_set_cursor(sk_window *w, sk_cursor c);
 void sk_xui_window_focus(sk_window *w);

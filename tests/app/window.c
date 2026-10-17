@@ -431,6 +431,18 @@ static void test_a_tab_dragged_out_gets_its_own_window(void)
     }
     const sk_json *wins = sk_json_get(p, "windows");
     CHECK_INT(len_of(wins), 2);
+    /* At the drop, up and left of it, at the first window's size, as
+     * popTab placed it. */
+    const sk_json *w0 = sk_json_at(wins, 0), *w1 = sk_json_at(wins, 1);
+    if (num(w0, "id") != 0) {
+        const sk_json *t = w0;
+        w0 = w1;
+        w1 = t;
+    }
+    CHECK_INT((int)num(w1, "x"), SK_MAX(0, (int)num(w0, "x") + 120 - 40));
+    CHECK_INT((int)num(w1, "y"), SK_MAX(0, (int)num(w0, "y") - 60 - 10));
+    CHECK_INT((int)num(w1, "w"), (int)num(w0, "w"));
+    CHECK_INT((int)num(w1, "h"), (int)num(w0, "h"));
     int second = -1;
     for (size_t i = 0; i < len_of(wins); i++) {
         const sk_json *w = sk_json_at(wins, i);

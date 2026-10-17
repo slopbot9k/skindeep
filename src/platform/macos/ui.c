@@ -322,6 +322,38 @@ static void update_size(sk_window *w, bool tell)
     }
 }
 
+/* The height of the screen AppKit counts from, the first: its points
+ * run up from its bottom, sk_window_opts' down from its top. */
+static double screen_top(void)
+{
+    id screens = sk_msg(sk_cls("NSScreen"), "screens");
+    id first = screens && sk_msg_ulong(screens, "count") ? SK_MSG(id (*)(id, SEL, unsigned long))(
+                                                                 screens, sk_sel("objectAtIndex:"), 0)
+                                                           : nil;
+    return first ? sk_msg_rect(first, "frame").size.height : 0;
+}
+
+/* nswin's content's top-left at (x, y), from the top-left of the first
+ * screen. */
+static void place_at(id nswin, int x, int y)
+{
+    CGRect frame = sk_msg_rect(nswin, "frame");
+    CGRect content = SK_MSG_STRET(CGRect (*)(id, SEL, CGRect))(nswin, sk_sel("contentRectForFrameRect:"), frame);
+    content.origin.x = x;
+    content.origin.y = screen_top() - y - content.size.height;
+    frame = SK_MSG_STRET(CGRect (*)(id, SEL, CGRect))(nswin, sk_sel("frameRectForContentRect:"), content);
+    SK_MSG(void (*)(id, SEL, CGRect, BOOL))(nswin, sk_sel("setFrame:display:"), frame, NO);
+}
+
+bool sk_window_origin(const sk_window *w, int *x, int *y)
+{
+    CGRect frame = sk_msg_rect(w->win, "frame");
+    CGRect content = SK_MSG_STRET(CGRect (*)(id, SEL, CGRect))(w->win, sk_sel("contentRectForFrameRect:"), frame);
+    *x = (int)lround(content.origin.x);
+    *y = (int)lround(screen_top() - content.origin.y - content.size.height);
+    return true;
+}
+
 void sk_window_size(const sk_window *w, int *pw, int *ph)
 {
     *pw = w->w;
@@ -1449,8 +1481,12 @@ sk_window *sk_window_new(const sk_window_opts *o, char **err)
 
     w->next = ui.windows;
     ui.windows = w;
+    /* Placed where asked, else centred as Electron centres a window. */
+    if (o->at)
+        place_at(nswin, o->x, o->y);
     if (!w->hidden) {
-        sk_msg_void(nswin, "center");
+        if (!o->at)
+            sk_msg_void(nswin, "center");
         /* An inactive window is shown in front without the app being
          * brought forward or any window losing the keys. */
         if (w->inactive) {
