@@ -29,6 +29,7 @@
 #include "chooser.h"
 #include "menu.h"
 #include "newtab.h"
+#include "opener.h"
 #include "rename.h"
 #include "skins.h"
 #include "skinterm.h"
@@ -1304,13 +1305,16 @@ static void run_opener(gui *g, const char *what)
         sk_log("cannot run %s for %s", argv[0], what);
 }
 
-/* A link the user opened, as Electron's shell.openExternal: http and
- * https alone. */
+/* A link the user opened, as main.js's open-link: http, https and file
+ * URLs, but never one that names a program (opener.h). */
 static void do_open(void *ud)
 {
     uri_msg *m = ud;
-    if (!strncmp(m->uri, "http://", 7) || !strncmp(m->uri, "https://", 8))
+    const char *why = NULL;
+    if (sk_opener_allows(m->uri, &why))
         run_opener(m->g, m->uri);
+    else
+        sk_log("link not opened, %s: %s", why, m->uri);
     free(m);
 }
 
