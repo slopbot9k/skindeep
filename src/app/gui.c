@@ -20,6 +20,7 @@
 #include "control.h"
 #include "dashboard.h"
 #include "dashview.h"
+#include "drop.h"
 #include "foreign.h"
 #include "identity.h"
 #include "js.h"
@@ -3783,6 +3784,20 @@ static void term_paste(gwin *w, const char *utf8)
     sk_buf_free(&out);
 }
 
+/* Files dropped on the window are pasted, quoted, into its active tab,
+ * as the clipboard is (decision 0002); not into the sessions dashboard,
+ * which has no terminal, and not while New tab... is open. */
+static void on_drop(gwin *w, const char *const *paths, size_t n)
+{
+    snap_tab *t = active_tab(w);
+    if (chooser_up(w) || !t || t->kind == SK_TAB_DASHBOARD)
+        return;
+    sk_buf text = {0};
+    sk_drop_text(&text, paths, n);
+    term_paste(w, sk_buf_cstr(&text));
+    sk_buf_free(&text);
+}
+
 /* The app's own chords, which the CLI never sees: decision 0023's on
  * Linux, with Cmd for Ctrl+Shift on macOS. */
 static bool chord(gwin *w, const sk_key_event *k)
@@ -4450,6 +4465,9 @@ static void on_event(void *ud, const sk_event *ev)
             w->preedit = sk_xstrdup(ev->text);
         redraw(w);
         break;
+    case SK_EV_DROP:
+        on_drop(w, ev->drop.paths, ev->drop.n);
+        break;
     default:
         break;
     }
@@ -4829,6 +4847,24 @@ static void ui_control(void *ud)
     } else if (sk_str_eq_c(op, "close")) {
         ev.type = SK_EV_CLOSE;
         on_event(g, &ev);
+    } else if (sk_str_eq_c(op, "drop")) {
+        /* Files dropped on the window, as the platform would give them. */
+        const sk_json *list = sk_json_get(msg, "paths");
+        sk_strv paths = {0};
+        for (size_t i = 0; list && list->type == SK_JSON_ARRAY && i < list->array.len; i++) {
+            sk_str p = {0};
+            if (sk_json_as_string(sk_json_at(list, i), &p))
+                sk_strv_push_n(&paths, p.ptr, p.len);
+        }
+        if (paths.len) {
+            ev.type = SK_EV_DROP;
+            ev.drop.paths = (const char *const *)paths.ptr;
+            ev.drop.n = paths.len;
+            on_event(g, &ev);
+        } else {
+            why = "no paths";
+        }
+        sk_strv_free(&paths);
     } else if (sk_str_eq_c(op, "menu")) {
         /* Until a skin places its button, the check gives the button's
          * rect, and the menu to show, or none to close it. */

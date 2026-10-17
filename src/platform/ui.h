@@ -121,6 +121,7 @@ typedef enum {
     SK_EV_MOUSE_MOVE,
     SK_EV_MOUSE_LEAVE,
     SK_EV_SCROLL,
+    SK_EV_DROP,        /* files dropped on the window, their paths */
 } sk_event_type;
 
 typedef struct {
@@ -146,6 +147,13 @@ typedef struct {
             bool precise;
             uint32_t mods;
         } scroll;
+        /* DROP. Every window takes a drag of files and refuses any other:
+         * AppKit's file URLs on macOS, XDND's text/uri-list on X11, where
+         * only local file:// URIs count. */
+        struct {
+            const char *const *paths; /* absolute, UTF-8, valid during the call */
+            size_t n;                 /* 1 or more */
+        } drop;
     };
 } sk_event;
 

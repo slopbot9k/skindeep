@@ -4,7 +4,8 @@
  * keyboard with AltGr, its modifiers, RESOURCE_MANAGER, BIG-REQUESTS and,
  * when asked, MIT-SHM, windows, pixmaps and their pixels, properties and
  * selections, as a server does. It records every request. Another client
- * can be played: one that owns a selection, or one that asks for it. */
+ * can be played: one that owns a selection, or one that asks for it; as
+ * a drag's source, the test sends XDND's messages itself. */
 #ifndef SK_TEST_X11_FAKE_H
 #define SK_TEST_X11_FAKE_H
 
@@ -61,6 +62,13 @@ uint8_t *sk_xfake_property(sk_xfake *f, uint32_t win, uint32_t atom, size_t *len
  * with text; by INCR in chunks of chunk bytes when chunk is not 0 and
  * the text is longer. A NULL text never answers. */
 void sk_xfake_own(sk_xfake *f, uint32_t selection, const char *text, size_t chunk);
+/* The same for target alone, as a drag's source owns XdndSelection and
+ * answers text/uri-list. */
+void sk_xfake_own_target(sk_xfake *f, uint32_t selection, uint32_t target, const char *text,
+                         size_t chunk);
+/* A property on another client's window, as that client would set it. */
+void sk_xfake_set_property(sk_xfake *f, uint32_t win, uint32_t atom, uint32_t type,
+                           uint8_t format, const void *data, size_t len);
 /* The other client asks the selection's owner for target, into a property
  * on its own window, following INCR. */
 void sk_xfake_ask(sk_xfake *f, uint32_t selection, uint32_t target);

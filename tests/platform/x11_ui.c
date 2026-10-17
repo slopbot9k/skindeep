@@ -1,8 +1,8 @@
 /* The window layer over X11 (platform/x11/xui.c) against the fake server
  * on any system: windows and their properties, frames presented in
  * chunks and read back, resizes, keys, the mouse, closing, the clipboard
- * both ways with INCR, timers, tasks from other threads, and a lost
- * connection. */
+ * both ways with INCR, files dropped by XDND, timers, tasks from other
+ * threads, and a lost connection. */
 #include "../../src/base/log.h"
 #include "../../src/core/loop.h"
 #include "../../src/platform/x11/x11.h"
@@ -21,20 +21,32 @@ static struct {
     size_t n;
     char *clips[8]; /* what each clipboard read gave */
     int clip_calls;
+    char *dropped; /* the last drop's paths, a line each, which last only the call */
 } rec;
 
 static void forget(void)
 {
     for (size_t i = 0; i < SK_LEN(rec.clips); i++)
         free(rec.clips[i]);
+    free(rec.dropped);
     memset(&rec, 0, sizeof rec);
 }
 
 static void on_event(void *ud, const sk_event *e)
 {
     (void)ud;
-    if (rec.n < MAX_EVENTS)
-        rec.ev[rec.n++] = *e;
+    if (rec.n >= MAX_EVENTS)
+        return;
+    rec.ev[rec.n] = *e;
+    if (e->type == SK_EV_DROP) {
+        sk_buf b = {0};
+        for (size_t i = 0; i < e->drop.n; i++)
+            sk_buf_printf(&b, "%s%s", i ? "\n" : "", e->drop.paths[i]);
+        free(rec.dropped);
+        rec.dropped = b.ptr;
+        rec.ev[rec.n].drop.paths = NULL;
+    }
+    rec.n++;
 }
 
 static sk_xfake *start(const sk_xfake_opts *o)
@@ -174,7 +186,7 @@ static void test_open_and_a_window_s_properties(void)
     CHECK_INT(sk_xfake_count(f, 130, -1), 1);
     CHECK_INT(sk_xfake_count(f, 101, -1), 1);
     CHECK_INT(sk_xfake_count(f, 119, -1), 1);
-    CHECK_INT(sk_xfake_count(f, 16, -1), 13);
+    CHECK_INT(sk_xfake_count(f, 16, -1), 24);
     sk_window_opts wo = {"h\xc3\xa9llo", 40, 30, 20, 10, &rec, true, false};
     char *err = NULL;
     sk_window *w = sk_xui_window_new(&wo, &err);
@@ -226,6 +238,11 @@ static void test_open_and_a_window_s_properties(void)
           sk_x11_get32(protocols) == sk_xfake_atom(f, "WM_DELETE_WINDOW") &&
           sk_x11_get32(protocols + 4) == sk_xfake_atom(f, "_NET_WM_PING"));
     free(protocols);
+    /* XDND's version 5: files may be dropped on it. */
+    uint8_t *aware = sk_xfake_property(f, id, sk_xfake_atom(f, "XdndAware"), &len, &type);
+    CHECK(aware && len == 4 && sk_x11_get32(aware) == 5);
+    CHECK_INT(type, SK_X11_ATOM);
+    free(aware);
     CHECK(sk_xui_sync());
     CHECK_INT(sk_xfake_count(f, 8, -1), 0); /* hidden: never mapped */
     CHECK_INT(sk_xfake_count(f, 53, -1), 1);
@@ -853,6 +870,186 @@ static void test_the_clipboard_gives_up_on_a_silent_owner(void)
     finish(f);
 }
 
+/* ---- Files dropped (XDND) ---- */
+
+/* An XDND message from the drag's source, the other client's window, to
+ * win: l[0] is the source, l[1] to l[4] as given. */
+static void xdnd(sk_xfake *f, uint32_t win, const char *type, uint32_t l1, uint32_t l2, uint32_t l3,
+                 uint32_t l4)
+{
+    uint8_t ev[32] = {SK_X11_CLIENT_MESSAGE | 0x80, 32};
+    sk_x11_set32(ev + 4, win);
+    sk_x11_set32(ev + 8, sk_xfake_atom(f, type));
+    uint32_t l[5] = {SK_XFAKE_OWNER, l1, l2, l3, l4};
+    for (int i = 0; i < 5; i++)
+        sk_x11_set32(ev + 12 + 4 * i, l[i]);
+    sk_xfake_event(f, ev);
+}
+
+/* Whether a SendEvent request sends the source a ClientMessage. */
+static bool sent_to_source(const uint8_t *r, size_t len)
+{
+    return len >= 44 && sk_x11_get32(r + 4) == SK_XFAKE_OWNER && r[12] == SK_X11_CLIENT_MESSAGE &&
+           r[13] == 32 && sk_x11_get32(r + 16) == SK_XFAKE_OWNER;
+}
+
+/* The nth message the client sent the source: its type, and its l[] in
+ * l. Rounds of the UI loop until it came, two seconds at most. */
+static bool to_source(sk_xfake *f, size_t nth, uint32_t *type, uint32_t l[5])
+{
+    for (uint64_t until = sk_now_ms() + 2000;; sk_xui_once(5)) {
+        size_t seen = 0, len = 0;
+        for (size_t i = 0; i < sk_xfake_count(f, 25, -1); i++) {
+            uint8_t *r = sk_xfake_request(f, 25, -1, i, &len);
+            bool found = r && sent_to_source(r, len) && seen++ == nth;
+            if (found) {
+                *type = sk_x11_get32(r + 20);
+                for (int k = 0; k < 5; k++)
+                    l[k] = sk_x11_get32(r + 24 + 4 * k);
+            }
+            free(r);
+            if (found)
+                return true;
+        }
+        if (sk_now_ms() > until)
+            return false;
+    }
+}
+
+/* A drag that offers text/uri-list among its three types is taken as a
+ * copy; the drop asks the source for the list at the drop's time, its
+ * local files reach the window, and the source hears it is done. */
+static void test_files_dropped_on_a_window(void)
+{
+    sk_xfake *f = start(NULL);
+    if (!f)
+        return;
+    sk_window *w = window(40, 30, true);
+    uint32_t id = sk_xui_window_id(w);
+    uint32_t uris = sk_xfake_atom(f, "text/uri-list"), copy = sk_xfake_atom(f, "XdndActionCopy");
+    uint32_t selection = sk_xfake_atom(f, "XdndSelection");
+    sk_xfake_own_target(f, selection, uris,
+                        "# from a file manager\r\n"
+                        "file:///home/u/two%20words.txt\r\n"
+                        "https://example.com/\r\n"
+                        "file://localhost/srv/it's\r\n",
+                        0);
+    xdnd(f, id, "XdndEnter", 5u << 24, sk_xfake_atom(f, "text/plain"), uris, 0);
+    xdnd(f, id, "XdndPosition", 0, 300u << 16 | 200, 1000, copy);
+    uint32_t type = 0, l[5] = {0};
+    CHECK(to_source(f, 0, &type, l));
+    CHECK_INT(type, sk_xfake_atom(f, "XdndStatus"));
+    CHECK_INT(l[0], id);
+    CHECK_INT(l[1] & 1, 1);
+    CHECK_INT(l[4], copy);
+
+    xdnd(f, id, "XdndDrop", 0, 4321, 0, 0);
+    const sk_event *e = wait_for(SK_EV_DROP, 1, 3000);
+    CHECK(e && e->win == w && e->drop.n == 2);
+    CHECK_STR(rec.dropped, "/home/u/two words.txt\n/srv/it's");
+    size_t len = 0;
+    uint8_t *r = sk_xfake_request(f, 24, -1, 0, &len);
+    CHECK(r && sk_x11_get32(r + 8) == selection && sk_x11_get32(r + 12) == uris &&
+          sk_x11_get32(r + 20) == 4321);
+    free(r);
+    CHECK(to_source(f, 1, &type, l));
+    CHECK_INT(type, sk_xfake_atom(f, "XdndFinished"));
+    CHECK_INT(l[0], id);
+    CHECK_INT(l[1], 1);
+    CHECK_INT(l[2], copy);
+    finish(f);
+}
+
+/* A drag of anything but files is refused, and its drop is over at once;
+ * so is a drag from a later version of XDND, and a list that names no
+ * local file. */
+static void test_other_drags_are_refused(void)
+{
+    sk_xfake *f = start(NULL);
+    if (!f)
+        return;
+    sk_window *w = window(40, 30, true);
+    uint32_t id = sk_xui_window_id(w), uris = sk_xfake_atom(f, "text/uri-list");
+    uint32_t status = sk_xfake_atom(f, "XdndStatus"), finished = sk_xfake_atom(f, "XdndFinished");
+    uint32_t type = 0, l[5] = {0};
+    xdnd(f, id, "XdndEnter", 5u << 24, sk_xfake_atom(f, "text/plain"),
+         sk_xfake_atom(f, "UTF8_STRING"), 0);
+    xdnd(f, id, "XdndPosition", 0, 10u << 16 | 10, 1000, sk_xfake_atom(f, "XdndActionCopy"));
+    CHECK(to_source(f, 0, &type, l));
+    CHECK_INT(type, status);
+    CHECK_INT(l[0], id);
+    CHECK_INT(l[1] & 1, 0);
+    CHECK_INT(l[4], 0);
+    xdnd(f, id, "XdndDrop", 0, 1001, 0, 0);
+    CHECK(to_source(f, 1, &type, l));
+    CHECK_INT(type, finished);
+    CHECK_INT(l[0], id);
+    CHECK_INT(l[1], 0);
+    CHECK_INT(l[2], 0);
+
+    xdnd(f, id, "XdndEnter", 6u << 24, uris, 0, 0);
+    xdnd(f, id, "XdndPosition", 0, 10u << 16 | 10, 1002, 0);
+    CHECK(to_source(f, 2, &type, l));
+    CHECK_INT(type, status);
+    CHECK_INT(l[1] & 1, 0);
+
+    sk_xfake_own_target(f, sk_xfake_atom(f, "XdndSelection"), uris, "https://example.com/a\r\n", 0);
+    xdnd(f, id, "XdndEnter", 5u << 24, uris, 0, 0);
+    xdnd(f, id, "XdndDrop", 0, 1003, 0, 0);
+    CHECK(to_source(f, 3, &type, l));
+    CHECK_INT(type, finished);
+    CHECK_INT(l[1], 0);
+    CHECK_INT(sk_xfake_count(f, 24, -1), 1);
+    run_ms(20);
+    CHECK_INT(count_of(SK_EV_DROP), 0);
+    finish(f);
+}
+
+/* A source of more than three types lists them in XdndTypeList; a drag
+ * that leaves is forgotten; and a long list comes by INCR. */
+static void test_a_drop_from_a_type_list_by_incr(void)
+{
+    sk_xfake *f = start(NULL);
+    if (!f)
+        return;
+    sk_window *w = window(40, 30, true);
+    uint32_t id = sk_xui_window_id(w), uris = sk_xfake_atom(f, "text/uri-list");
+    uint32_t type = 0, l[5] = {0};
+    xdnd(f, id, "XdndEnter", 5u << 24, uris, 0, 0);
+    xdnd(f, id, "XdndLeave", 0, 0, 0, 0);
+    xdnd(f, id, "XdndPosition", 0, 10u << 16 | 10, 1000, 0);
+    CHECK(to_source(f, 0, &type, l));
+    CHECK_INT(l[1] & 1, 0);
+
+    uint8_t list[16];
+    sk_x11_set32(list, sk_xfake_atom(f, "text/plain"));
+    sk_x11_set32(list + 4, sk_xfake_atom(f, "UTF8_STRING"));
+    sk_x11_set32(list + 8, sk_xfake_atom(f, "x-special/gnome-copied-files"));
+    sk_x11_set32(list + 12, uris);
+    sk_xfake_set_property(f, SK_XFAKE_OWNER, sk_xfake_atom(f, "XdndTypeList"), SK_X11_ATOM, 32,
+                          list, sizeof list);
+    sk_buf text = {0}, want = {0};
+    for (int i = 0; i < 40; i++) {
+        sk_buf_printf(&text, "file:///srv/files/number%%20%d.txt\r\n", i);
+        sk_buf_printf(&want, "%s/srv/files/number %d.txt", i ? "\n" : "", i);
+    }
+    sk_xfake_own_target(f, sk_xfake_atom(f, "XdndSelection"), uris, text.ptr, 64);
+    xdnd(f, id, "XdndEnter", 5u << 24 | 1, 0, 0, 0);
+    xdnd(f, id, "XdndPosition", 0, 10u << 16 | 10, 1001, 0);
+    CHECK(to_source(f, 1, &type, l));
+    CHECK_INT(l[1] & 1, 1);
+    xdnd(f, id, "XdndDrop", 0, 1002, 0, 0);
+    const sk_event *e = wait_for(SK_EV_DROP, 1, 5000);
+    CHECK(e && e->drop.n == 40);
+    CHECK_STR(rec.dropped, want.ptr);
+    CHECK(to_source(f, 2, &type, l));
+    CHECK_INT(type, sk_xfake_atom(f, "XdndFinished"));
+    CHECK_INT(l[1], 1);
+    sk_buf_free(&text);
+    sk_buf_free(&want);
+    finish(f);
+}
+
 static struct {
     int once, repeat, posted;
     char order[8];
@@ -973,6 +1170,9 @@ const sk_test sk_suite_x11_ui[] = {
     T(test_the_clipboard_from_another_client),
     T(test_the_clipboard_round_trip_through_the_server),
     T(test_the_clipboard_gives_up_on_a_silent_owner),
+    T(test_files_dropped_on_a_window),
+    T(test_other_drags_are_refused),
+    T(test_a_drop_from_a_type_list_by_incr),
     T(test_timers_tasks_and_quit),
     T(test_frames_come_at_most_every_16_ms),
     T(test_a_lost_connection_ends_the_run),

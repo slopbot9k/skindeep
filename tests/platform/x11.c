@@ -1,6 +1,7 @@
 /* X11's wire protocol without a display (decision 0036): the display
  * name, Xauthority, the bytes of requests, the setup, events, Xft.dpi,
- * INCR's chunks, and a connection to the fake server. */
+ * INCR's chunks, STRING's Latin-1, the files of a text/uri-list, and a
+ * connection to the fake server. */
 #include "../../src/platform/x11/x11.h"
 #include "../test.h"
 #include "x11_fake.h"
@@ -437,6 +438,56 @@ static void test_latin1(void)
     sk_buf_free(&b);
 }
 
+/* The paths of a text/uri-list, one a line, joined by '|' to check. */
+static char *uri_files(const char *list)
+{
+    sk_strv v = {0};
+    sk_x11_uri_list_files(list, strlen(list), &v);
+    sk_buf b = {0};
+    for (size_t i = 0; i < v.len; i++)
+        sk_buf_printf(&b, "%s%s", i ? "|" : "", v.ptr[i]);
+    sk_strv_free(&v);
+    sk_buf_reserve(&b, 0);
+    return b.ptr;
+}
+
+#define CHECK_URIS(list, want)                                               \
+    do {                                                                     \
+        char *got_ = uri_files(list);                                        \
+        CHECK_STR(got_, want);                                               \
+        free(got_);                                                          \
+    } while (0)
+
+static void test_uri_list_lines_and_comments(void)
+{
+    CHECK_URIS("file:///home/u/a.txt\r\nfile:///srv/b\r\n", "/home/u/a.txt|/srv/b");
+    /* The last line may lack its CRLF; a bare LF ends a line too. */
+    CHECK_URIS("file:///a\r\nfile:///b", "/a|/b");
+    CHECK_URIS("file:///a\nfile:///b\n", "/a|/b");
+    CHECK_URIS("# dragged from a file manager\r\nfile:///a\r\n#file:///not\r\n\r\nfile:///b\r\n",
+               "/a|/b");
+    CHECK_URIS("", "");
+    CHECK_URIS("\r\n", "");
+}
+
+static void test_uri_list_decodes_local_files_only(void)
+{
+    CHECK_URIS("file:///home/u/two%20words/it's%2a%3F.txt", "/home/u/two words/it's*?.txt");
+    CHECK_URIS("file:///tmp/%c3%a9t%C3%A9", "/tmp/\xc3\xa9t\xc3\xa9");
+    CHECK_URIS("file://localhost/etc/hosts\r\nFILE://LocalHost/x\r\n", "/etc/hosts|/x");
+    /* Another host's file, another scheme, and what is not a URI. */
+    CHECK_URIS("file://elsewhere/etc/hosts\r\n"
+               "https://example.com/a\r\n"
+               "file:/no/authority\r\n"
+               "/plain/path\r\n"
+               "file://localhost\r\n",
+               "");
+    /* A bad escape, an escaped NUL and a fragment name no file. */
+    CHECK_URIS("file:///a%2\r\nfile:///a%zz\r\nfile:///a%00b\r\nfile:///a#b\r\nfile:///ok", "/ok");
+    /* What is not UTF-8 becomes U+FFFD. */
+    CHECK_URIS("file:///tmp/%e9t%e9", "/tmp/\xef\xbf\xbdt\xef\xbf\xbd");
+}
+
 static void test_connection_to_the_fake_server(void)
 {
     sk_xfake_opts o = {.resources = "Xft.dpi:\t120\n", .big_requests = true};
@@ -586,6 +637,8 @@ const sk_test sk_suite_x11[] = {
     T(test_xft_dpi),
     T(test_incr_chunks),
     T(test_latin1),
+    T(test_uri_list_lines_and_comments),
+    T(test_uri_list_decodes_local_files_only),
     T(test_connection_to_the_fake_server),
     T(test_the_cookie_reaches_the_server),
     T(test_a_refused_setup_says_why),

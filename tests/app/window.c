@@ -1,9 +1,9 @@
 /* skinned's window, driven through its control socket: the live checks
  * of scripts/checks/tabs.js (decision 0023) in C, as decision 0036
  * plans. The real program runs with its window hidden; the checks type,
- * press the app's chords, click and read the probe. They need a display:
- * the window server on macOS, $DISPLAY on Linux (Xvfb in CI); without
- * one they print a skip line. */
+ * press the app's chords, click, drop files and read the probe. They
+ * need a display: the window server on macOS, $DISPLAY on Linux (Xvfb
+ * in CI); without one they print a skip line. */
 #include "../../src/app/lastskin.h"
 #include "../../src/base/arena.h"
 #include "../../src/base/paths.h"
@@ -1102,6 +1102,24 @@ static void click_box(app *a, const sk_json *box)
     ok(a, req);
 }
 
+/* Files dropped on the window are pasted into the active tab, each path
+ * quoted for a shell and a space after, by the paste that honours
+ * bracketed paste mode (decision 0002). The CLI turns the mode on, says
+ * so, then shows what reaches it, its controls made visible. */
+static void test_files_dropped_are_pasted_quoted(void)
+{
+    app a;
+    const char *cmd[] = {"sh", "-c", "printf '\\033[?2004hready\\n'; exec cat -v", NULL};
+    if (!start(&a, cmd))
+        return;
+    CHECK(wait_screen(&a, "ready", 5000));
+    ok(&a, "{\"op\":\"drop\",\"paths\":[\"/tmp/two words\",\"/srv/plain.txt\",\"/tmp/it's\"]}");
+    ok(&a, "{\"op\":\"key\",\"key\":\"Enter\"}");
+    CHECK(wait_screen(&a, "^[[200~'/tmp/two words' /srv/plain.txt '/tmp/it'\\''s' ^[[201~", 5000));
+    ok(&a, "{\"op\":\"hangup\"}");
+    CHECK_INT(finish(&a, 5000), 128 + SIGHUP);
+}
+
 /* New tab... (decision 0025) from File: it opens with the command line
  * in focus and takes the keys; a folder that is not there is refused in
  * the dialog, which stays open; Escape closes it and the terminal has
@@ -1150,6 +1168,8 @@ static void test_the_new_tab_chooser(void)
     }
     CHECK(err.ptr && strstr(err.ptr, "no such folder: /no/such/folder"));
     CHECK_INT(len_of(sk_json_get(p, "tabs")), 1);
+    /* A file dropped meanwhile is not pasted into the terminal. */
+    ok(&a, "{\"op\":\"drop\",\"paths\":[\"/while/open\"]}");
     ok(&a, "{\"op\":\"key\",\"key\":\"Escape\"}");
     p = probe(&a, &ar);
     sk_json_as_bool(sk_json_dig(p, "chooser", "open", NULL), &open);
@@ -1157,6 +1177,7 @@ static void test_the_new_tab_chooser(void)
     ok(&a, "{\"op\":\"type\",\"text\":\"after\"}");
     ok(&a, "{\"op\":\"key\",\"key\":\"Enter\"}");
     CHECK(wait_screen(&a, "after\nafter", 5000));
+    CHECK(!screen_has(probe(&a, &ar), "/while/open"));
     sk_arena_free(&ar);
     ok(&a, "{\"op\":\"hangup\"}");
     CHECK_INT(finish(&a, 5000), 128 + SIGHUP);
@@ -1173,6 +1194,7 @@ const sk_test sk_suite_window[] = {
     T(test_a_tab_dragged_along_the_strip),
     T(test_the_menus),
     T(test_the_sessions_dashboard),
+    T(test_files_dropped_are_pasted_quoted),
     T(test_the_new_tab_chooser),
     T(test_a_tab_renamed),
     T(test_the_strip_waits_for_a_rename),
