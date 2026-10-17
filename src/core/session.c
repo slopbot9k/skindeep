@@ -252,6 +252,25 @@ void sk_session_hangup_every(uint64_t grace_ms)
         if (p > 0)
             signal_group(p, SIGKILL);
     }
+    /* The app leaves once its children are reaped, as main.js waited:
+     * a killed child dies at once, so a short wait is enough. */
+    struct timespec tick = {0, 10 * 1000000L};
+    for (int round = 0; round < 50; round++) {
+        bool any = false;
+        for (int i = 0; i < LIVE_SLOTS; i++) {
+            int p = atomic_load(&live[i]);
+            if (p <= 0)
+                continue;
+            pid_t r = waitpid(p, NULL, WNOHANG);
+            if (r == p || (r < 0 && errno == ECHILD))
+                atomic_store(&live[i], 0);
+            else
+                any = true;
+        }
+        if (!any)
+            break;
+        nanosleep(&tick, NULL);
+    }
 }
 
 static void signal_child(sk_session *s, int sig)
