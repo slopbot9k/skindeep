@@ -1,6 +1,6 @@
-/* Port of parse, adoptUserFd and tell of app/cli.js, with the check of
- * the app's options that bin/skinned made before Electron started
- * (decision 0003). resolveCommand and the exit codes are
+/* Port of parse, adoptUserFd and tell of the JavaScript app's cli.js,
+ * with the check of the app's options its launcher made before Electron
+ * started (decision 0003). resolveCommand and the exit codes are
  * src/core/command.h's. */
 #include "options.h"
 

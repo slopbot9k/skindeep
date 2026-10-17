@@ -14,7 +14,7 @@ them as your CSS styles them.
 
 ## Try it
 
-    bin/skinned --skin path/to/myskin -- bash
+    skinned --skin path/to/myskin -- bash
 
 Any command works in place of `bash`. `--skin` takes a path, anything
 with a `/` in it, or the name of a shipped skin. The app compiles the
@@ -24,7 +24,7 @@ skin by running `skinc` and keeps the pack in its cache, under
 without a real session, run the replay fake, which plays a recorded
 session through the real hooks and statusline, then exits:
 
-    bin/skinned --skin path/to/myskin -- tools/fake/claude
+    skinned --skin path/to/myskin -- build/release/fake/claude
 
 While a skin opened by path is shown, the app looks at its files once a
 second: a change compiles it again and shows it, as a reload does. The

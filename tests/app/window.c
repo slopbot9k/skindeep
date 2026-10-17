@@ -9,6 +9,7 @@
 #include "../../src/base/paths.h"
 #include "../../src/base/json.h"
 #include "../../src/base/strv.h"
+#include "../../src/core/command.h"
 #include "../../src/core/loop.h"
 #include "../../src/sessions/files.h"
 #include "../test.h"
@@ -54,8 +55,10 @@ static bool have_display(void)
 #endif
 }
 
-/* The app on cmd in the test's directory, its control socket there. */
-static bool start(app *a, const char *const *cmd)
+/* The app on cmd in the test's directory, its control socket there.
+ * With name, it runs as a link of that name to skinned, as make install
+ * makes them, given cmd as its arguments; path_first goes before PATH. */
+static bool start_as(app *a, const char *name, const char *const *cmd, const char *path_first)
 {
     memset(a, 0, sizeof *a);
     a->fd = -1;
@@ -69,13 +72,28 @@ static bool start(app *a, const char *const *cmd)
     sk_buf sock = {0};
     sk_buf_printf(&sock, "%s/ctl.sock", tmp);
     sk_strv argv = {0}, env = {0};
-    sk_strv_push(&argv, whole);
-    sk_strv_push(&argv, "--");
+    char *exe = sk_xstrdup(whole);
+    if (name) {
+        char *dir = sk_path_join(tmp, "as");
+        free(exe);
+        exe = sk_path_join(dir, name);
+        CHECK_INT(sk_mkdirs(dir, 0700), 0);
+        CHECK(symlink(whole, exe) == 0 || errno == EEXIST);
+        free(dir);
+    }
+    sk_strv_push(&argv, exe);
+    if (!name)
+        sk_strv_push(&argv, "--");
     for (; *cmd; cmd++)
         sk_strv_push(&argv, *cmd);
-    for (char **e = environ; *e; e++)
-        if (strncmp(*e, "XDG_", 4) && strncmp(*e, "SKINNED_", 8))
+    for (char **e = environ; *e; e++) {
+        if (!strncmp(*e, "XDG_", 4) || !strncmp(*e, "SKINNED_", 8))
+            continue;
+        if (path_first && !strncmp(*e, "PATH=", 5))
+            sk_strv_pushf(&env, "PATH=%s:%s", path_first, *e + 5);
+        else
             sk_strv_push(&env, *e);
+    }
     sk_strv_pushf(&env, "XDG_STATE_HOME=%s/state", tmp);
     sk_strv_pushf(&env, "XDG_RUNTIME_DIR=%s/run", tmp);
     sk_strv_pushf(&env, "SKINNED_CONTROL=%s", sock.ptr);
@@ -97,9 +115,10 @@ static bool start(app *a, const char *const *cmd)
             close(null);
         if (err > 2)
             close(err);
-        execve(whole, sk_strv_argv(&argv), sk_strv_argv(&env));
+        execve(exe, sk_strv_argv(&argv), sk_strv_argv(&env));
         _exit(99);
     }
+    free(exe);
     sk_strv_free(&argv);
     sk_strv_free(&env);
     /* The socket comes once the window is up. */
@@ -130,6 +149,11 @@ static bool start(app *a, const char *const *cmd)
     }
     sk_test_fail(__FILE__, __LINE__, "no control socket after 15 s");
     return false;
+}
+
+static bool start(app *a, const char *const *cmd)
+{
+    return start_as(a, NULL, cmd, NULL);
 }
 
 /* The app's status once it has exited, killing it after ms. */
@@ -1016,6 +1040,37 @@ static void test_an_internal_error_ends_the_clis(void)
     sk_buf_free(&path);
 }
 
+/* Installed, skinned is also codex-skins and claude-skins, links that
+ * make install makes (decision 0018): by such a name every argument
+ * goes to that CLI, as `skinned -- codex ARGS` runs it. */
+static void test_a_link_named_codex_skins_runs_codex(void)
+{
+    char *bin = sk_path_join(sk_test_tmpdir(), "fakebin"), *codex = sk_path_join(bin, "codex");
+    CHECK_INT(sk_mkdirs(bin, 0700), 0);
+    /* cat as the CLI, which waits on its terminal. */
+    char *cat = sk_resolve_command("cat", getenv("PATH"));
+    CHECK(cat && symlink(cat, codex) == 0);
+    free(cat);
+    app a;
+    const char *args[] = {"-u", NULL};
+    if (!start_as(&a, "codex-skins", args, bin)) {
+        free(bin);
+        free(codex);
+        return;
+    }
+    sk_arena ar;
+    sk_arena_init(&ar, 0);
+    const sk_json *argv = sk_json_get(sk_json_at(sk_json_get(probe(&a, &ar), "tabs"), 0), "argv");
+    sk_str s0 = {0}, s1 = {0};
+    CHECK(len_of(argv) == 2 && sk_json_as_string(sk_json_at(argv, 0), &s0) && sk_str_eq_c(s0, "codex") &&
+          sk_json_as_string(sk_json_at(argv, 1), &s1) && sk_str_eq_c(s1, "-u"));
+    sk_arena_free(&ar);
+    ok(&a, "{\"op\":\"hangup\"}");
+    CHECK_INT(finish(&a, 5000), 128 + SIGHUP);
+    free(bin);
+    free(codex);
+}
+
 /* A Claude Code that refuses to resume a session running in the
  * background, as 2.1.296 does, ends by itself: the tab reads the
  * refusal off its last screen and opens the session with `claude
@@ -1218,6 +1273,7 @@ const sk_test sk_suite_window[] = {
     T(test_raced_skins),
     T(test_a_refused_background_session_opens_with_attach),
     T(test_a_failed_cli_is_a_problem),
+    T(test_a_link_named_codex_skins_runs_codex),
     T(test_an_internal_error_ends_the_clis),
     {0},
 };

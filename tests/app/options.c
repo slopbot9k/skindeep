@@ -1,5 +1,5 @@
 /* The app's own command line and its messages to the user (decision
- * 0003), from app/cli.js and bin/skinned, which have no JavaScript
+ * 0003), from the JavaScript app's cli.js and launcher, which had no
  * tests of their own. */
 #include "../../src/app/options.h"
 #include "../test.h"

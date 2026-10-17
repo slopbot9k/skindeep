@@ -59,7 +59,7 @@ skin draws.
     runtime dirs, the settings, the tabs, monitor and dashboard tabs,
     New tab..., the menus, the last skin, the visualization's feed and
     window, the tab strip's bands, `skinned --headless` end to end on
-    `tools/fake/claude`; the process tree, its fds and the per-pid
+    the fake claude; the process tree, its fds and the per-pid
     info; X11's wire protocol against a fake server
     (`platform/x11_fake.c`); AppKit on hidden windows, on macOS.
   - `audio/`, `viz/`: IMA ADPCM, the mixer, the skin's player, the
@@ -106,18 +106,23 @@ skin draws.
   `crash-<hash>` or `hang-<hash>`, and `fuzz-NAME -x FILE` runs it
   again.
 - CI (`.github/workflows/c.yml`) runs on Linux with gcc and with clang,
-  and on macOS, with no third-party action: the build, `install.sh` and
-  `uninstall.sh` into a folder of the runner's, `make test`, `make
-  debug`, and on clang and macOS 30 s of `make fuzz-run`. On Linux the
+  and on macOS, with no third-party action: the build, `make install`
+  and `make uninstall` into a folder of the runner's, `make test`,
+  `make debug`, and on clang and macOS 30 s of `make fuzz-run`. On Linux the
   tests run under Xvfb, so the window checks have a display.
-- `tools/fake/claude`: a replay fake named `claude`, in POSIX sh, so the
-  app injects its settings. It finds the injected `--settings`, plays
+- The fake claude, `build/<mode>/fake/claude` from `tools/fakeclaude.c`:
+  a replay fake named `claude`, so the app injects its settings. It finds the injected `--settings`, plays
   the hook payloads of `tests/fixtures/claude/hooks.jsonl` through the
   hook command and `statusline.json` through the statusLine command,
   both naming a copy of the reduced transcript, then exits. It spends no
-  tokens. `FAKE_CLAUDE_PAUSE` sets the seconds between events.
-- `tools/try-relays`: the relays on a real Claude Code session, with
-  `hookdump` standing in for the window and every post logged.
+  tokens. `FAKE_CLAUDE_PAUSE` sets the seconds between events. `make test`
+  puts its folder first on PATH for the headless check.
+- `hookdump` stands in for a window to the relays, every post logged.
+  The shell script that ran it on a real Claude Code session went with
+  the cutover: the app's own windows now take the relays' posts.
+- No shell script: what builds, installs and checks is the makefile and
+  C. The window and picker checks still write small sh fakes of zenity,
+  kdialog and the like into their temporary folders, run as children.
 - `skinned --headless[=FILE]` runs the tabs with no window, in the
   terminal it runs in, writing the active tab's meters once a second as
   JSON lines; `--record=FILE` keeps the first tab's pty output for the

@@ -14,11 +14,11 @@ the user's shell.
 
 ## Decision
 
-- `bin/skinned [--skin NAME|PATH] [--statusline=always|chain-only]
-  [--no-viz] [--mute] -- CMD [ARGS]`, a POSIX sh script. It resolves the
-  repository, past any link to itself, and execs
-  `build/release/skinned` with every argument. `skinned` checks its own
-  options (`src/app/options.c`): an unknown option of its own, or no
+- `skinned [--skin NAME|PATH] [--statusline=always|chain-only]
+  [--no-viz] [--mute] -- CMD [ARGS]`, the program `make` builds,
+  installed as a link to it (decision 0018). Run by a name with no
+  slash, it finds its own file on PATH, so it finds `skinned-relay` and
+  the checkout's `skins/` beside it. It checks its own options (`src/app/options.c`): an unknown option of its own, or no
   command after `--`, prints the usage and exits 125.
 - User-facing errors (bad skin, missing command) go to the caller's
   stderr, each line starting `skinned: `. The app's own lines go to its
@@ -50,8 +50,9 @@ the user's shell.
 - The first decided status stands. An app error after the child's exit
   is logged, and the child's status is reported: the CLI's work is done
   and its status is known.
-- `bin/claude-skins` execs `skinned -- claude "$@"` and `bin/codex-skins`
-  execs `skinned -- codex "$@"`. Every argument goes to the CLI, so no
+- `claude-skins` and `codex-skins` are links to `skinned`, which, run by
+  either name, runs as `skinned -- claude ARGS` or `skinned -- codex
+  ARGS` (`src/main/skinned.c`). Every argument goes to the CLI, so no
   option of the app can shadow one of the CLI's. `SKINNED_SKIN` picks
   the skin. A session on another config dir sets `CLAUDE_CONFIG_DIR` or
   `CODEX_HOME`, as it would for the bare CLI, and New tab... sets it per

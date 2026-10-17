@@ -1,6 +1,6 @@
-/* resolveCommand of app/cli.js, which no JavaScript test covers: the
- * cases follow its code, with Node's path.join and path.resolve. Run
- * from the repository root, where bin/skinned is executable. */
+/* resolveCommand of the JavaScript app's cli.js, which no JavaScript
+ * test covered: the cases follow its code, with Node's path.join and
+ * path.resolve. */
 #include "../../src/core/command.h"
 #include "../test.h"
 
@@ -63,30 +63,52 @@ static void test_found_on_path(void)
     CHECK(sk_resolve_command("", "/bin") == NULL);
 }
 
+/* Entries relative to the working directory, made the test's own folder
+ * for the while: bin/tool, and top beside it. */
 static void test_relative_entries(void)
 {
-    char *got = sk_resolve_command("skinned", "bin");
-    CHECK_STR(got, "bin/skinned");
+    char cwd[4096], dir[600], bin[700];
+    CHECK(getcwd(cwd, sizeof cwd) != NULL);
+    snprintf(dir, sizeof dir, "%s/rel", sk_test_tmpdir());
+    snprintf(bin, sizeof bin, "%s/bin", dir);
+    mkdir(dir, 0700);
+    mkdir(bin, 0700);
+    put(bin, "tool", 0755);
+    put(dir, "top", 0755);
+    CHECK(chdir(dir) == 0);
+    char *got = sk_resolve_command("tool", "bin");
+    CHECK_STR(got, "bin/tool");
     free(got);
-    got = sk_resolve_command("skinned", "./bin/");
-    CHECK_STR(got, "bin/skinned");
+    got = sk_resolve_command("tool", "./bin/");
+    CHECK_STR(got, "bin/tool");
     free(got);
     /* An empty entry is not the working directory. */
-    CHECK(sk_resolve_command("install.sh", ":") == NULL);
-    got = sk_resolve_command("install.sh", ".");
-    CHECK_STR(got, "install.sh");
+    CHECK(sk_resolve_command("top", ":") == NULL);
+    got = sk_resolve_command("top", ".");
+    CHECK_STR(got, "top");
     free(got);
+    CHECK(chdir(cwd) == 0);
 }
 
+/* A path with a slash is the file, resolved, PATH not looked at: from
+ * the test's own folder, made the working directory for the while. */
 static void test_a_path_is_resolved(void)
 {
-    char here[1024], want[1100];
+    char cwd[4096], dir[600], bin[700], here[1024], want[1100];
+    CHECK(getcwd(cwd, sizeof cwd) != NULL);
+    snprintf(dir, sizeof dir, "%s/abs", sk_test_tmpdir());
+    snprintf(bin, sizeof bin, "%s/bin", dir);
+    mkdir(dir, 0700);
+    mkdir(bin, 0700);
+    put(bin, "tool", 0755);
+    put(dir, "notes.md", 0644);
+    CHECK(chdir(dir) == 0);
     CHECK(getcwd(here, sizeof here) != NULL);
-    snprintf(want, sizeof want, "%s/bin/skinned", here);
-    char *got = sk_resolve_command("bin/skinned", NULL);
+    snprintf(want, sizeof want, "%s/bin/tool", here);
+    char *got = sk_resolve_command("bin/tool", NULL);
     CHECK_STR(got, want);
     free(got);
-    got = sk_resolve_command("./bin/../bin//skinned", "/nonexistent");
+    got = sk_resolve_command("./bin/../bin//tool", "/nonexistent");
     CHECK_STR(got, want);
     free(got);
     got = sk_resolve_command("/bin/../bin//sh", NULL);
@@ -94,8 +116,9 @@ static void test_a_path_is_resolved(void)
     free(got);
     CHECK(sk_resolve_command("/bin", NULL) == NULL); /* a directory */
     CHECK(sk_resolve_command("/nonexistent/sh", "/bin") == NULL);
-    CHECK(sk_resolve_command("README.md", NULL) == NULL);
-    CHECK(sk_resolve_command("./README.md", NULL) == NULL); /* not executable */
+    CHECK(sk_resolve_command("notes.md", NULL) == NULL);
+    CHECK(sk_resolve_command("./notes.md", NULL) == NULL); /* not executable */
+    CHECK(chdir(cwd) == 0);
 }
 
 static void test_exit_codes(void)

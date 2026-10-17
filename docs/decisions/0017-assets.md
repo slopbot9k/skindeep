@@ -34,9 +34,9 @@ cell sizes in the terminal.
   the 2.37 release unchanged, beside its licence. The Bitstream Vera
   license (`Bitstream-Vera`) is allowed for those files alone. The
   system's fonts are read only for characters DejaVu lacks
-  (`src/text/discover.c`), and `install.sh` asks for no font. The
+  (`src/text/discover.c`), and the install asks for no font. The
   JavaScript app took both fonts from the system, as a prerequisite
-  that `install.sh` checked with `fc-list`.
+  that its `install.sh` checked with `fc-list`.
 - A test walks `skins/` and fails for any file that is neither the
   manifest, the CSS, nor listed in `ASSETS.json` with an allowed license,
   and for any listed file that does not exist.

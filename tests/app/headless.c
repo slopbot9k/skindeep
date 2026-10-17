@@ -1,8 +1,8 @@
 /* skinned --headless end to end, the gate of phase 2 on the recorded
- * fixtures: the real program runs tools/fake/claude, whose hook and
- * statusline commands are the real skinned-relay, and the metrics file
- * must show the session's meters and its live channels. The app's state
- * and runtime dirs are temporary. */
+ * fixtures: the real program runs the fake claude (tools/fakeclaude.c),
+ * whose hook and statusline commands are the real skinned-relay, and
+ * the metrics file must show the session's meters and its live
+ * channels. The app's state and runtime dirs are temporary. */
 #include "../../src/app/runtime.h"
 #include "../../src/base/strv.h"
 #include "../../src/core/loop.h"
@@ -74,9 +74,9 @@ static int run(const char *bin, const char *const *args, const char *const *extr
 
 static void test_the_fake_claude_session_shows_its_meters(void)
 {
-    const char *bin = getenv("SK_SKINNED_BIN");
-    if (!bin || access(bin, X_OK) != 0) {
-        printf("    (skipped: SK_SKINNED_BIN not set)\n");
+    const char *bin = getenv("SK_SKINNED_BIN"), *fake = getenv("SK_FAKE_DIR");
+    if (!bin || access(bin, X_OK) != 0 || !fake || !*fake) {
+        printf("    (skipped: SK_SKINNED_BIN or SK_FAKE_DIR not set)\n");
         return;
     }
     const char *tmp = sk_test_tmpdir();
@@ -85,7 +85,8 @@ static void test_the_fake_claude_session_shows_its_meters(void)
     sk_buf metrics = {0}, out = {0}, path = {0}, state = {0}, run_dir = {0};
     sk_buf_printf(&metrics, "%s/metrics.jsonl", tmp);
     sk_buf_printf(&out, "%s/pty.out", tmp);
-    sk_buf_printf(&path, "PATH=%s/tools/fake:%s", cwd, getenv("PATH"));
+    /* The fake's folder made absolute: the app runs in another. */
+    sk_buf_printf(&path, "PATH=%s%s%s:%s", *fake == '/' ? "" : cwd, *fake == '/' ? "" : "/", fake, getenv("PATH"));
     sk_buf_printf(&state, "XDG_STATE_HOME=%s/state", tmp);
     /* The hook socket's path must fit sun_path, 104 bytes on macOS,
      * which the test's own temporary dir is too deep for. */
@@ -169,8 +170,8 @@ static void test_statuses(void)
 }
 
 /* Run by its bare name through a link on the PATH, skinned takes the
- * relay beside the file the link leads to, as bin/skinned's readlink -f:
- * its log names it. */
+ * relay beside the file the link leads to, as make install's links
+ * lead to it: its log names it. */
 static void test_the_relay_is_found_past_a_link(void)
 {
     const char *bin = getenv("SK_SKINNED_BIN");

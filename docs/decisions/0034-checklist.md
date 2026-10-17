@@ -69,7 +69,7 @@ read usage alone.
   doodles, the word shown underlined.
 - The JavaScript app's replay fake wrote a TodoWrite call at each turn:
   three items at the first turn of a cycle of five, one more done each
-  turn, cleared at the fifth. `tools/fake/claude` replays the recorded
+  turn, cleared at the fifth. The C fake claude replays the recorded
   fixtures, which hold no task list. `tests/agents/claude_parse.c` and
   `tests/agents/claude_core.c` check the list from the transcript.
 

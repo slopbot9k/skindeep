@@ -42,8 +42,9 @@ butterchurn supply today.
   - `skinc` accepts only TrueType outlines in skins.
 - HTTPS goes through the `curl` command, run as a child. libcurl is not
   linked, because its licence is curl's own, not MIT.
-- No Python and no JavaScript in the C tree, its build or its tests. The
-  fake CLIs and the live checks are rewritten in C or POSIX sh.
+- No Python and no JavaScript in the C tree, its build or its tests, and
+  since the cutover no shell script: the fake CLIs, the live checks and
+  the install are C and the makefile (decision 0018).
 - The build is `make` with the system C compiler. The makefile uses only
   what GNU make has had since 3.81, the version macOS ships as
   `/usr/bin/make`; Linux distributions ship GNU make as `make`.
@@ -72,7 +73,10 @@ butterchurn supply today.
   7. The visualizer.
   8. The cutover, which removes `app/`, `test/` and `package.json`.
 
-  The C tree lives beside the JavaScript app until then.
+  The C tree lived beside the JavaScript app until then. Comments in
+  the C tree still name the JavaScript files each part was ported from
+  (`app/...js`): they are in the history before the cutover's commit,
+  "Cutover: the JavaScript and Python app removed".
 - The test targets:
   - `make test` runs the C tests, using the fixtures in `tests/fixtures/`.
   - `make debug` runs the same tests under AddressSanitizer and UBSan.

@@ -1,5 +1,5 @@
 /* The app's own command line and its messages to the user (decision
- * 0003), as app/cli.js and bin/skinned have them:
+ * 0003), as the JavaScript app's cli.js and launcher had them:
  *
  *   skinned [--skin NAME|PATH] [--statusline=always|chain-only]
  *           [--no-viz] [--mute] -- CMD [ARGS...]
@@ -30,7 +30,7 @@ typedef struct {
 /* argv: the app's own, program first, NULL-terminated; env: its
  * environment. The strings stay argv's and env's. True, or false with
  * the message for the user in err: an option of ours unknown, as
- * bin/skinned refuses it, or no command after --. */
+ * the JavaScript app's launcher refused it, or no command after --. */
 bool sk_options_parse(sk_options *o, char *const *argv, const sk_envp *env, sk_buf *err);
 
 /* fd is the caller's stderr, which the launcher keeps on fd 3 while the

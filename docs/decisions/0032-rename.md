@@ -68,7 +68,7 @@ had no way to name a tab from the app.
   `custom-title.json`, and `tests/agents/claude_core.c` that the line
   names the session. The JavaScript app's live check typed `/rename
   NAME` into its fake agent, which recorded it as the real CLI does;
-  the C app's fake agent (`tools/fake/claude`) has no `/rename`.
+  the C app's fake agent (`tools/fakeclaude.c`) has no `/rename`.
 
 ## Why
 

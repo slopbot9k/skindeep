@@ -34,18 +34,18 @@ DejaVu fonts are built in. On Linux, skin sounds play through `pw-play`,
 
     git clone https://github.com/b-g-goodell/skindeep.git
     cd skindeep
-    ./install.sh
+    make install
 
-If something is missing, the script says how to get it and stops.
-Otherwise it builds `skinned`, `skinned-relay` and `skinc` with make,
-puts `claude-skins`, `codex-skins` and `skinned` in `~/.local/bin`, or
-in `BINDIR` if you set it, and names the optional tools it did not find.
-Run it again after each `git pull`, and `./uninstall.sh` removes the
-commands, as [decision 0018](docs/decisions/0018-install.md) explains.
-Or tell your agent:
+It builds `skinned`, `skinned-relay` and `skinc`, links `skinned`,
+`claude-skins` and `codex-skins` into `~/.local/bin`, or into `BINDIR`
+if you set it (`make install BINDIR=...`), and names the optional tools
+it did not find. Run it again after each `git pull`, and
+`make uninstall` removes the links, as
+[decision 0018](docs/decisions/0018-install.md) explains. Or tell your
+agent:
 
 > Install skindeep from https://github.com/b-g-goodell/skindeep
-> by its README, running ./install.sh until it succeeds.
+> by its README, running make install until it succeeds.
 
 ## Use
 
@@ -132,7 +132,7 @@ compiles it with `skinc` and compiles it again as you edit it, and try
 it on the fake agent in the checkout, which replays a recorded session
 through the real hooks and statusline without spending tokens:
 
-    skinned --skin ~/my-skin -- tools/fake/claude
+    skinned --skin ~/my-skin -- build/release/fake/claude
 
 ## Known limits
 
@@ -153,10 +153,10 @@ through the real hooks and statusline without spending tokens:
 AddressSanitizer and UBSan, and `make fuzz-run` fuzzes every parser for
 30 s each. The live checks of the window, in `tests/app/window.c`, drive
 `skinned` through its control socket and run in `make test` wherever
-there is a display. `tools/fake/claude`, a POSIX sh script, stands in
-for Claude Code. The design is in [docs/DESIGN.md](docs/DESIGN.md), how
-it was built, chapter by chapter, in the
-[dev diary](docs/diary/README.md), and
+there is a display. `build/release/fake/claude`, which `make` builds
+from `tools/fakeclaude.c`, stands in for Claude Code. The design is in
+[docs/DESIGN.md](docs/DESIGN.md), how it was built, chapter by chapter,
+in the [dev diary](docs/diary/README.md), and
 [decision 0019](docs/decisions/0019-tests.md) says what the tests cover.
 
 ## License

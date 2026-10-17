@@ -14,7 +14,7 @@
 #include <unistd.h>
 
 /* SKINNED_RELAY, else the skinned-relay beside this program: the file
- * itself, past any link to it, as bin/skinned's readlink -f found it. */
+ * itself, past any link to it, as make install's links lead to it. */
 static char *relay_path(const sk_envp *env, const char *self)
 {
     const char *given = sk_envp_get(env, "SKINNED_RELAY");
@@ -43,8 +43,8 @@ char *sk_launch_named(const sk_launch *l, const char *name, const char *suffix)
 }
 
 /* The launch's log, <state>/<stamp>-[<name>-]<pid>.log in local time,
- * as bin/skinned named it: the names sort by age, so the rotation keeps
- * the newest. */
+ * as the JavaScript app's launcher named it: the names sort by age, so
+ * the rotation keeps the newest. */
 static char *log_path(const sk_launch *l, const char *name)
 {
     time_t now = time(NULL);

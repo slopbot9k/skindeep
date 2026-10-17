@@ -17,8 +17,7 @@ plays quiet sounds of its place.
 
 Three programs, built by `make` from ISO C17 and POSIX:
 
-    bin/claude-skins, bin/codex-skins   (sh: exec skinned -- claude|codex)
-    bin/skinned   (sh: exec build/release/skinned)
+    claude-skins, codex-skins   (links to skinned, run as -- claude|codex)
         |
     skinned  (src/main/skinned.c)
         |-- core thread: one poll() loop (src/core/loop.c) owns every
@@ -161,7 +160,7 @@ runtime root under `$XDG_RUNTIME_DIR`, else `$TMPDIR`.
 | [0015](decisions/0015-visualization.md) | Visualization window |
 | [0016](decisions/0016-runtime-lifecycle.md) | Runtime files and lifecycle |
 | [0017](decisions/0017-assets.md) | Assets, fonts and their licenses |
-| [0018](decisions/0018-install.md) | install.sh and uninstall.sh |
+| [0018](decisions/0018-install.md) | make install and make uninstall |
 | [0019](decisions/0019-tests.md) | Tests and dev tools |
 | [0020](decisions/0020-statusline-default.md) | Statusline injection default |
 | [0021](decisions/0021-agent-adapter-seam.md) | Agent adapter seam |

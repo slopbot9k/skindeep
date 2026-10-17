@@ -56,16 +56,16 @@ jobs:
             echo "::error title=build::$(tr -d '\r' < out.log | grep -E 'error:' | sort -u | head -n 40 | cut -c1-240 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"
             exit 1
           fi
-      # install.sh and uninstall.sh into a folder of the runner's own
-      # (decision 0018): the three commands written, the usage of the
-      # app they run, and every one removed again.
+      # make install and make uninstall into a folder of the runner's own
+      # (decision 0018): the three links made, the usage of the app they
+      # run, and every one removed again.
       - name: Install
         shell: bash
         run: |
           set -o pipefail
           bin="$RUNNER_TEMP/bin"
-          if ! { CC=${{ matrix.cc }} BINDIR="$bin" ./install.sh && test -x "$bin/claude-skins" && test -x "$bin/codex-skins" &&
-                 { "$bin/skinned" --nope -- true; test $? = 125; } && BINDIR="$bin" ./uninstall.sh &&
+          if ! { make install CC=${{ matrix.cc }} BINDIR="$bin" && test -L "$bin/claude-skins" && test -L "$bin/codex-skins" &&
+                 { "$bin/skinned" --nope -- true; test $? = 125; } && make uninstall BINDIR="$bin" &&
                  test -z "$(ls -A "$bin")"; } 2>&1 | tee out.log; then
             echo "::error title=install::$(tr -d '\r' < out.log | tail -n 30 | cut -c1-200 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"
             exit 1

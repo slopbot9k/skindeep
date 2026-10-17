@@ -1,7 +1,7 @@
 /* The neutral carbon atom's data for the Carbon mode (decision 0015,
- * issue #144): app/viz/carbon-data.js as C, the slim copy that
- * scripts/research/carbon_slim.js writes from
- * docs/research/carbon-atom-data.json. Energies in cm^-1 (E) and eV,
+ * issue #144): the JavaScript app's carbon-data.js as C, the slim copy
+ * of docs/research/carbon-atom-data.json that its script wrote; a test
+ * holds the two equal. Energies in cm^-1 (E) and eV,
  * tau in s, wavelengths in nm (Ritz, vacuum and standard air), A in
  * s^-1, f the absorption oscillator strength, radii in bohr.
  *
