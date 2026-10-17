@@ -18,15 +18,17 @@
  *     manifest rect's width and height;
  *   - a background layer whose background-size is auto or lengths in
  *     px: auto auto is the SVG's own size, one auto keeps its ratio.
- * The rest need the layout, and the layer pass draws them: a background
- * sized by percentages, cover or contain; a border image, sliced to its
- * box; a needle's face and a knob's image, which fill an svg CSS sizes.
- * Until then those SVGs have no variant for those uses.
+ * The rest need the layout: a background sized by percentages, cover or
+ * contain; a border image, sliced to its box; a needle's face and a
+ * knob's image, which fill an svg CSS sizes. Those SVGs have no variant
+ * for those uses yet (the shipped skins draw none so); where a layer
+ * holds one, the layer is its picture.
  *
  * Sounds are decoded to mono 16-bit at their own rate and kept as IMA
  * ADPCM in blocks of SK_ADPCM_BLOCK bytes; fonts are kept as they are,
  * once the checker passes them. Everything decoded goes to BLOB in the
- * order images, fonts, sounds. */
+ * order images, fonts, sounds; then the pack so far is laid out and its
+ * layers painted (layers.h), their pictures after the rest. */
 #include "write.h"
 
 #include "../src/audio/adpcm.h"
@@ -35,7 +37,9 @@
 #include "../src/base/paths.h"
 #include "../src/base/utf8.h"
 #include "../src/skin/packfmt.h"
+#include "../src/skin/view.h"
 #include "../src/text/fontcheck.h"
+#include "layers.h"
 #include "media.h"
 
 #include <errno.h>
@@ -796,16 +800,60 @@ static void keyframes(writer *w)
 
 /* ---- Layers ---- */
 
-/* The layer pass goes here, once the layout and the paint are in the
- * library (src/skin/layout*, paint*): lay the stage out at the skin's
- * size, paint at 1x and 2x what decision 0037 pre-renders (STATIC,
- * STATE, SPRITE, NINE and MASK layers) into BLOB, give each element its
- * first layer and count in ELEM, and draw the SVGs whose size the
- * layout decides. Until then LAYR is empty and no element has a
- * layer: the runtime paints everything from the styles. */
-static void layers(writer *w)
+/* LAYR from the pack as written so far (first), which the layer pass
+ * (layers.h) lays out and paints: each record's picture into BLOB, once
+ * for records that share one, and each element's first layer and count
+ * into its ELEM record. */
+static void layers(writer *w, const sk_buf *first)
 {
-    w->count[W_LAYR] = 0;
+    sk_wlayers ls;
+    char why[300];
+    if (!sk_layers_make((const uint8_t *)first->ptr, first->len, &ls, NULL, why, sizeof why)) {
+        sk_diag(w->d, w->f->skin.dir, "(pack)", "skinc cannot lay the pack out to make its layers: %s", why);
+        w->failed = true;
+        return;
+    }
+    uint32_t n = w->count[W_ELEM];
+    uint32_t *at = sk_xcalloc(n ? n : 1, sizeof *at), *count = sk_xcalloc(n ? n : 1, sizeof *count);
+    sk_map same;
+    sk_map_init(&same);
+    for (size_t i = 0; i < ls.len; i++) {
+        const sk_wlayer *y = &ls.ptr[i];
+        void **slot = sk_map_put(&same, sk_str_n((const char *)y->qoi, y->len));
+        if (!*slot)
+            *slot = (void *)(uintptr_t)(blob_add(w, y->qoi, y->len) + 1);
+        sk_buf *b = &w->sec[W_LAYR];
+        sk_put32(b, y->el);
+        sk_put32(b, y->style);
+        sk_put8(b, y->kind);
+        sk_put8(b, y->scale);
+        sk_put16(b, 0);
+        sk_putf32(b, y->x);
+        sk_putf32(b, y->y);
+        sk_putf32(b, y->ox);
+        sk_putf32(b, y->oy);
+        sk_put16(b, y->w);
+        sk_put16(b, y->h);
+        for (int k = 0; k < 4; k++)
+            sk_put16(b, y->slice[k]);
+        sk_put32(b, (uint32_t)((uintptr_t)*slot - 1));
+        sk_put32(b, (uint32_t)y->len);
+        if (y->el < n && !count[y->el]++)
+            at[y->el] = (uint32_t)i;
+    }
+    w->count[W_LAYR] = (uint32_t)ls.len;
+    uint8_t *el = (uint8_t *)w->sec[W_ELEM].ptr;
+    for (uint32_t i = 0; i < n; i++) {
+        uint8_t *r = el + (size_t)i * SK_REC_ELEM;
+        for (int k = 0; k < 4; k++) {
+            r[44 + k] = (uint8_t)(at[i] >> (8 * k));
+            r[48 + k] = (uint8_t)(count[i] >> (8 * k));
+        }
+    }
+    sk_map_free(&same);
+    free(at);
+    free(count);
+    sk_wlayers_free(&ls);
 }
 
 /* ---- Fonts and sounds ---- */
@@ -933,6 +981,35 @@ void sk_pack_print_sections(const uint8_t *p, size_t n, FILE *out)
     }
 }
 
+void sk_pack_print_layers(const sk_front *f, const uint8_t *p, size_t n, FILE *out)
+{
+    static const char *const KIND[] = {"STATIC", "STATE", "SPRITE", "NINE", "MASK"};
+    sk_pack k;
+    if (!sk_pack_load(p, n, &k, NULL, 0))
+        return;
+    for (uint32_t i = 0; i < k.nlayers; i++) {
+        const sk_pack_layer *y = &k.layers[i];
+        const sk_el *e = y->el < f->els.len ? f->els.ptr[y->el] : NULL;
+        sk_buf name = {0};
+        if (e && e->kind == SK_EL_BEFORE)
+            sk_buf_append_c(&name, "::before of ");
+        else if (e && e->kind == SK_EL_AFTER)
+            sk_buf_append_c(&name, "::after of ");
+        const sk_el *x = e && !e->tag ? e->parent : e;
+        sk_buf_append_c(&name, x && x->tag ? x->tag : "?");
+        for (uint16_t c = 0; x && c < x->nclasses; c++)
+            sk_buf_printf(&name, ".%s", x->classes[c]);
+        char style[16];
+        snprintf(style, sizeof style, "%u", (unsigned)y->style);
+        fprintf(out, "  layer %4u %-7s %-5s %ux %5u x %-5u at %8.2f %8.2f  element %u %s\n", (unsigned)i,
+                y->kind < SK_LEN(KIND) ? KIND[y->kind] : "?", y->style == SK_PACK_NONE ? "every" : style,
+                (unsigned)y->scale, (unsigned)y->w, (unsigned)y->h, (double)y->x, (double)y->y, (unsigned)y->el,
+                sk_buf_cstr(&name));
+        sk_buf_free(&name);
+    }
+    sk_pack_free(&k);
+}
+
 bool sk_pack_write(const sk_front *f, const unsigned char hash[32], sk_buf *out, sk_diags *d)
 {
     writer w;
@@ -994,7 +1071,6 @@ bool sk_pack_write(const sk_front *f, const unsigned char hash[32], sk_buf *out,
     styles(&w);
     keyframes(&w);
     images(&w);
-    layers(&w);
     fonts(&w);
     sounds(&w);
     if (w.blob.len > SK_PACK_MAX_BYTES) {
@@ -1002,17 +1078,30 @@ bool sk_pack_write(const sk_front *f, const unsigned char hash[32], sk_buf *out,
                 SK_PACK_MAX_BYTES);
         w.failed = true;
     }
+    /* The pack without layers, laid out and painted for them. */
+    if (!w.failed) {
+        sk_buf first = {0};
+        assemble(&w, hash, &first);
+        layers(&w, &first);
+        sk_buf_free(&first);
+        if (w.blob.len > SK_PACK_MAX_BYTES) {
+            sk_diag(d, s->dir, "(pack)", "%zu bytes of images, fonts, sounds and layers, more than a pack's %u",
+                    w.blob.len, SK_PACK_MAX_BYTES);
+            w.failed = true;
+        }
+    }
     size_t start = out->len;
     if (!w.failed) {
         assemble(&w, hash, out);
-        /* The pack must pass the loader every app runs on it. */
+        /* The pack must pass the loader every app runs on it, its
+         * layers' checks against the layout among them. */
         char why[300];
-        sk_pack p;
-        if (!sk_pack_load((const uint8_t *)out->ptr + start, out->len - start, &p, why, sizeof why)) {
+        sk_skinpack *p = sk_skinpack_new((uint8_t *)out->ptr + start, out->len - start, false, why, sizeof why);
+        if (!p) {
             sk_diag(d, s->dir, "(pack)", "the pack skinc wrote fails the loader: %s", why);
             w.failed = true;
         }
-        sk_pack_free(&p);
+        sk_skinpack_unref(p);
     }
     for (size_t i = 0; i < w.images.len; i++) {
         sk_svg_free(w.images.ptr[i].svg);

@@ -76,8 +76,11 @@ static sk_rect cover_of(const sk_skinview *v, uint32_t n)
 {
     sk_frect ink = v->nodes[n].ink;
     double f = v->k * v->scale;
-    long x0 = (long)floor(ink.x * f), y0 = (long)floor(ink.y * f);
-    long x1 = (long)ceil((ink.x + ink.w) * f), y1 = (long)ceil((ink.y + ink.h) * f);
+    /* Clamped before they become integers: a hostile pack's ink may
+     * reach past any. */
+    long x0 = (long)fmax(-1e9, fmin(1e9, floor(ink.x * f))), y0 = (long)fmax(-1e9, fmin(1e9, floor(ink.y * f)));
+    long x1 = (long)fmax(-1e9, fmin(1e9, ceil((ink.x + ink.w) * f)));
+    long y1 = (long)fmax(-1e9, fmin(1e9, ceil((ink.y + ink.h) * f)));
     /* The stage's pixels, as view.c counts them. */
     long w = lround((v->sx + v->sw) * v->scale) - lround(v->sx * v->scale);
     long h = lround((v->sy + v->sh) * v->scale) - lround(v->sy * v->scale);
@@ -130,8 +133,7 @@ bool sk_fade_absorbs(sk_skinview *v, uint32_t n, bool was_drawn, sk_frect was_in
 
 static sk_paint_env env_of(sk_skinview *v)
 {
-    sk_paint_env env = {&v->layout, &v->lfonts, &v->images, v->glyphs, v->pcache};
-    return env;
+    return sk_view_env(v);
 }
 
 bool sk_fade_prepare(sk_skinview *v)

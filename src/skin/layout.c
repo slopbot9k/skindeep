@@ -978,9 +978,11 @@ static sk_frect ink_of(lay *L, uint32_t i)
         if (s->bi_source.kind != SK_IMAGE_NONE)
             for (int k = 0; k < 4; k++)
                 r = inflate(r, fmaxf(0, s->bi_outset[k]));
-        r = sk_frect_union(r, runs_ink(L, b));
         bool clipped = clips(L, i);
         sk_frect clip = b->padding;
+        /* Its own lines are painted inside its clip. */
+        sk_frect runs = runs_ink(L, b);
+        r = sk_frect_union(r, clipped && !lay_is_svg(L, i) ? sk_frect_intersect(runs, clip) : runs);
         if (lay_is_svg(L, i)) {
             sk_frect inner = children_ink(L, i, clip, false);
             inner = sk_frect_map(&b->viewbox, inner);

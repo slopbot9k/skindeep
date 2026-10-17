@@ -116,7 +116,7 @@ void sk_tskin_paint(sk_tskin *s, sk_frect r, float scale, sk_image *out)
     sk_image_init(out, w, h);
     if (!s->ok)
         return;
-    sk_paint_env env = {&s->l, &s->lfonts, &s->images, s->glyphs, NULL};
+    sk_paint_env env = {&s->l, &s->lfonts, &s->images, s->glyphs, NULL, NULL};
     sk_paint(out, &env, s->t.root, scale, r.x, r.y);
 }
 

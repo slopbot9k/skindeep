@@ -777,8 +777,24 @@ static bool layers(loader *L)
             !finite_at(L, p + 20, "its origin", &y.ox) || !finite_at(L, p + 24, "its origin", &y.oy) ||
             !size_ok(L, y.w, y.h))
             return false;
+        if (fabsf(y.x) > SK_PACK_MAX_FLOAT || fabsf(y.y) > SK_PACK_MAX_FLOAT || fabsf(y.ox) > SK_PACK_MAX_FLOAT ||
+            fabsf(y.oy) > SK_PACK_MAX_FLOAT)
+            return sk_packfmt_fail(&L->f, "its place %g, %g or origin %g, %g past %g", (double)y.x, (double)y.y,
+                                   (double)y.ox, (double)y.oy, (double)SK_PACK_MAX_FLOAT);
         if ((uint32_t)y.slice[SK_LEFT] + y.slice[SK_RIGHT] > y.w || (uint32_t)y.slice[SK_TOP] + y.slice[SK_BOTTOM] > y.h)
             return sk_packfmt_fail(&L->f, "slices wider than its %u x %u", (unsigned)y.w, (unsigned)y.h);
+        /* The layers of one element follow one another. */
+        if (i > 0 && y.el < sk_le32(rec(L, S_LAYR, i - 1)))
+            return sk_packfmt_fail(&L->f, "element %u after a layer of element %u", (unsigned)y.el,
+                                   (unsigned)sk_le32(rec(L, S_LAYR, i - 1)));
+        if ((y.kind == SK_LAYER_STATE) != (y.style != SK_PACK_NONE) && y.kind != SK_LAYER_SPRITE &&
+            y.kind != SK_LAYER_NINE && y.kind != SK_LAYER_MASK)
+            return sk_packfmt_fail(&L->f, "a %s layer %s", y.kind == SK_LAYER_STATE ? "STATE" : "STATIC",
+                                   y.kind == SK_LAYER_STATE ? "of no style" : "of one style");
+        if (y.kind == SK_LAYER_NINE && (!(y.ox > 0) || !(y.oy > 0) || (uint32_t)y.slice[SK_LEFT] + y.slice[SK_RIGHT] >= y.w ||
+                                        (uint32_t)y.slice[SK_TOP] + y.slice[SK_BOTTOM] >= y.h))
+            return sk_packfmt_fail(&L->f, "a nine-slice for a box of %g x %g with no middle", (double)y.ox,
+                                   (double)y.oy);
         if (!blob_at(L, p + 40, &y.blob, &y.len) || !image_ok(L, y.blob, y.len, y.w, y.h))
             return false;
         if (out)
@@ -845,7 +861,7 @@ static bool elements(loader *L)
     if (!n || n > SK_PACK_MAX_ELEMENTS)
         return sk_packfmt_fail(&L->f, "%u elements: 1 to %u", (unsigned)n, SK_PACK_MAX_ELEMENTS);
     sk_pack_el *out = sk_packfmt_fixed(&L->f, n, sizeof *out);
-    uint64_t states = 0;
+    uint64_t states = 0, owned = 0;
     for (uint32_t i = 0; i < n; i++) {
         at_rec(L, S_ELEM, i);
         const uint8_t *p = rec(L, S_ELEM, i);
@@ -896,10 +912,31 @@ static bool elements(loader *L)
         if (!range_ok(L, table, entries, count(L, S_STAB), "its table", "STAB entries") ||
             !range_ok(L, e.layer, e.nlayers, count(L, S_LAYR), "layers", "layers"))
             return false;
+        /* Its layers are its own, each for no style or one its table
+         * gives. */
+        for (uint32_t k = 0; k < e.nlayers; k++) {
+            const uint8_t *y = rec(L, S_LAYR, e.layer + k);
+            uint32_t st = sk_le32(y + 4);
+            if (sk_le32(y) != i)
+                return sk_packfmt_fail(&L->f, "layer %u is element %u's", (unsigned)(e.layer + k),
+                                       (unsigned)sk_le32(y));
+            bool given = st == SK_PACK_NONE;
+            for (uint32_t t = 0; t < entries && !given; t++)
+                given = sk_le32(rec(L, S_STAB, table + t)) == st;
+            if (!given)
+                return sk_packfmt_fail(&L->f, "layer %u is for style %u, which its table never gives",
+                                       (unsigned)(e.layer + k), (unsigned)st);
+        }
+        owned += e.nlayers;
         e.inputs = L->inputs && e.ninputs ? L->inputs + first_input : NULL;
         e.styles = L->stab ? L->stab + table : NULL;
         if (out)
             out[i] = e;
+    }
+    if (owned != count(L, S_LAYR)) {
+        at_sect(L, S_LAYR);
+        return sk_packfmt_fail(&L->f, "%u layers, %llu of them an element's", (unsigned)count(L, S_LAYR),
+                               (unsigned long long)owned);
     }
     if (!L->out && !tree(L))
         return false;

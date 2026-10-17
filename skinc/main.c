@@ -109,8 +109,10 @@ int main(int argc, char **argv)
         ok = save(pack, out.ptr, out.len);
     if (ok && (!pack || verbose))
         sk_front_summary(&f, stdout, verbose);
-    if (ok && pack && verbose)
+    if (ok && pack && verbose) {
         sk_pack_print_sections((const uint8_t *)out.ptr, out.len, stdout);
+        sk_pack_print_layers(&f, (const uint8_t *)out.ptr, out.len, stdout);
+    }
     sk_buf_free(&out);
     sk_front_free(&f);
     sk_diags_free(&d);

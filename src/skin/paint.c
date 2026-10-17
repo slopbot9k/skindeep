@@ -102,9 +102,14 @@ static void comp_row(sk_px *d, const sk_px *s, sk_px solid, int n, const uint8_t
             return;
         }
         if (s && !cov) {
-            for (int x = 0; x < n; x++)
-                if (s[x])
-                    d[x] = pt_over(s[x], d[x]);
+            /* An opaque pixel is itself over anything. */
+            for (int x = 0; x < n; x++) {
+                sk_px p = s[x];
+                if (p >= 0xff000000u)
+                    d[x] = p;
+                else if (p)
+                    d[x] = pt_over(p, d[x]);
+            }
             return;
         }
         if (!s) {
@@ -954,6 +959,156 @@ static void svg_shape(painter *P, canvas *cv, uint32_t i, float alpha)
     sk_path_free(p);
 }
 
+/* ---- Layers ---- */
+
+/* The layer the caller has for box i's part where the canvas draws it,
+ * its scale the canvas's at the box before the box's own transform; an
+ * SVG node's, at the svg that holds it. */
+static const sk_player *layer_for(const painter *P, const canvas *cv, uint32_t i, uint8_t part)
+{
+    const sk_players *ls = P->env->layers;
+    if (!ls || !ls->find)
+        return NULL;
+    uint32_t a = i;
+    for (int depth = 0; P->l->boxes[a].svg_content && depth < 256; depth++) {
+        a = P->nodes[a].parent;
+        if (a == SK_PACK_NONE || a >= P->l->n)
+            return NULL;
+    }
+    const sk_lbox *b = &P->l->boxes[a];
+    sk_xform m = pt_map(P, cv, a);
+    if (a == i && b->has_xform) {
+        sk_xform inv;
+        if (!sk_xform_invert(&b->local, &inv))
+            return NULL;
+        m = sk_xform_mul(&m, &inv);
+    }
+    float k = sqrtf(fabsf(m.a * m.d - m.b * m.c));
+    if (!(k > 0) || !isfinite(k))
+        return NULL;
+    return ls->find(ls->data, i, part, k);
+}
+
+/* The mapping of layer L's pixels to the canvas for box i as it is
+ * drawn now, its own transform (a turn, an animation) included. An SVG
+ * node's layer was painted with no transform between it and its svg:
+ * its pixels go back through the svg's viewBox to its own user units,
+ * and from there as it is drawn now, turns and all. */
+static bool layer_map(const painter *P, const canvas *cv, uint32_t i, const sk_player *L, sk_xform *out)
+{
+    const sk_lbox *b = &P->l->boxes[i];
+    const sk_lbox *a = b;
+    sk_xform at = sk_xform_mul(&cv->base, &b->xform);
+    if (b->svg_content) {
+        if (L->anchor >= P->l->n || !P->l->boxes[L->anchor].generated)
+            return false;
+        a = &P->l->boxes[L->anchor];
+        sk_xform inv;
+        if (!sk_xform_invert(&a->viewbox, &inv))
+            return false;
+        at = sk_xform_mul(&at, &inv);
+    }
+    if (!(L->scale > 0))
+        return false;
+    sk_xform place = {1 / L->scale, 0, 0, 1 / L->scale, a->border.x + L->x, a->border.y + L->y};
+    *out = sk_xform_mul(&at, &place);
+    return isfinite(out->a) && isfinite(out->b) && isfinite(out->c) && isfinite(out->d) && isfinite(out->e) &&
+           isfinite(out->f);
+}
+
+/* Whether m puts an image's pixels on whole pixels of the canvas, one
+ * for one; its offset then. */
+static bool whole_pixels(const sk_xform *m, int *x, int *y)
+{
+    float ex = roundf(m->e), fy = roundf(m->f);
+    if (fabsf(m->b) > 1e-6f || fabsf(m->c) > 1e-6f || fabsf(m->a - 1) > 1e-4f || fabsf(m->d - 1) > 1e-4f ||
+        fabsf(m->e - ex) > 2e-3f || fabsf(m->f - fy) > 2e-3f || !(fabsf(ex) < FAR) || !(fabsf(fy) < FAR))
+        return false;
+    *x = (int)ex;
+    *y = (int)fy;
+    return true;
+}
+
+/* Box e and all it holds drawn from its layer, at its opacity and blend
+ * and through its own transform, as its group would composite: true
+ * when there was a layer to draw. Pixels land one for one where the
+ * layer's scale is the canvas's, else resampled. */
+static bool use_layer(painter *P, canvas *cv, uint32_t e)
+{
+    const sk_player *L = layer_for(P, cv, e, SK_PART_SUBTREE);
+    if (!L || !L->im || L->im->w <= 0 || L->im->h <= 0)
+        return false;
+    const sk_css_style *s = P->nodes[e].style;
+    sk_xform M;
+    if (!layer_map(P, cv, e, L, &M))
+        return false;
+    if (!(s->opacity > 0))
+        return true;
+    uint32_t opacity = (uint32_t)lroundf(clampf(s->opacity) * 255);
+    sk_blend blend = pt_mix(s->mix_blend);
+    int x, y;
+    if (whole_pixels(&M, &x, &y))
+        pt_fill_image(cv, x, y, L->im, NULL, 0, blend, opacity);
+    else
+        pt_blit_affine(cv, L->im, &M, blend, opacity);
+    return true;
+}
+
+/* Row y of the canvas from x, n pixels of s, or of solid when s is NULL,
+ * drawn over, inside the clip. */
+static void row_over(canvas *cv, int y, int x, const sk_px *s, sk_px solid, int n)
+{
+    sk_rect c = sk_rect_intersect(cv->clip, sk_image_bounds(cv->im));
+    if (y < c.y || y >= c.y + c.h || (!s && !solid))
+        return;
+    int a = SK_MAX(x, c.x), b = SK_MIN(x + n, c.x + c.w);
+    if (b <= a)
+        return;
+    const uint8_t *m =
+        cv->mask ? cv->mask + (size_t)(y - cv->clip.y) * (size_t)cv->clip.w + (size_t)(a - cv->clip.x) : NULL;
+    comp_row(sk_image_row(cv->im, y) + a, s ? s + (a - x) : NULL, solid, b - a, NULL, m, SK_BLEND_SRC_OVER, 255);
+}
+
+/* Box i's shadows and border from its nine-slice, after its background,
+ * when the layer fits the box where it is drawn: one for one, the box
+ * no smaller than the one the layer was drawn for. Outer shadows lie
+ * outside the border box and the background inside it, so drawing them
+ * after the background changes no pixel but where the two meet. */
+static bool use_nine(painter *P, canvas *cv, uint32_t i)
+{
+    const sk_player *L = layer_for(P, cv, i, SK_PART_NINE);
+    if (!L || !L->im || L->im->w <= 0 || L->im->h <= 0)
+        return false;
+    sk_xform m = pt_map(P, cv, i);
+    float k = L->scale;
+    if (!pt_square_map(&m) || fabsf(m.a - k) > 1e-4f || fabsf(m.d - k) > 1e-4f)
+        return false;
+    const sk_image *im = L->im;
+    float fl = -L->x * k, ft = -L->y * k;
+    float fr = L->x * k + (float)im->w - L->ref_w * k, fb = L->y * k + (float)im->h - L->ref_h * k;
+    float ml = roundf(fl), mt = roundf(ft), mr = roundf(fr), mb = roundf(fb);
+    if (fabsf(fl - ml) > 2e-3f || fabsf(ft - mt) > 2e-3f || fabsf(fr - mr) > 2e-3f || fabsf(fb - mb) > 2e-3f)
+        return false;
+    sk_frect d = pt_snap(&m, P->l->boxes[i].border);
+    float fx0 = d.x - ml, fy0 = d.y - mt, fw = d.w + ml + mr, fh = d.h + mt + mb;
+    int sl = L->slice[SK_LEFT], sr = L->slice[SK_RIGHT], st = L->slice[SK_TOP], sb = L->slice[SK_BOTTOM];
+    if (!(fabsf(fx0) < FAR) || !(fabsf(fy0) < FAR) || !(fw < FAR) || !(fh < FAR) || fw < (float)(sl + sr) ||
+        fh < (float)(st + sb) || sl + sr >= im->w || st + sb >= im->h)
+        return false;
+    int x0 = (int)fx0, y0 = (int)fy0, W = (int)fw, H = (int)fh;
+    pt_background(P, cv, i);
+    sk_rect vis = sk_rect_intersect(sk_rect_intersect(sk_rect_make(x0, y0, W, H), cv->clip), sk_image_bounds(cv->im));
+    for (int y = vis.y; y < vis.y + vis.h; y++) {
+        int v = y - y0;
+        int sy = v < st ? v : v >= H - sb ? im->h - (H - v) : st;
+        const sk_px *row = sk_image_row(im, sy);
+        row_over(cv, y, x0, row, 0, sl);
+        row_over(cv, y, x0 + sl, NULL, row[sl], W - sl - sr);
+        row_over(cv, y, x0 + W - sr, row + (im->w - sr), 0, sr);
+    }
+    return true;
+}
+
 /* ---- Painting order ---- */
 
 static bool positioned(const sk_css_style *s)
@@ -992,8 +1147,9 @@ typedef struct {
 typedef SK_VEC(entry) entries;
 
 /* The boxes of root's stacking context painted apart from its flow:
- * contexts within it, and positioned boxes, in tree order. */
-static void collect(const painter *P, uint32_t root, uint32_t x, entries *out)
+ * contexts within it, and positioned boxes, in tree order. A box drawn
+ * from a layer holds what lies below it. */
+static void collect(const painter *P, const canvas *cv, uint32_t root, uint32_t x, entries *out)
 {
     for (uint32_t c = P->nodes[x].first; c != SK_PACK_NONE; c = P->nodes[c].next) {
         const sk_lbox *b = &P->l->boxes[c];
@@ -1009,8 +1165,8 @@ static void collect(const painter *P, uint32_t root, uint32_t x, entries *out)
             entry e = {c, 0, (uint32_t)out->len};
             sk_vec_push(out, e);
         }
-        if (P->nodes[c].kind != SK_EL_SVG)
-            collect(P, root, c, out);
+        if (P->nodes[c].kind != SK_EL_SVG && !layer_for(P, cv, c, SK_PART_SUBTREE))
+            collect(P, cv, root, c, out);
     }
 }
 
@@ -1034,6 +1190,8 @@ static bool within(const painter *P, uint32_t c, uint32_t root)
 static void paint_own(painter *P, canvas *cv, uint32_t i)
 {
     if (P->nodes[i].style->visibility != SK_VIS_VISIBLE)
+        return;
+    if (use_nine(P, cv, i))
         return;
     pt_shadows(P, cv, i, false);
     pt_background(P, cv, i);
@@ -1061,6 +1219,8 @@ static void paint_flow(painter *P, canvas *cv, uint32_t x, uint32_t root)
             continue;
         if (makes_context(P, c, root) || (positioned(P->nodes[c].style) && !is_inline(P, c)))
             continue;
+        if (!is_inline(P, c) && use_layer(P, cv, c))
+            continue;
         if (!is_inline(P, c))
             paint_own(P, cv, c);
         paint_flow(P, cv, c, root);
@@ -1085,7 +1245,7 @@ static void paint_entry(painter *P, canvas *cv, uint32_t root, uint32_t e)
     if (!sk_rect_empty(cv->clip)) {
         if (makes_context(P, e, root)) {
             paint_context(P, cv, e);
-        } else {
+        } else if (!use_layer(P, cv, e)) {
             paint_own(P, cv, e);
             paint_flow(P, cv, e, root);
             pt_outline(P, cv, e);
@@ -1098,7 +1258,7 @@ static void paint_entry(painter *P, canvas *cv, uint32_t root, uint32_t e)
 static void paint_inner(painter *P, canvas *cv, uint32_t r)
 {
     entries list = {0};
-    collect(P, r, r, &list);
+    collect(P, cv, r, r, &list);
     if (list.len > 1)
         qsort(list.ptr, list.len, sizeof *list.ptr, by_z);
     paint_own(P, cv, r);
@@ -1145,12 +1305,49 @@ static bool blends_inside(const painter *P, uint32_t ctx, uint32_t x)
     return false;
 }
 
-/* Draws box e's content, group effects applied: inner paints it. */
+/* What a group's image takes after its content: box e's filters at k
+ * pixels to its px, and its clip-path, base the image's mapping. */
+static void group_effects(painter *P, sk_image *im, const sk_xform *base, uint32_t e, float k)
+{
+    const sk_lbox *b = &P->l->boxes[e];
+    const sk_css_style *s = P->nodes[e].style;
+    if (s->nfilter && !filters_idle(s))
+        apply_filters(im, s, k);
+    if (!s->nclip)
+        return;
+    /* clip-path: the polygon in the border box. */
+    sk_path *p = sk_path_new();
+    sk_frect bb = b->border;
+    for (uint16_t q = 0; q < s->nclip; q++) {
+        float x = sk_layout_len(&s->clip[2 * q], bb.w), y = sk_layout_len(&s->clip[2 * q + 1], bb.h);
+        x = (isnan(x) ? 0 : x) + bb.x;
+        y = (isnan(y) ? 0 : y) + bb.y;
+        if (q == 0)
+            sk_path_move(p, x, y);
+        else
+            sk_path_line(p, x, y);
+    }
+    sk_path_close(p);
+    sk_xform pm = sk_xform_mul(base, &b->xform);
+    uint8_t *cov = pt_cover(p, &pm, sk_image_bounds(im), s->clip_evenodd ? SK_FILL_EVENODD : SK_FILL_NONZERO);
+    for (int y = 0; y < im->h; y++) {
+        sk_px *row = sk_image_row(im, y);
+        for (int x = 0; x < im->w; x++)
+            row[x] = pt_scale(row[x], cov[(size_t)y * (size_t)im->w + (size_t)x]);
+    }
+    free(cov);
+    sk_path_free(p);
+}
+
+/* Draws box e's content, group effects applied: inner paints it. A box
+ * with a layer is drawn from it instead. */
 static void with_effects(painter *P, canvas *cv, uint32_t e, void (*inner)(painter *, canvas *, uint32_t))
 {
     const sk_lbox *b = &P->l->boxes[e];
     const sk_css_style *s = P->nodes[e].style;
     if (!(s->opacity > 0))
+        return;
+    if (use_layer(P, cv, e))
         return;
     sk_xform m = pt_map(P, cv, e);
     bool turned = !pt_square_map(&m) && (!b->svg_content || svg_needs_upright(P, e));
@@ -1218,32 +1415,7 @@ static void with_effects(painter *P, canvas *cv, uint32_t e, void (*inner)(paint
     sk_image_init(&im, at.w, at.h);
     canvas lc = {&im, base, sk_image_bounds(&im), NULL};
     inner(P, &lc, e);
-    if (filtered)
-        apply_filters(&im, s, k);
-    if (s->nclip) {
-        /* clip-path: the polygon in the border box. */
-        sk_path *p = sk_path_new();
-        sk_frect bb = b->border;
-        for (uint16_t q = 0; q < s->nclip; q++) {
-            float x = sk_layout_len(&s->clip[2 * q], bb.w), y = sk_layout_len(&s->clip[2 * q + 1], bb.h);
-            x = (isnan(x) ? 0 : x) + bb.x;
-            y = (isnan(y) ? 0 : y) + bb.y;
-            if (q == 0)
-                sk_path_move(p, x, y);
-            else
-                sk_path_line(p, x, y);
-        }
-        sk_path_close(p);
-        sk_xform pm = sk_xform_mul(&base, &b->xform);
-        uint8_t *cov = pt_cover(p, &pm, sk_image_bounds(&im), s->clip_evenodd ? SK_FILL_EVENODD : SK_FILL_NONZERO);
-        for (int y = 0; y < im.h; y++) {
-            sk_px *row = sk_image_row(&im, y);
-            for (int x = 0; x < im.w; x++)
-                row[x] = pt_scale(row[x], cov[(size_t)y * (size_t)im.w + (size_t)x]);
-        }
-        free(cov);
-        sk_path_free(p);
-    }
+    group_effects(P, &im, &base, e, k);
     if (turned)
         pt_blit_affine(cv, &im, &to_canvas, blend, opacity);
     else
@@ -1271,6 +1443,8 @@ static void paint_svg_node(painter *P, canvas *cv, uint32_t i)
     if (!b->generated)
         return;
     const sk_css_style *s = P->nodes[i].style;
+    if (s->opacity > 0 && use_layer(P, cv, i))
+        return;
     /* A lone shape's opacity goes to its paint; anything more groups. */
     bool one_paint = !P->nodes[i].first && !(s->fill_kind == SK_PAINT_COLOR && s->stroke_kind == SK_PAINT_COLOR &&
                                               P->nodes[i].kind != SK_EL_LINE);
@@ -1357,4 +1531,81 @@ void sk_paint(sk_image *dst, const sk_paint_env *env, uint32_t root, float scale
 void sk_paint_px(sk_image *dst, const sk_paint_env *env, uint32_t root, float scale, int px, int py)
 {
     paint_from(dst, env, root, scale, (float)-px, (float)-py);
+}
+
+void sk_paint_layer(sk_image *dst, const sk_paint_env *env, uint32_t i, uint8_t part, const sk_xform *own)
+{
+    const sk_layout *l = env->layout;
+    if (i >= l->n || !l->boxes[i].generated)
+        return;
+    const sk_lbox *b = &l->boxes[i];
+    sk_xform inv;
+    if (!sk_xform_invert(&b->xform, &inv))
+        return;
+    painter P;
+    memset(&P, 0, sizeof P);
+    P.env = env;
+    P.l = l;
+    P.nodes = l->nodes;
+    /* The node's own space to dst: whatever its own transform does is
+     * the compositor's. */
+    canvas cv = {dst, sk_xform_mul(own, &inv), sk_image_bounds(dst), NULL};
+    float k = sqrtf(fabsf(own->a * own->d - own->b * own->c));
+    if (part == SK_PART_NINE) {
+        if (!b->svg_content && P.nodes[i].style->visibility == SK_VIS_VISIBLE) {
+            pt_shadows(&P, &cv, i, false);
+            pt_shadows(&P, &cv, i, true);
+            pt_border(&P, &cv, i);
+        }
+    } else if (k > 0) {
+        if (b->svg_content)
+            svg_inner(&P, &cv, i);
+        else
+            paint_inner(&P, &cv, i);
+        group_effects(&P, dst, &cv.base, i, k);
+    }
+    for (size_t m = 0; m < P.masks.len; m++)
+        free(P.masks.ptr[m]);
+    sk_vec_free(&P.masks);
+}
+
+bool sk_paint_at_once(const sk_layout *l, const uint32_t *sub, size_t n)
+{
+    if (!n || sub[0] >= l->n)
+        return false;
+    uint32_t e = sub[0];
+    const sk_lbox *b = &l->boxes[e];
+    const sk_css_style *s = l->nodes[e].style;
+    if (!b->generated || !s)
+        return false;
+    if (b->svg_content)
+        return true;
+    painter P;
+    memset(&P, 0, sizeof P);
+    P.l = l;
+    P.nodes = l->nodes;
+    if (is_inline(&P, e))
+        return false;
+    bool pos = positioned(s);
+    /* A context whatever its opacity does: what it holds paints inside
+     * its group. */
+    if ((pos && (!s->z_auto || s->position == SK_POS_FIXED)) || s->nfilter || s->nclip || s->ntransform ||
+        s->mix_blend != SK_MIX_NORMAL || s->isolate)
+        return true;
+    if (pos && s->outline_style == SK_BORDER_SOLID && s->outline_width > 0)
+        return false;
+    for (size_t i = 1; i < n; i++) {
+        uint32_t d = sub[i];
+        if (d >= l->n || !l->boxes[d].generated || l->boxes[d].svg_content || !l->nodes[d].style)
+            continue;
+        const sk_css_style *ds = l->nodes[d].style;
+        if (ds->mix_blend != SK_MIX_NORMAL)
+            return false;
+        bool ctx = makes_context(&P, d, SK_PACK_NONE);
+        if (!ctx && (!positioned(ds) || is_inline(&P, d)))
+            continue;
+        if (!pos || (ctx && !ds->z_auto && ds->z_index != 0))
+            return false;
+    }
+    return true;
 }

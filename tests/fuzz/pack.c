@@ -6,12 +6,14 @@
  * its animations and transitions as sk_style_anim and
  * sk_style_transition pair them, every string to its NUL, each image
  * variant and layer decoded to its size, each sound's blocks decoded.
- * The input is copied to a buffer of its own size, so a read past the
- * pack is the sanitizer's to see. A pack that fails says why and is
- * left empty. */
+ * Then the pack is taken in as the runtime takes it, laid out at its
+ * size for its layers' checks. The input is copied to a buffer of its
+ * own size, so a read past the pack is the sanitizer's to see. A pack
+ * that fails says why and is left empty. */
 #include "../../src/audio/adpcm.h"
 #include "../../src/gfx/image.h"
 #include "../../src/skin/pack.h"
+#include "../../src/skin/view.h"
 #include "fuzz.h"
 
 #include <stdlib.h>
@@ -192,6 +194,12 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
     }
     walk(&p);
     sk_pack_free(&p);
+    /* Taken in as the runtime takes it: laid out, its layers checked
+     * against the boxes. */
+    sk_skinpack *sp = sk_skinpack_new(copy, size, false, err, sizeof err);
+    if (!sp && !err[0])
+        abort();
+    sk_skinpack_unref(sp);
     free(copy);
     return 0;
 }
