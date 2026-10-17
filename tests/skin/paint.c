@@ -203,6 +203,46 @@ static void test_box_shadows(void)
     sk_tskin_close(&s);
 }
 
+/* The skin area painted at 2x in four parts, as a frame's damage
+ * paints it, with cache. */
+static void paint_parts(sk_tskin *s, sk_paint_cache *cache, int w, int h, sk_image *out)
+{
+    sk_image_init(out, w, h);
+    sk_paint_env env = {&s->l, &s->lfonts, &s->images, s->glyphs, cache};
+    for (int q = 0; q < 4 && s->ok; q++) {
+        sk_rect part = sk_rect_make((q & 1) * w / 2, (q >> 1) * h / 2, w / 2, h / 2);
+        sk_image view = sk_image_view(out, part);
+        sk_paint_px(&view, &env, s->t.root, 2, part.x, part.y);
+    }
+}
+
+/* Blurred shadows kept between paints draw what they drew: the pixels
+ * painted without a cache, with one each time again, and with one too
+ * small to keep anything. */
+static void test_shadow_cache(void)
+{
+    sk_tskin s;
+    TSKIN(&s, "[" RECT("big", 40, 40, 300, 200) ", " RECT("hole", 400, 40, 200, 150) "]", NULL,
+          ".big { border-radius: 12px; box-shadow: 3px 4px 30px 6px #000 }\n"
+          ".hole { border-radius: 20px; box-shadow: inset 0 0 40px #f00, inset 2px 0 9px #00f }\n",
+          NULL);
+    sk_image want;
+    paint_parts(&s, NULL, 1320, 600, &want);
+    sk_paint_cache *caches[2] = {sk_paint_cache_new(32u << 20), sk_paint_cache_new(1)};
+    for (int c = 0; c < 2; c++)
+        for (int round = 0; round < 2; round++) {
+            sk_image im;
+            paint_parts(&s, caches[c], want.w, want.h, &im);
+            CHECK(memcmp(im.px, want.px, (size_t)want.w * (size_t)want.h * sizeof *im.px) == 0);
+            sk_image_free(&im);
+        }
+    sk_paint_cache_free(caches[0]);
+    sk_paint_cache_free(caches[1]);
+    sk_paint_cache_free(NULL);
+    sk_image_free(&want);
+    sk_tskin_close(&s);
+}
+
 /* Pixels of im in [x0, x1) with a channel at least 128 where mask asks. */
 static int count(const sk_image *im, int x0, int x1, sk_color mask)
 {
@@ -313,6 +353,29 @@ static void test_svg_arcs_and_dashes(void)
     CHECK_INT(alpha(pixel(&im, 92, 57)), 0);
     /* The fill at 0 of 100 draws nothing; the middle is empty. */
     CHECK_INT(alpha(pixel(&im, 50, 30)), 0);
+    sk_image_free(&im);
+    /* At 50 its dash is half the arc, -135 to 0 degrees, over the
+     * track: green at -90, the track's red still at 45. */
+    for (uint32_t i = 0; s.ok && i < s.t.n; i++)
+        if (s.t.nodes[i].role == SK_ROLE_ARC_FILL)
+            s.t.nodes[i].value = 50;
+    sk_layout_free(&s.l);
+    sk_layout_run(&s.l, s.t.nodes, s.t.n, s.t.root, 1000, 678, &s.lfonts);
+    sk_tskin_paint(&s, (sk_frect){0, 0, 100, 100}, 1, &im);
+    CHECK_COLOR(pixel(&im, 7, 50), 0xff4fd06au, 0);
+    CHECK_COLOR(pixel(&im, 80, 20), RED, 0);
+    CHECK_COLOR(pixel(&im, 93, 50), CLEAR, 0);
+    /* sk_paint_px paints the same pixels from a device offset. */
+    sk_image part;
+    sk_image_init(&part, 40, 40);
+    if (s.ok) {
+        sk_paint_env env = {&s.l, &s.lfonts, &s.images, s.glyphs, NULL};
+        sk_paint_px(&part, &env, s.t.root, 1, 3, 30);
+    }
+    for (int y = 0; y < 40; y += 3)
+        for (int x = 0; x < 40; x += 3)
+            CHECK_COLOR(pixel(&part, x, y), pixel(&im, x + 3, y + 30), 0);
+    sk_image_free(&part);
     sk_image_free(&im);
     sk_tskin_close(&s);
 }
@@ -454,6 +517,7 @@ const sk_test sk_suite_skin_paint[] = {
     T(test_background_images),
     T(test_border_image),
     T(test_box_shadows),
+    T(test_shadow_cache),
     T(test_text_and_shadow),
     T(test_groups),
     T(test_clips_order_and_turns),

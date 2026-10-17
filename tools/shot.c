@@ -119,7 +119,7 @@ void sk_shot_paint_area(sk_shot *s, sk_frect area, float scale, bool terminal, s
     int w = (int)ceilf(area.w * scale), h = (int)ceilf(area.h * scale);
     sk_image_init(out, w, h);
     sk_fill_rect(out, sk_image_bounds(out), SK_RGB(0, 0, 0), SK_BLEND_SRC, NULL);
-    sk_paint_env env = {&s->layout, &s->lfonts, &s->images, s->glyphs};
+    sk_paint_env env = {&s->layout, &s->lfonts, &s->images, s->glyphs, NULL};
     sk_paint(out, &env, s->tree.root, scale, area.x, area.y);
     if (terminal && s->terminal_bg) {
         sk_frect r = s->terminal;

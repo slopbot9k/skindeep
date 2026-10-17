@@ -133,4 +133,8 @@
     X(field)                                                                 \
     X(vizfeed)                                                               \
     X(vizwin)                                                                \
-    X(tabviz)
+    X(tabviz)                                                                \
+    X(skin_view)                                                             \
+    X(skin_live)                                                             \
+    X(skins)                                                                 \
+    X(skinterm)

@@ -830,8 +830,10 @@ static void arc_path(sk_path *p, const sk_pack_svg *g, double a0, double a1)
 }
 
 /* Dashes along [0, len) of a dash list in its own units scaled by
- * unit: the on intervals, each given to emit. */
-static void dashes(const sk_css_style *s, double len, double unit, void (*emit)(void *, double, double), void *data)
+ * unit: the on intervals, each given to emit. A dash of the widget's
+ * value (a gauge's fill) is value units long. */
+static void dashes(const sk_css_style *s, float value, double len, double unit, void (*emit)(void *, double, double),
+                   void *data)
 {
     uint16_t n = s->ndasharray;
     double total = 0;
@@ -839,7 +841,7 @@ static void dashes(const sk_css_style *s, double len, double unit, void (*emit)(
     int nd = 0;
     for (int rep = 0; rep < (n & 1 ? 2 : 1); rep++)
         for (uint16_t i = 0; i < n && nd < 64; i++) {
-            float v = sk_layout_len(&s->dasharray[i], 100);
+            float v = s->dasharray[i].kind == SK_LEN_VALUE ? value : sk_layout_len(&s->dasharray[i], 100);
             d[nd] = isnan(v) || v < 0 ? 0 : v * unit;
             total += d[nd++];
         }
@@ -937,7 +939,7 @@ static void svg_shape(painter *P, canvas *cv, uint32_t i, float alpha)
             /* pathLength 100: the dashes in hundredths of the length. */
             double unit = g->flag && len > 0 ? len / 100 : 1;
             dash_ctx dc = {dashed, g, g->v[3], len > 0 ? (g->v[4] - g->v[3]) / len : 0};
-            dashes(s, len, unit, g->kind == SK_SVG_ARC ? emit_arc : emit_line, &dc);
+            dashes(s, P->nodes[i].value, len, unit, g->kind == SK_SVG_ARC ? emit_arc : emit_line, &dc);
             src = dashed;
         }
         sk_path *out = sk_path_new();
@@ -1327,7 +1329,7 @@ static void svg_image(painter *P, canvas *cv, uint32_t i, const sk_xform *m, flo
 
 /* ---- The paint ---- */
 
-void sk_paint(sk_image *dst, const sk_paint_env *env, uint32_t root, float scale, float ox, float oy)
+static void paint_from(sk_image *dst, const sk_paint_env *env, uint32_t root, float scale, float ex, float ey)
 {
     const sk_layout *l = env->layout;
     if (root >= l->n || !l->boxes[root].generated || !(scale > 0))
@@ -1337,7 +1339,7 @@ void sk_paint(sk_image *dst, const sk_paint_env *env, uint32_t root, float scale
     P.env = env;
     P.l = l;
     P.nodes = l->nodes;
-    canvas cv = {dst, {scale, 0, 0, scale, -ox * scale, -oy * scale}, sk_image_bounds(dst), NULL};
+    canvas cv = {dst, {scale, 0, 0, scale, ex, ey}, sk_image_bounds(dst), NULL};
     if (l->boxes[root].svg_content)
         paint_svg_node(&P, &cv, root);
     else
@@ -1345,4 +1347,14 @@ void sk_paint(sk_image *dst, const sk_paint_env *env, uint32_t root, float scale
     for (size_t i = 0; i < P.masks.len; i++)
         free(P.masks.ptr[i]);
     sk_vec_free(&P.masks);
+}
+
+void sk_paint(sk_image *dst, const sk_paint_env *env, uint32_t root, float scale, float ox, float oy)
+{
+    paint_from(dst, env, root, scale, -ox * scale, -oy * scale);
+}
+
+void sk_paint_px(sk_image *dst, const sk_paint_env *env, uint32_t root, float scale, int px, int py)
+{
+    paint_from(dst, env, root, scale, (float)-px, (float)-py);
 }

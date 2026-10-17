@@ -110,7 +110,7 @@ FUZZ_BINS := $(FUZZ_TARGETS:%=$(BUILD)/fuzz-%)
 FUZZ_DRIVER := $(BUILD)/tests/fuzz/driver.o
 FUZZ_SECONDS ?= 30
 
-.PHONY: all test debug fuzz fuzz-run clean macdemo windemo milkshot skinshot vizshot vizwin
+.PHONY: all test debug fuzz fuzz-run clean macdemo windemo milkshot skinshot skinrun vizshot vizwin
 .SECONDARY:
 
 all: $(LIB) $(TEST_BIN) $(RELAY) $(HOOKDUMP) $(SKINNED) $(SKINC) $(BUILD)/qoi2png $(BUILD)/windemo
@@ -220,6 +220,13 @@ skinshot: $(BUILD)/skinshot
 $(BUILD)/skinshot: $(BUILD)/tools/skinshot.o $(SHOT_OBJ) $(SKINC_LIB) $(LIB)
 	$(CC) $(OPT) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
+# A shipped skin live in a window on the scripted session, to hover and
+# click, read back with -o, or its frames timed with -b: make skinrun.
+# Not part of all.
+skinrun: $(BUILD)/skinrun
+$(BUILD)/skinrun: $(BUILD)/tools/skinrun.o $(SHIPPED_OBJ) $(LIB)
+	$(CC) $(OPT) $(LDFLAGS) -o $@ $^ $(LDLIBS) $(UI_LIBS)
+
 # A visualizer mode run on the scripted session, its last frame as QOI,
 # or timed with -b: make vizshot. Not part of all.
 vizshot: $(BUILD)/vizshot
@@ -261,5 +268,5 @@ clean:
 -include $(LIB_OBJ:.o=.d) $(TEST_OBJ:.o=.d) $(SKINC_OBJ:.o=.d) $(BUILD)/skinc-objs/main.d $(BUILD)/src/relay/main.d $(BUILD)/tools/hookdump.d \
     $(BUILD)/src/main/skinned.d \
     $(BUILD)/tools/qoi2png.d $(BUILD)/tools/macdemo.d $(BUILD)/tools/windemo.d $(BUILD)/tools/gfxbench.d $(BUILD)/tools/vizshot.d \
-    $(BUILD)/tools/vizwin.d \
+    $(BUILD)/tools/vizwin.d $(BUILD)/tools/skinrun.d \
     $(wildcard $(BUILD)/tests/fuzz/*.d)

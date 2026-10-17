@@ -92,6 +92,10 @@ typedef struct sk_fontset sk_fontset;
 /* fs may be NULL: the embedded faces alone. families: NULL-terminated,
  * may be NULL. fs outlives the set. */
 sk_fontset *sk_fontset_new(sk_fonts *fs, const char *const *families, bool mono);
+/* The same with face first in every style, ahead of families: a font
+ * a skin pack carries, which fs does not list. Its bold and italic are
+ * the glyph cache's. face may be NULL, and outlives the set. */
+sk_fontset *sk_fontset_new_face(sk_fonts *fs, const sk_font *face, const char *const *families, bool mono);
 void sk_fontset_free(sk_fontset *set);
 
 /* What draws a character: the face and glyph, and the style the face
