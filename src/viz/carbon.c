@@ -962,17 +962,17 @@ typedef struct {
 
 #define SMALL 240
 
-static void parts(double w, double top, double spec_y, box *atom, box *diag)
+static void parts(double w, double top, double spec_y, box *at, box *diag)
 {
     box body = {0, top, w, spec_y - top - 6};
     if (w >= 1.15 * body.h) {
         double aw = sk_vm_round(SK_MIN(w * 0.52, body.h * 1.25));
-        *atom = (box){0, body.y, aw, body.h};
+        *at = (box){0, body.y, aw, body.h};
         *diag = (box){aw, body.y, w - aw - 6, body.h};
         return;
     }
     double ah = sk_vm_round(body.h * 0.55);
-    *atom = (box){0, body.y, w, ah};
+    *at = (box){0, body.y, w, ah};
     *diag = (box){0, body.y + ah, w - 6, body.h - ah};
 }
 
@@ -1357,7 +1357,7 @@ static void say(sk_vc *g, double w, const char *t, double x, double y, double ox
 
 /* t at the first of the places where it fits, or not at all; whether
  * it drew. */
-static bool place(carbon *c, sk_vc *g, const char *t, const double (*at)[2], int n, sk_color fill)
+static bool place(carbon *c, sk_vc *g, const char *t, double (*at)[2], int n, sk_color fill)
 {
     for (int i = 0; i < n; i++) {
         tbox b = box_of(g, c->base.w, t, at[i][0], at[i][1], 0, 0);
@@ -2368,12 +2368,12 @@ static void carbon_draw(sk_vmode *m, sk_synth *s, double dt)
  * lamp on the drawn atom: a photon absorbed from its present level. A
  * click on the level diagram lifts the drawn atom to the level nearest
  * it in that column by a collision. */
-static void carbon_pointer(sk_vmode *m, int kind, double x, double y, bool down)
+static void carbon_pointer(sk_vmode *m, int type, double x, double y, bool down)
 {
     carbon *c = (carbon *)m;
     if (!c->ow)
         return;
-    if (kind == SK_VIZ_DOWN) {
+    if (type == SK_VIZ_DOWN) {
         c->pressed = true;
         c->moved = false;
         c->px0 = x;
@@ -2385,7 +2385,7 @@ static void carbon_pointer(sk_vmode *m, int kind, double x, double y, bool down)
     if (!c->pressed)
         return;
     double dx = x - c->px0, dy = y - c->py0;
-    if (kind == SK_VIZ_MOVE && down) {
+    if (type == SK_VIZ_MOVE && down) {
         if (!c->moved && sqrt(dx * dx + dy * dy) >= 5 && inside(&c->R.atom, c->px0, c->py0)) {
             c->moved = true;
             c->turns++;
@@ -2397,7 +2397,7 @@ static void carbon_pointer(sk_vmode *m, int kind, double x, double y, bool down)
         }
         return;
     }
-    if (kind != SK_VIZ_UP)
+    if (type != SK_VIZ_UP)
         return;
     bool moved = c->moved;
     c->pressed = false;

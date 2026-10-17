@@ -30,6 +30,11 @@ void sk_ui_post(sk_ui_task task, void *ud)
     sk_xui_post(task, ud);
 }
 
+void sk_ui_post_owned(sk_ui_task task, void *ud, sk_ui_task drop)
+{
+    sk_xui_post_owned(task, ud, drop);
+}
+
 int sk_ui_timer(uint64_t delay_ms, uint64_t repeat_ms, sk_ui_task task, void *ud)
 {
     return sk_xui_timer(delay_ms, repeat_ms, task, ud);

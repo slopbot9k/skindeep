@@ -1,7 +1,7 @@
 /* The core thread's event loop (decision 0036): one poll() over every
  * descriptor the app watches, timers on the monotonic clock, signals
  * turned into ordinary events through a pipe, and a queue other threads
- * post work to. Only sk_loop_wake and sk_loop_post may be called from
+ * post work to. Only sk_loop_wake and the posts may be called from
  * another thread. */
 #ifndef SK_LOOP_H
 #define SK_LOOP_H
@@ -55,6 +55,9 @@ void sk_loop_unchild(sk_loop *loop, pid_t pid);
 
 /* Thread-safe: runs cb(ud) on the loop's thread, in the order posted. */
 void sk_loop_post(sk_loop *loop, sk_task_cb cb, void *ud);
+/* The same for a ud the task owns: when the loop is freed with cb not
+ * run, as a message to a loop that has stopped is, drop(ud) frees it. */
+void sk_loop_post_owned(sk_loop *loop, sk_task_cb cb, void *ud, sk_task_cb drop);
 /* Thread-safe: makes a poll() in progress return. */
 void sk_loop_wake(sk_loop *loop);
 

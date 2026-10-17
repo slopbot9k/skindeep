@@ -965,12 +965,18 @@ static void do_post(void *ud)
     free(m);
 }
 
+/* A message the loop never ran, as the app ends. */
+static void drop_post(void *ud)
+{
+    free(ud);
+}
+
 static void post(sk_vizfeed *f, post_msg m)
 {
     post_msg *p = sk_xmalloc(sizeof *p);
     *p = m;
     p->f = f;
-    sk_loop_post(f->c.loop, do_post, p);
+    sk_loop_post_owned(f->c.loop, do_post, p, drop_post);
 }
 
 void sk_vizfeed_post_press(sk_vizfeed *f, double x, double y, int w, int h)

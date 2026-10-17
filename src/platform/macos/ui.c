@@ -1180,26 +1180,82 @@ void sk_ui_quit(void)
 
 /* ---- Tasks and timers ---- */
 
-typedef struct {
-    sk_ui_task task;
+/* A task on the main queue. Those not yet run are listed, so that the
+ * UI's close drops what they own: the main queue runs nothing once the
+ * app's run loop has ended. */
+typedef struct posted {
+    sk_ui_task task, drop;
     void *ud;
+    struct posted *prev, *next;
+    bool listed;
 } posted;
 
-static void run_posted(void *p)
+static pthread_mutex_t posted_lock = PTHREAD_MUTEX_INITIALIZER;
+static posted *posted_head;
+
+static void unlist(posted *p)
 {
-    posted t = *(posted *)p;
+    if (!p->listed)
+        return;
+    if (p->prev)
+        p->prev->next = p->next;
+    else
+        posted_head = p->next;
+    if (p->next)
+        p->next->prev = p->prev;
+    p->listed = false;
+}
+
+static void run_posted(void *v)
+{
+    posted *p = v;
+    pthread_mutex_lock(&posted_lock);
+    bool live = p->listed;
+    unlist(p);
+    pthread_mutex_unlock(&posted_lock);
+    /* One the close dropped is only freed. */
+    if (live) {
+        void *pool = objc_autoreleasePoolPush();
+        p->task(p->ud);
+        objc_autoreleasePoolPop(pool);
+    }
     free(p);
-    void *pool = objc_autoreleasePoolPush();
-    t.task(t.ud);
-    objc_autoreleasePoolPop(pool);
+}
+
+void sk_ui_post_owned(sk_ui_task task, void *ud, sk_ui_task drop)
+{
+    posted *p = sk_xmalloc(sizeof *p);
+    p->task = task;
+    p->drop = drop;
+    p->ud = ud;
+    p->prev = NULL;
+    pthread_mutex_lock(&posted_lock);
+    p->next = posted_head;
+    if (posted_head)
+        posted_head->prev = p;
+    posted_head = p;
+    p->listed = true;
+    pthread_mutex_unlock(&posted_lock);
+    dispatch_async_f(dispatch_get_main_queue(), p, run_posted);
 }
 
 void sk_ui_post(sk_ui_task task, void *ud)
 {
-    posted *p = sk_xmalloc(sizeof *p);
-    p->task = task;
-    p->ud = ud;
-    dispatch_async_f(dispatch_get_main_queue(), p, run_posted);
+    sk_ui_post_owned(task, ud, NULL);
+}
+
+/* The tasks not yet run give up what they own; the queue frees each
+ * should it ever run it. */
+static void drop_posted(void)
+{
+    pthread_mutex_lock(&posted_lock);
+    while (posted_head) {
+        posted *p = posted_head;
+        unlist(p);
+        if (p->drop)
+            p->drop(p->ud);
+    }
+    pthread_mutex_unlock(&posted_lock);
 }
 
 static void remove_timer(size_t i)
@@ -1441,4 +1497,5 @@ void sk_ui_close(void)
     ui.handler = NULL;
     ui.ud = NULL;
     ui.open = false;
+    drop_posted();
 }

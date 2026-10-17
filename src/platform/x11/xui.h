@@ -16,6 +16,7 @@ bool sk_xui_run(void);
 void sk_xui_quit(void);
 void sk_xui_close(void);
 void sk_xui_post(sk_ui_task task, void *ud);
+void sk_xui_post_owned(sk_ui_task task, void *ud, sk_ui_task drop);
 int sk_xui_timer(uint64_t delay_ms, uint64_t repeat_ms, sk_ui_task task, void *ud);
 void sk_xui_cancel(int id);
 

@@ -281,6 +281,16 @@ static void st_unref(shared_term *s)
     }
 }
 
+/* ---- Messages between the threads ----
+ *
+ * A message the receiving loop never runs, as the app ends, is freed by
+ * its drop when that loop goes. Most are one block. */
+
+static void drop_free(void *ud)
+{
+    free(ud);
+}
+
 /* ---- The core thread ---- */
 
 static void log_line(void *ud, const char *msg)
@@ -397,6 +407,17 @@ static void strip_of(gui *g, sk_tab *tab, strip_text *out)
 
 static void ui_snapshot(void *ud);
 
+static void drop_snapshot(void *ud)
+{
+    void **pair = ud;
+    snapshot *s = pair[1];
+    for (size_t i = 0; i < s->n; i++)
+        free_snap_win(&s->wins[i]);
+    free(s->wins);
+    free(s);
+    free(pair);
+}
+
 /* Every window's tabs as the UI shows them, posted to it. */
 static void post_snapshot(gui *g)
 {
@@ -439,7 +460,7 @@ static void post_snapshot(gui *g)
     void **pair = sk_xmalloc(2 * sizeof *pair);
     pair[0] = g;
     pair[1] = s;
-    sk_ui_post(ui_snapshot, pair);
+    sk_ui_post_owned(ui_snapshot, pair, drop_snapshot);
 }
 
 /* pollStrip, every POLL_MS: the live command line follows an exec in a
@@ -496,7 +517,7 @@ static void post_input(gui *g, int id, const char *data, size_t n)
     m->id = id;
     m->n = n;
     memcpy(m->data, data, n);
-    sk_loop_post(g->loop, do_input, m);
+    sk_loop_post_owned(g->loop, do_input, m, drop_free);
 }
 
 /* What the terminal answers goes back to its CLI, from whichever thread
@@ -568,7 +589,7 @@ static void post_tab(gui *g, sk_task_cb fn, int id, int win)
     m->g = g;
     m->id = id;
     m->win = win;
-    sk_loop_post(g->loop, fn, m);
+    sk_loop_post_owned(g->loop, fn, m, drop_free);
 }
 
 /* A problem for Housekeeping, logged as main.js logs it. */
@@ -598,13 +619,20 @@ static void mon_pane(void *ud, sk_tab *tab, const char *text)
 
 static void ui_viz_frame(void *ud);
 
+static void drop_viz_frame(void *ud)
+{
+    void **pair = ud;
+    sk_vizfeed_msg_free(pair[1]);
+    free(pair);
+}
+
 /* The visualization's frame, to the UI thread, which owns it then. */
 static void viz_frame(void *ud, sk_vizfeed_msg *msg)
 {
     void **pair = sk_xmalloc(2 * sizeof *pair);
     pair[0] = ud;
     pair[1] = msg;
-    sk_ui_post(ui_viz_frame, pair);
+    sk_ui_post_owned(ui_viz_frame, pair, drop_viz_frame);
 }
 
 /* The dashboard's sessions, boards and view (decision 0028). */
@@ -634,7 +662,7 @@ static void dash_send(void *ud, sk_tab *tab, const char *view)
     m->g = g;
     m->id = tab->id;
     memcpy(m->view, view, n + 1);
-    sk_ui_post(ui_dash_view, m);
+    sk_ui_post_owned(ui_dash_view, m, drop_free);
 }
 
 static int make_tab(void *ud, sk_tab *tab, const sk_tab_spec *spec, char **err)
@@ -1097,6 +1125,11 @@ static void chooser_msg_free(chooser_msg *m)
     free(m);
 }
 
+static void drop_chooser(void *ud)
+{
+    chooser_msg_free(ud);
+}
+
 static void ui_chooser_open(void *ud);
 static void ui_chooser_answer(void *ud);
 static void ui_chooser_forgot(void *ud);
@@ -1110,7 +1143,7 @@ static void chooser_offer(gui *g, int win)
     m->win = win;
     sk_tabs_touch(g->tabs, win);
     sk_newtab_offer(&g->newtab, win, true, &m->st);
-    sk_ui_post(ui_chooser_open, m);
+    sk_ui_post_owned(ui_chooser_open, m, drop_chooser);
 }
 
 static void do_chooser_offer(void *ud)
@@ -1127,7 +1160,7 @@ static void do_chooser_open(void *ud)
     sk_tabs_touch(m->g->tabs, m->win);
     if (sk_newtab_open(&m->g->newtab, m->win, &m->pick, &m->err) != 0 && !m->err)
         m->err = sk_xstrdup("the tab could not be opened");
-    sk_ui_post(ui_chooser_answer, m);
+    sk_ui_post_owned(ui_chooser_answer, m, drop_chooser);
 }
 
 /* chooser:forget, then the offer again from the same scan. */
@@ -1136,7 +1169,7 @@ static void do_chooser_forget(void *ud)
     chooser_msg *m = ud;
     sk_newtab_forget(&m->g->newtab, m->pick.agent, m->pick.profile);
     sk_newtab_offer(&m->g->newtab, m->win, false, &m->st);
-    sk_ui_post(ui_chooser_forgot, m);
+    sk_ui_post_owned(ui_chooser_forgot, m, drop_chooser);
 }
 
 typedef struct {
@@ -1150,6 +1183,20 @@ typedef struct {
 
 static void ui_menu(void *ud);
 static void ui_sessions(void *ud);
+
+static void drop_menu(void *ud)
+{
+    menu_msg *m = ud;
+    sk_menu_rows_free(m->rows, m->n);
+    free(m);
+}
+
+static void drop_sessions(void *ud)
+{
+    menu_msg *m = ud;
+    sk_menu_sessions_free(m->sessions, m->n);
+    free(m);
+}
 
 /* A window asked for a menu: its rows, back to the window. */
 static void do_menu(void *ud)
@@ -1174,7 +1221,7 @@ static void do_menu(void *ud)
     }
     m->rows = v.ptr;
     m->n = v.len;
-    sk_ui_post(ui_menu, m);
+    sk_ui_post_owned(ui_menu, m, drop_menu);
 }
 
 /* The agent sessions again, for the box that shows them. */
@@ -1182,7 +1229,7 @@ static void do_sessions(void *ud)
 {
     menu_msg *m = ud;
     sessions_now(m->g, &m->sessions, &m->n);
-    sk_ui_post(ui_sessions, m);
+    sk_ui_post_owned(ui_sessions, m, drop_sessions);
 }
 
 typedef struct {
@@ -1197,6 +1244,14 @@ typedef struct {
 
 static void ui_answer(void *ud);
 static void ui_settings(void *ud);
+
+static void drop_answer(void *ud)
+{
+    act_msg *m = ud;
+    free(m->error);
+    free(m->note);
+    free(m);
+}
 
 /* The terminal's size the settings give, or the default without a skin
  * to give one. */
@@ -1226,7 +1281,7 @@ static char *set_setting(gui *g, const char *arg)
         act_msg *s = sk_xcalloc(1, sizeof *s);
         s->g = g;
         s->font_px = font_of(&g->settings);
-        sk_ui_post(ui_settings, s);
+        sk_ui_post_owned(ui_settings, s, drop_free);
     }
     sk_arena_free(&a);
     free(id);
@@ -1345,7 +1400,7 @@ static void do_action(void *ud)
     if (m->waits) {
         m->error = err;
         m->note = note;
-        sk_ui_post(ui_answer, m);
+        sk_ui_post_owned(ui_answer, m, drop_answer);
         return;
     }
     free(err);
@@ -1435,7 +1490,7 @@ static void fit(gwin *w)
     m->win = w->snap.id;
     m->cols = cols;
     m->rows = rows;
-    sk_loop_post(w->g->loop, do_resize, m);
+    sk_loop_post_owned(w->g->loop, do_resize, m, drop_free);
 }
 
 static void focus_term(gwin *w)
@@ -1655,7 +1710,7 @@ static void menu_ask(gwin *w, int menu)
     m->win = w->snap.id;
     m->menu = menu;
     m->ask = sk_menu_ask(w->menu, menu);
-    sk_loop_post(w->g->loop, do_menu, m);
+    sk_loop_post_owned(w->g->loop, do_menu, m, drop_free);
 }
 
 static void on_sessions_tick(void *ud)
@@ -1669,7 +1724,7 @@ static void on_sessions_tick(void *ud)
     menu_msg *m = sk_xcalloc(1, sizeof *m);
     m->g = w->g;
     m->win = w->snap.id;
-    sk_loop_post(w->g->loop, do_sessions, m);
+    sk_loop_post_owned(w->g->loop, do_sessions, m, drop_free);
 }
 
 /* The sessions refresh every 2 s while the menu shows them, and no
@@ -1760,7 +1815,7 @@ static void menu_press(gwin *w, const sk_menu_press *p)
         m->waits = p->waits;
         if (n)
             memcpy(m->arg, p->arg, n);
-        sk_loop_post(w->g->loop, do_action, m);
+        sk_loop_post_owned(w->g->loop, do_action, m, drop_free);
     }
     menu_changed(w);
 }
@@ -1862,7 +1917,8 @@ static void chooser_result(gwin *w, sk_chooser_result r)
         m->g = w->g;
         m->win = w->snap.id;
         sk_chooser_pick(w->chooser, &m->pick);
-        sk_loop_post(w->g->loop, r.act == SK_CHOOSER_OPEN ? do_chooser_open : do_chooser_forget, m);
+        sk_loop_post_owned(w->g->loop, r.act == SK_CHOOSER_OPEN ? do_chooser_open : do_chooser_forget, m,
+                           drop_chooser);
     } else if (r.act == SK_CHOOSER_CLOSED) {
         chooser_closed(w);
         return;
@@ -1949,7 +2005,7 @@ static void rename_finish(gwin *w, bool commit)
         m->id = id;
         memcpy(m->name, s + lo, hi - lo);
         m->name[hi - lo] = 0;
-        sk_loop_post(w->g->loop, do_rename, m);
+        sk_loop_post_owned(w->g->loop, do_rename, m, drop_free);
     }
     bool strip = tabs_shown(w);
     sk_rename_end(w->rename);
@@ -2169,7 +2225,7 @@ static bool dash_mouse(gwin *w, const sk_event *ev)
             m->win = w->snap.id;
             m->action = ACT_SESSION;
             memcpy(m->arg, key, n);
-            sk_loop_post(w->g->loop, do_action, m);
+            sk_loop_post_owned(w->g->loop, do_action, m, drop_free);
         }
     }
     return true;
@@ -2742,7 +2798,7 @@ static void open_uri(gui *g, const char *uri)
     uri_msg *m = sk_xmalloc(sizeof *m + n + 1);
     m->g = g;
     memcpy(m->uri, uri, n + 1);
-    sk_loop_post(g->loop, do_open, m);
+    sk_loop_post_owned(g->loop, do_open, m, drop_free);
 }
 
 /* The web links addon reads the buffer line by line through these, the
@@ -3481,6 +3537,16 @@ static void probe(gui *g, gwin *w, ctl_msg *m)
 
 /* On the UI thread: each request goes the way the platform's events go,
  * to the window it names. */
+static void drop_control(void *ud)
+{
+    ctl_msg *m = ud;
+    if (m->req)
+        sk_control_drop(m->req);
+    sk_buf_free(&m->msg);
+    sk_buf_free(&m->core);
+    free(m);
+}
+
 static void ui_control(void *ud)
 {
     ctl_msg *m = ud;
@@ -3654,7 +3720,7 @@ static void on_control(void *ud, sk_control_req *req, const sk_json *msg)
             sk_buf_append(&m->core, obj.ptr + 1, obj.len - 2);
         sk_buf_free(&obj);
     }
-    sk_ui_post(ui_control, m);
+    sk_ui_post_owned(ui_control, m, drop_control);
 }
 
 /* ---- The run ---- */

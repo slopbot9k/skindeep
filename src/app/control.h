@@ -26,5 +26,7 @@ void sk_control_close(sk_control *c);
 void sk_control_answer(sk_control_req *req, const char *json, size_t n);
 /* {"ok":true}, or {"ok":false,"error":why}. */
 void sk_control_ok(sk_control_req *req, const char *why);
+/* A request that will never be answered, as the app ends: freed. */
+void sk_control_drop(sk_control_req *req);
 
 #endif

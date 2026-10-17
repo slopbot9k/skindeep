@@ -388,8 +388,17 @@ bool sk_xui_shm(void)
 
 void sk_xui_post(sk_ui_task task, void *ud)
 {
+    sk_xui_post_owned(task, ud, NULL);
+}
+
+/* With no connection, or once it closed, nothing runs: what the task
+ * owned is dropped at once, or when the loop is freed. */
+void sk_xui_post_owned(sk_ui_task task, void *ud, sk_ui_task drop)
+{
     if (ui.loop)
-        sk_loop_post(ui.loop, task, ud);
+        sk_loop_post_owned(ui.loop, task, ud, drop);
+    else if (drop)
+        drop(ud);
 }
 
 static void drop_timer(int id)

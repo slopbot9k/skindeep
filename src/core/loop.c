@@ -33,7 +33,7 @@ typedef struct {
 
 typedef struct task {
     struct task *next;
-    sk_task_cb cb;
+    sk_task_cb cb, drop;
     void *ud;
 } task;
 
@@ -144,8 +144,11 @@ void sk_loop_free(sk_loop *loop)
         sig_pipe[0] = sig_pipe[1] = -1;
         sig_loop = NULL;
     }
+    /* What was posted and never ran: its payload freed. */
     for (task *t = loop->head; t;) {
         task *next = t->next;
+        if (t->drop)
+            t->drop(t->ud);
         free(t);
         t = next;
     }
@@ -300,9 +303,15 @@ static void reap_children(sk_loop *loop)
 
 void sk_loop_post(sk_loop *loop, sk_task_cb cb, void *ud)
 {
+    sk_loop_post_owned(loop, cb, ud, NULL);
+}
+
+void sk_loop_post_owned(sk_loop *loop, sk_task_cb cb, void *ud, sk_task_cb drop)
+{
     task *t = sk_xmalloc(sizeof *t);
     t->next = NULL;
     t->cb = cb;
+    t->drop = drop;
     t->ud = ud;
     pthread_mutex_lock(&loop->lock);
     if (loop->tail)

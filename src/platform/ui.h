@@ -166,6 +166,9 @@ void sk_ui_close(void);
 
 /* Thread-safe: runs task(ud) on the UI thread, in the order posted. */
 void sk_ui_post(sk_ui_task task, void *ud);
+/* The same for a ud the task owns: when the UI closes with the task not
+ * run, as a message posted as the app ends is, drop(ud) frees it. */
+void sk_ui_post_owned(sk_ui_task task, void *ud, sk_ui_task drop);
 /* A timer on the UI thread: task after delay_ms, then every repeat_ms
  * when it is not 0. Returns an id for sk_ui_cancel. */
 int sk_ui_timer(uint64_t delay_ms, uint64_t repeat_ms, sk_ui_task task, void *ud);

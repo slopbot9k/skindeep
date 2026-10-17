@@ -103,6 +103,12 @@ static void do_answer(void *ud)
     free(a);
 }
 
+/* An answer the loop never sent, as the app ends. */
+static void free_answer(void *ud)
+{
+    free(ud);
+}
+
 void sk_control_answer(sk_control_req *req, const char *json, size_t n)
 {
     answer *a = sk_xmalloc(sizeof *a + n + 1);
@@ -111,7 +117,12 @@ void sk_control_answer(sk_control_req *req, const char *json, size_t n)
     memcpy(a->line, json, n);
     a->line[n] = '\n';
     a->n = n + 1;
-    sk_loop_post(req->c->loop, do_answer, a);
+    sk_loop_post_owned(req->c->loop, do_answer, a, free_answer);
+    free(req);
+}
+
+void sk_control_drop(sk_control_req *req)
+{
     free(req);
 }
 
