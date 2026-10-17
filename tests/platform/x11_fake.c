@@ -35,6 +35,7 @@ typedef struct {
 
 typedef struct {
     uint32_t id;
+    int x, y; /* a window's, as made */
     int w, h;
     bool pixmap, mapped;
     uint32_t mask;
@@ -76,9 +77,11 @@ struct sk_xfake {
     SK_VEC(prop) props;
     SK_VEC(sel) sels;
     SK_VEC(segment) segs;
-    /* The other client, as owner. */
+    /* The other client, as owner: of UTF8_STRING and STRING, or of
+     * own_target alone when it is not 0. */
     char *own_text;
     size_t own_len, own_chunk;
+    uint32_t own_target;
     bool incr_on;
     uint32_t incr_win, incr_prop, incr_type;
     size_t incr_off;
@@ -281,7 +284,7 @@ static drawable *find_draw(sk_xfake *f, uint32_t id)
 
 static drawable *add_draw(sk_xfake *f, uint32_t id, int w, int h, bool pixmap)
 {
-    drawable d = {id, w, h, pixmap, false, 0, NULL};
+    drawable d = {id, 0, 0, w, h, pixmap, false, 0, NULL};
     if (w > 0 && h > 0)
         d.px = sk_xcalloc((size_t)w * (size_t)h, sizeof *d.px);
     sk_vec_push(&f->draws, d);
@@ -538,15 +541,17 @@ static void convert_selection(sk_xfake *f, sk_buf *out, const uint8_t *r)
         return;
     }
     uint32_t utf8 = intern(f, "UTF8_STRING", 11, false), targets = intern(f, "TARGETS", 7, false);
+    bool offered = f->own_target ? target == f->own_target
+                                 : target == utf8 || target == SK_X11_STRING;
     if (owner != SK_XFAKE_OWNER || !property) {
         property = 0;
-    } else if (target == targets) {
+    } else if (target == targets && !f->own_target) {
         uint8_t list[12];
         sk_x11_set32(list, targets);
         sk_x11_set32(list + 4, utf8);
         sk_x11_set32(list + 8, SK_X11_STRING);
         set_prop(f, out, 0, requestor, property, SK_X11_ATOM, 32, list, sizeof list);
-    } else if (target == utf8 || target == SK_X11_STRING) {
+    } else if (offered) {
         if (f->own_chunk && f->own_len > f->own_chunk) {
             uint8_t size[4];
             sk_x11_set32(size, (uint32_t)f->own_len);
@@ -714,6 +719,8 @@ static void handle(sk_xfake *f, const uint8_t *r, size_t n, sk_buf *out)
         drawable *d = add_draw(f, sk_x11_get32(r + 4), sk_x11_get16(r + 16), sk_x11_get16(r + 18),
                                false);
         d->mask = mask;
+        d->x = (int16_t)sk_x11_get16(r + 12);
+        d->y = (int16_t)sk_x11_get16(r + 14);
         break;
     }
     case 2: { /* ChangeWindowAttributes */
@@ -770,6 +777,14 @@ static void handle(sk_xfake *f, const uint8_t *r, size_t n, sk_buf *out)
     case 25:
         send_event(f, out, r);
         break;
+    case 40: { /* TranslateCoordinates, to the root: where a window was made */
+        const drawable *d = find_draw(f, sk_x11_get32(r + 4));
+        h[1] = 1;
+        sk_x11_set16(h + 12, (uint16_t)((d ? d->x : 0) + (int16_t)sk_x11_get16(r + 12)));
+        sk_x11_set16(h + 14, (uint16_t)((d ? d->y : 0) + (int16_t)sk_x11_get16(r + 14)));
+        reply_out(f, out, h, NULL, 0);
+        break;
+    }
     case 43: /* GetInputFocus */
         h[1] = 1;
         sk_x11_set32(h + 8, SK_XFAKE_ROOT);
@@ -1195,6 +1210,12 @@ uint8_t *sk_xfake_property(sk_xfake *f, uint32_t win, uint32_t a, size_t *len, u
 
 void sk_xfake_own(sk_xfake *f, uint32_t selection, const char *text, size_t chunk)
 {
+    sk_xfake_own_target(f, selection, 0, text, chunk);
+}
+
+void sk_xfake_own_target(sk_xfake *f, uint32_t selection, uint32_t target, const char *text,
+                         size_t chunk)
+{
     sk_buf out = {0};
     pthread_mutex_lock(&f->lock);
     uint32_t was = owner_of(f, selection);
@@ -1212,6 +1233,19 @@ void sk_xfake_own(sk_xfake *f, uint32_t selection, const char *text, size_t chun
     f->own_len = text ? strlen(text) : 0;
     f->own_text = text ? sk_xstrdup(text) : NULL;
     f->own_chunk = chunk;
+    f->own_target = target;
+    pthread_mutex_unlock(&f->lock);
+    flush_out(f, &out);
+}
+
+void sk_xfake_set_property(sk_xfake *f, uint32_t win, uint32_t atom, uint32_t type,
+                           uint8_t format, const void *data, size_t len)
+{
+    sk_buf out = {0};
+    pthread_mutex_lock(&f->lock);
+    pthread_mutex_lock(&f->wlock);
+    set_prop(f, &out, 0, win, atom, type, format, data, len);
+    pthread_mutex_unlock(&f->wlock);
     pthread_mutex_unlock(&f->lock);
     flush_out(f, &out);
 }

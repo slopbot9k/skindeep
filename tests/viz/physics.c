@@ -1,6 +1,7 @@
 /* The Quantum, Gravity 3D and Carbon modes' physics, as
  * test/viz-modes.test.js, viz-gravity3d.test.js and viz-carbon.test.js
  * check quantum.js, gravity3d.js and carbon.js. */
+#include "../../src/base/json.h"
 #include "../../src/viz/carbon.h"
 #include "../../src/viz/gravity3d.h"
 #include "../../src/viz/quantum.h"
@@ -282,6 +283,58 @@ static int level(const char *id)
     return -1;
 }
 
+/* carbon_data.c holds the research data's numbers as they are
+ * (viz-carbon.test.js): each level's energies and lifetime and each
+ * line's levels, rate and branching ratio, exactly, in their order, and
+ * the ionization limit. */
+static double num_at(const sk_json *v, const char *key)
+{
+    double d = NAN;
+    sk_json_as_number(sk_json_get(v, key), &d);
+    return d;
+}
+
+static bool str_is(const sk_json *v, const char *key, const char *want)
+{
+    sk_str s = {0};
+    return sk_json_as_string(sk_json_get(v, key), &s) && sk_str_eq_c(s, want);
+}
+
+static void test_carbon_data_is_the_research_data(void)
+{
+    size_t len;
+    char *text = sk_test_read("docs/research/carbon-atom-data.json", &len);
+    CHECK(text != NULL);
+    if (!text)
+        return;
+    sk_arena a;
+    sk_arena_init(&a, 0);
+    const sk_json *full = sk_json_parse(&a, text, len, NULL);
+    const sk_json *levels = sk_json_get(full, "levels"), *lines = sk_json_get(full, "lines");
+    CHECK(levels && levels->type == SK_JSON_ARRAY && levels->array.len == SK_CARBON_LEVELS);
+    CHECK(lines && lines->type == SK_JSON_ARRAY && lines->array.len == SK_CARBON_LINES);
+    for (int i = 0; levels && i < SK_CARBON_LEVELS && (size_t)i < levels->array.len; i++) {
+        const sk_carbon_level *l = &sk_carbon_levels[i];
+        const sk_json *f = sk_json_at(levels, (size_t)i);
+        const sk_json *tau = sk_json_get(f, "tau_s");
+        bool ok = str_is(f, "id", l->id) && num_at(f, "energy_cm") == l->E && num_at(f, "energy_eV") == l->eV &&
+                  (tau && tau->type == SK_JSON_NULL ? l->tau == 0 : num_at(f, "tau_s") == l->tau);
+        if (!ok)
+            sk_test_fail(__FILE__, __LINE__, "level %d, %s, is not the research data's", i, l->id);
+    }
+    for (int k = 0; lines && k < SK_CARBON_LINES && (size_t)k < lines->array.len; k++) {
+        const sk_carbon_line *l = &sk_carbon_lines[k];
+        const sk_json *f = sk_json_at(lines, (size_t)k);
+        bool ok = str_is(f, "upper", sk_carbon_levels[l->u].id) && str_is(f, "lower", sk_carbon_levels[l->l].id) &&
+                  num_at(f, "A_s") == l->A && num_at(f, "branch") == l->branch;
+        if (!ok)
+            sk_test_fail(__FILE__, __LINE__, "line %d is not the research data's", k);
+    }
+    CHECK(num_at(sk_json_dig(full, "ionization", "limits", "2P1/2", NULL), "energy_cm") == sk_carbon_limit);
+    sk_arena_free(&a);
+    free(text);
+}
+
 static void test_carbon_clocks(void)
 {
     static const char *const ids[] = {"2p4p_1P_1", "2p3s_1Po_1", "2s2p3_5So_2", "2p2_1D_2"};
@@ -349,6 +402,6 @@ static void test_carbon_patterns(void)
 }
 
 const sk_test sk_suite_viz_physics[] = {T(test_quantum),         T(test_g3_horizon),  T(test_g3_orbits),
-                                        T(test_g3_swallow),      T(test_g3_frame_dragging), T(test_carbon_data),
+                                        T(test_g3_swallow),      T(test_g3_frame_dragging), T(test_carbon_data), T(test_carbon_data_is_the_research_data),
                                         T(test_carbon_clocks),   T(test_carbon_orbitals), T(test_carbon_patterns),
                                         {0}};

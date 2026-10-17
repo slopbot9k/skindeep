@@ -178,6 +178,17 @@ uint64_t sk_x11_set_input_focus(sk_x11 *c, uint8_t revert_to, uint32_t focus, ui
     return s;
 }
 
+uint64_t sk_x11_translate_coordinates(sk_x11 *c, uint32_t src, uint32_t dst, int x, int y)
+{
+    uint64_t s = sk_x11_begin(c, 40, 0);
+    sk_x11_put32(c, src);
+    sk_x11_put32(c, dst);
+    sk_x11_put16(c, (uint32_t)(uint16_t)(int16_t)x);
+    sk_x11_put16(c, (uint32_t)(uint16_t)(int16_t)y);
+    sk_x11_end(c);
+    return s;
+}
+
 uint64_t sk_x11_get_input_focus(sk_x11 *c)
 {
     return empty(c, 43);

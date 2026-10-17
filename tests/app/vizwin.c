@@ -342,7 +342,10 @@ static void to_window(void *ud, const sk_event *ev)
         sk_vizwin_event(v, ev);
 }
 
-static void test_the_window_never_takes_the_focus(void)
+/* The window (decision 0015): it opens without the keyboard, as
+ * showInactive opened it, but is an ordinary window a click gives the
+ * keys; then the space bar steps the active pane. */
+static void test_the_window_opens_inactive(void)
 {
     static sk_vizwin *v;
     v = NULL;
@@ -379,10 +382,8 @@ static void test_the_window_never_takes_the_focus(void)
         CHECK_INT(ph, SK_VIZWIN_H);
 #ifdef __APPLE__
         id nw = sk_macos_nswindow(w);
-        CHECK(!sk_msg_bool(nw, "canBecomeKeyWindow"));
-        CHECK(!sk_msg_bool(nw, "canBecomeMainWindow"));
-        sk_msg_void(nw, "makeKeyWindow");
         CHECK(!sk_msg_bool(nw, "isKeyWindow"));
+        CHECK(sk_msg_bool(nw, "canBecomeKeyWindow"));
 #endif
         /* An event of another window is not its own. */
         sk_event other = {.type = SK_EV_FRAME};
@@ -433,6 +434,6 @@ const sk_test sk_suite_vizwin[] = {
     T(test_presses_go_to_the_feed_and_the_pointer_to_the_modes),
     T(test_two_panes_at_2x),
     T(test_four_panes_and_a_drop_down),
-    T(test_the_window_never_takes_the_focus),
+    T(test_the_window_opens_inactive),
     {0},
 };

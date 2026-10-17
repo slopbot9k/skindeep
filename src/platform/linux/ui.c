@@ -90,6 +90,11 @@ void sk_window_size(const sk_window *w, int *pw, int *ph)
     sk_xui_window_size(w, pw, ph);
 }
 
+bool sk_window_origin(const sk_window *w, int *x, int *y)
+{
+    return sk_xui_window_origin(w, x, y);
+}
+
 double sk_window_scale(const sk_window *w)
 {
     return sk_xui_window_scale(w);

@@ -2,18 +2,30 @@
 #include "base.h"
 
 #include <stdarg.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+static void (*die_hook)(const char *msg);
+static atomic_flag dying = ATOMIC_FLAG_INIT;
+
+void sk_die_hook(void (*hook)(const char *msg))
+{
+    die_hook = hook;
+}
+
 _Noreturn void sk_die(const char *fmt, ...)
 {
+    /* No allocation: memory may be what ran out. */
+    char msg[512];
     va_list ap;
     va_start(ap, fmt);
-    fputs("skinned: ", stderr);
-    vfprintf(stderr, fmt, ap);
-    fputc('\n', stderr);
+    vsnprintf(msg, sizeof msg, fmt, ap);
     va_end(ap);
+    if (die_hook && !atomic_flag_test_and_set(&dying))
+        die_hook(msg);
+    fprintf(stderr, "skinned: %s\n", msg);
     abort();
 }
 

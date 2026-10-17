@@ -38,6 +38,7 @@
     X(argv)                                                                  \
     X(options)                                                               \
     X(identity)                                                              \
+    X(drop)                                                                  \
     X(runtime)                                                               \
     X(appsettings)                                                           \
     X(background)                                                            \
@@ -48,6 +49,7 @@
     X(dashview)                                                              \
     X(foreign)                                                               \
     X(newtab)                                                                \
+    X(opener)                                                                \
     X(picker)                                                                \
     X(ask)                                                                   \
     X(chooser)                                                               \

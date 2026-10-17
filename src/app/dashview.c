@@ -989,6 +989,50 @@ const char *sk_dashview_hit(sk_dashview *v, double x, double y)
     return key && key->type == SK_JSON_STRING ? key->string.ptr : NULL;
 }
 
+bool sk_dashview_title_at(sk_dashview *v, double x, double y, sk_buf *out)
+{
+    sk_buf_clear(out);
+    if (!v->laid || !v->data || !v->lay.col_x.len)
+        return false;
+    const layout *l = &v->lay;
+    double s = l->s, dx = x * s, dy = y * s;
+    if (!(dx >= 0 && dy >= 0 && dx < l->w && dy < l->h))
+        return false;
+    size_t col = SIZE_MAX, last = l->col_x.len - 1;
+    for (size_t i = 0; i < l->col_x.len && col == SIZE_MAX; i++)
+        if (dx >= l->col_x.ptr[i] && dx < l->col_x.ptr[i] + l->col_w.ptr[i])
+            col = i;
+    if (col == SIZE_MAX)
+        return false;
+    bool dial = col >= 3 + SPARKS && col < last;
+    double sy = dy + scroll_px(v);
+    if (sy >= l->header_y && sy < l->header_y + l->header_h) {
+        if (dial && col - 3 - SPARKS < v->dials.len)
+            sk_buf_append_c(out, v->dials.ptr[col - 3 - SPARKS]);
+        else if (col == last)
+            sk_buf_append_c(out, "issues on the project's board: open now / closed in the last 14 days");
+        return out->len > 0;
+    }
+    long i = row_at(v, x, y);
+    const sk_json *r = i >= 0 ? row(v, i) : NULL;
+    if (!r)
+        return false;
+    if (col == 1) {
+        const sk_json *folder = sk_json_get(r, "folder");
+        if (folder && folder->type == SK_JSON_STRING)
+            sk_buf_append_str(out, folder->string);
+    } else if (col == last) {
+        const sk_json *b = sk_json_get(r, "board");
+        if (truthy(b) && is_string(sk_json_get(b, "state"), "ok")) {
+            template_of(out, sk_json_get(b, "openNow"));
+            sk_buf_append_c(out, " issues open now, ");
+            template_of(out, sk_json_get(b, "closed14"));
+            sk_buf_append_c(out, " closed in the last 14 days");
+        }
+    }
+    return out->len > 0;
+}
+
 /* A member written when the row has it, as JSON.stringify leaves out
  * undefined. */
 static void member(sk_jw *w, const sk_json *r, const char *key)

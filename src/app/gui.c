@@ -20,6 +20,7 @@
 #include "control.h"
 #include "dashboard.h"
 #include "dashview.h"
+#include "drop.h"
 #include "foreign.h"
 #include "identity.h"
 #include "js.h"
@@ -28,6 +29,7 @@
 #include "chooser.h"
 #include "menu.h"
 #include "newtab.h"
+#include "opener.h"
 #include "rename.h"
 #include "skins.h"
 #include "skinterm.h"
@@ -213,6 +215,13 @@ typedef struct {
     bool strips;   /* the strips alone are to be drawn again */
     bool term_all; /* the strips and the terminal drawn whole */
     bool term_press; /* a press the terminal took, held until its release */
+    bool asking;     /* Close N tabs? is open */
+    /* The hover text under the pointer, as a title attribute showed it,
+     * where the pointer was, in points, and whether it shows yet. */
+    char *tip;
+    double tip_x, tip_y;
+    bool tip_shown;
+    int tip_timer;
     /* The skin in the stage (decision 0037), the timer of its next step,
      * the least size it gave the window, the pointer's shape. */
     sk_skinview *skin;
@@ -248,6 +257,7 @@ struct gui {
     SK_VEC(ctab) ctabs;
     SK_VEC(cwin) cwins;
     char *strip_key; /* the strips last posted, to post a change alone */
+    uint64_t names_key; /* the tabs' names last posted: a hash */
     int status;
     sk_env paths;
     sk_foreign *foreign;
@@ -304,6 +314,13 @@ struct gui {
     int unseen;
     /* Each dashboard tab's pane, by tab id. */
     SK_VEC(struct dview) dviews;
+    /* Where the window of a tab dragged out goes, until it opens: main.js's
+     * popTab put it at the drop, at its old window's size. */
+    struct {
+        bool pending;
+        int x, y, w, h;
+        uint64_t until;
+    } pop_at;
 };
 
 struct dview {
@@ -615,6 +632,15 @@ static void on_output(void *ud, sk_tab *tab, const char *bytes, size_t n)
     ask_frame(g);
 }
 
+/* The last screen of a tab's terminal as text, as its CLI ends by
+ * itself (decision 0030): the core feeds the terminal, so it holds every
+ * byte the CLI wrote. */
+static char *tab_screen(void *ud, sk_tab *tab)
+{
+    ctab *ct = find(ud, tab->id);
+    return ct && ct->st->term ? sk_term_screen_text(ct->st->term) : NULL;
+}
+
 static void on_spawn(void *ud, sk_tab *tab, pid_t pid)
 {
     (void)ud;
@@ -899,10 +925,30 @@ static void ui_metrics(void *ud);
 
 /* main.js's 'metrics' ten times a second: each window's active tab's
  * bus, copied for its skin. */
+/* A tab's name can follow its CLI's own title, as a /rename in Claude
+ * Code sets it (decision 0032): checked with the metrics, every 100 ms,
+ * as app/main.js sent the tabs then, and posted when one changed. */
+static void check_names(gui *g)
+{
+    uint64_t h = 1469598103934665603ull;
+    for (size_t i = 0; i < sk_tabs_count(g->tabs); i++) {
+        const sk_tab *t = sk_tabs_at(g->tabs, i);
+        const char *name = sk_tab_name(t);
+        for (const char *p = name ? name : ""; *p; p++)
+            h = (h ^ (uint8_t)*p) * 1099511628211ull;
+        h = (h ^ 0x1e ^ (uint64_t)(unsigned)t->id << 8) * 1099511628211ull;
+    }
+    if (h != g->names_key) {
+        g->names_key = h;
+        post_snapshot(g);
+    }
+}
+
 static void on_metrics(sk_loop *loop, void *ud)
 {
     (void)loop;
     gui *g = ud;
+    check_names(g);
     int ids[64];
     size_t nw = SK_MIN(sk_tabs_wins(g->tabs, ids, SK_LEN(ids)), SK_LEN(ids));
     for (size_t k = 0; k < nw; k++) {
@@ -1058,11 +1104,34 @@ static void on_active(void *ud, sk_tab *tab)
     post_snapshot(ud);
 }
 
+/* A CLI that exited on its own with a status other than 0, while other
+ * tabs remain, under Housekeeping with the dot (decision 0023), as
+ * app/main.js tells it: why it could not start, its command line and its
+ * folder. */
+static void exit_problem(gui *g, const sk_tab *tab, int code)
+{
+    sk_session *s = sk_clitab_session(tab);
+    const char *home = sk_envp_get(g->env, "HOME");
+    sk_buf title = {0}, detail = {0};
+    sk_buf_printf(&title, "%s exited with status %d", tab->label, code);
+    const char *why = s ? sk_session_failure(s) : NULL;
+    if (why)
+        sk_buf_printf(&detail, "cannot start %s: %s\n", tab->cmd.ptr[0], why);
+    char *const *argv = s && sk_session_argv(s) ? sk_session_argv(s) : tab->cmd.ptr;
+    sk_identity_quote_argv(&detail, argv);
+    sk_buf_append_c(&detail, "\nin ");
+    sk_identity_tildify(&detail, tab->cwd, home);
+    add_problem(g, title.ptr, detail.ptr);
+    sk_buf_free(&title);
+    sk_buf_free(&detail);
+}
+
 static void on_gone(void *ud, sk_tab *tab, int code, sk_tab *next)
 {
-    (void)code, (void)next;
     gui *g = ud;
     viz_tabs(g, tab);
+    if (!next && !tab->closed && code != 0 && tab->kind == SK_TAB_CLI && sk_tabs_count(g->tabs) > 0)
+        exit_problem(g, tab, code);
     for (size_t i = 0; i < g->ctabs.len; i++) {
         if (g->ctabs.ptr[i].id != tab->id)
             continue;
@@ -1243,13 +1312,16 @@ static void run_opener(gui *g, const char *what)
         sk_log("cannot run %s for %s", argv[0], what);
 }
 
-/* A link the user opened, as Electron's shell.openExternal: http and
- * https alone. */
+/* A link the user opened, as main.js's open-link: http, https and file
+ * URLs, but never one that names a program (opener.h). */
 static void do_open(void *ud)
 {
     uri_msg *m = ud;
-    if (!strncmp(m->uri, "http://", 7) || !strncmp(m->uri, "https://", 8))
+    const char *why = NULL;
+    if (sk_opener_allows(m->uri, &why))
         run_opener(m->g, m->uri);
+    else
+        sk_log("link not opened, %s: %s", why, m->uri);
     free(m);
 }
 
@@ -2197,6 +2269,42 @@ static void ui_dials(void *ud)
     drop_dials(pair);
 }
 
+typedef struct {
+    gui *g;
+    int win;
+} close_ask;
+
+/* The answer to Close N tabs?, for the window it was asked of, if it is
+ * still there. */
+static void close_answered(void *ud, bool yes)
+{
+    close_ask c = *(close_ask *)ud;
+    free(ud);
+    gwin *w = gwin_of(c.g, c.win);
+    if (!w)
+        return;
+    w->asking = false;
+    if (yes)
+        post_tab(c.g, do_close_win, 0, c.win);
+}
+
+/* A window of several tabs asks before it hangs them up (decision 0023),
+ * as main.js asks with a dialog on the window; a second close while it
+ * asks changes nothing. */
+static void ask_close(gwin *w)
+{
+    if (w->asking)
+        return;
+    w->asking = true;
+    sk_buf msg = {0};
+    sk_buf_printf(&msg, "Close %zu tabs?", w->snap.n);
+    sk_ask_question q = {"claude-skins", msg.ptr, "Each tab's CLI is hung up.", "Close tabs", "Cancel"};
+    close_ask *c = sk_xmalloc(sizeof *c);
+    *c = (close_ask){w->g, w->snap.id};
+    sk_ask_confirm(w->win, w->g->loop, &q, close_answered, c);
+    sk_buf_free(&msg);
+}
+
 static gwin *gwin_new(gui *g, int id)
 {
     char *err = NULL;
@@ -2223,6 +2331,16 @@ static gwin *gwin_new(gui *g, int id)
                          .min_h = sw.min_height,
                          .ud = w,
                          .hidden = g->hidden};
+    if (g->pop_at.pending) {
+        g->pop_at.pending = false;
+        if (sk_now_ms() < g->pop_at.until) {
+            wo.at = true;
+            wo.x = g->pop_at.x;
+            wo.y = g->pop_at.y;
+            wo.w = g->pop_at.w;
+            wo.h = g->pop_at.h;
+        }
+    }
     w->win = sk_window_new(&wo, &err);
     if (!w->win) {
         sk_tell("cannot open a window: %s", err ? err : "unknown");
@@ -2252,6 +2370,9 @@ static gwin *gwin_new(gui *g, int id)
 
 static void gwin_free(gwin *w)
 {
+    if (w->tip_timer)
+        sk_ui_cancel(w->tip_timer);
+    free(w->tip);
     if (w->blink_timer)
         sk_ui_cancel(w->blink_timer);
     if (w->sync_timer)
@@ -2953,9 +3074,12 @@ static bool skin_mouse(gwin *w, const sk_event *ev)
     return e.action != SK_SKIN_NOTHING;
 }
 
-/* The pointer's shape at height y: the skin's where it says one, else
- * the strips' arrow, a link's hand, the terminal's I-beam. */
-static void pointer_shape(gwin *w, double y)
+static sk_dashview *active_dview(gwin *w);
+
+/* The pointer's shape at (x, y): the skin's where it says one, else the
+ * strips' arrow, on the dashboard a live row's hand and the arrow, else
+ * a link's hand or the terminal's I-beam. */
+static void pointer_shape(gwin *w, double x, double y)
 {
     sk_skin_cursor c = w->skin ? sk_skinview_cursor(w->skin) : SK_SKIN_CURSOR_NONE;
     switch (c) {
@@ -2977,10 +3101,16 @@ static void pointer_shape(gwin *w, double y)
     default:
         break;
     }
-    if (y < top_points(w))
+    sk_dashview *dv = y >= top_points(w) ? active_dview(w) : NULL;
+    if (y < top_points(w)) {
         set_cursor(w, SK_CURSOR_ARROW);
-    else
+    } else if (dv) {
+        double ox, oy;
+        term_origin(w, &ox, &oy);
+        set_cursor(w, sk_dashview_hit(dv, x - ox, y - oy) ? SK_CURSOR_POINTER : SK_CURSOR_ARROW);
+    } else {
         set_cursor(w, w->hover_link || w->link_uri ? SK_CURSOR_POINTER : SK_CURSOR_IBEAM);
+    }
 }
 
 /* ---- The visualization (decision 0015) ---- */
@@ -3057,6 +3187,74 @@ static void drop_dviews(gui *g)
     }
 }
 
+/* How long the pointer rests before its hover text shows, as Chromium's
+ * tooltips wait. */
+#define TIP_MS 500
+
+static void on_tip_due(void *ud)
+{
+    gwin *w = ud;
+    w->tip_timer = 0;
+    if (w->tip) {
+        w->tip_shown = true;
+        overlay_frame(w);
+    }
+}
+
+/* The hover text under the pointer at (x, y) points, NULL for none: a
+ * new one shows after TIP_MS, and the one shown goes at once. */
+static void tip_set(gwin *w, const char *text, double x, double y)
+{
+    if (text && w->tip && !strcmp(text, w->tip))
+        return;
+    if (w->tip_timer)
+        sk_ui_cancel(w->tip_timer);
+    w->tip_timer = 0;
+    if (w->tip_shown)
+        overlay_frame(w);
+    w->tip_shown = false;
+    free(w->tip);
+    w->tip = text ? sk_xstrdup(text) : NULL;
+    w->tip_x = x;
+    w->tip_y = y;
+    if (w->tip)
+        w->tip_timer = sk_ui_timer(TIP_MS, 0, on_tip_due, w);
+}
+
+/* The hover text's box, in device pixels: below the pointer, kept on
+ * the frame. */
+#define TIP_PX 12
+#define TIP_PAD_X 6
+#define TIP_PAD_Y 4
+#define TIP_LINE 16
+
+static sk_rect tip_box(gwin *w, const sk_image *f)
+{
+    double s = sk_window_scale(w->win);
+    float tw = sk_measure_text(w->g->sans, SK_STYLE_REGULAR, (float)(TIP_PX * s), w->tip, strlen(w->tip));
+    int bw = SK_MIN((int)ceil(tw + 2 * TIP_PAD_X * s), f->w), bh = (int)ceil((TIP_LINE + 2 * TIP_PAD_Y) * s);
+    int x = (int)lround(w->tip_x * s), y = (int)lround((w->tip_y + 20) * s);
+    if (y + bh > f->h)
+        y = (int)lround((w->tip_y - 4) * s) - bh;
+    x = SK_MAX(0, SK_MIN(x, f->w - bw));
+    y = SK_MAX(0, y);
+    return sk_rect_make(x, y, bw, bh);
+}
+
+static void tip_draw(gwin *w, sk_image *f)
+{
+    double s = sk_window_scale(w->win);
+    sk_rect r = tip_box(w, f);
+    sk_fill_rect(f, r, SK_RGB(0x5a, 0x5a, 0x5a), SK_BLEND_SRC_OVER, NULL);
+    int b = SK_MAX(1, (int)lround(s));
+    sk_fill_rect(f, sk_rect_make(r.x + b, r.y + b, r.w - 2 * b, r.h - 2 * b), SK_RGB(0x1f, 0x1f, 0x1f),
+                 SK_BLEND_SRC_OVER, NULL);
+    float px = (float)(TIP_PX * s), base = sk_baseline_in(w->g->sans, SK_STYLE_REGULAR, px, (float)r.y,
+                                                           (float)r.h);
+    sk_draw_fit(f, w->g->cache, w->g->sans, SK_STYLE_REGULAR, px, (float)(r.x + TIP_PAD_X * s), base,
+                (float)(r.w - 2 * TIP_PAD_X * s), w->tip, SK_RGB(0xe8, 0xe8, 0xe8), false, &r);
+}
+
 /* The pointer on the dashboard's pane: the live row under it lit, a
  * press opening its session, the wheel scrolling it. True when the
  * event was the pane's. */
@@ -3071,8 +3269,15 @@ static bool dash_mouse(gwin *w, const sk_event *ev)
     double ox, oy;
     term_origin(w, &ox, &oy);
     double x = ev->mouse.x - ox, y = ev->mouse.y - oy;
-    if (ev->type == SK_EV_MOUSE_MOVE && sk_dashview_hover(v, x, y))
-        redraw(w);
+    if (ev->type == SK_EV_MOUSE_MOVE) {
+        if (sk_dashview_hover(v, x, y))
+            redraw(w);
+        sk_buf tip = {0};
+        tip_set(w, sk_dashview_title_at(v, x, y, &tip) ? tip.ptr : NULL, ev->mouse.x, ev->mouse.y);
+        sk_buf_free(&tip);
+    } else {
+        tip_set(w, NULL, 0, 0);
+    }
     if (ev->type == SK_EV_MOUSE_DOWN && ev->mouse.button == 1) {
         const char *key = sk_dashview_hit(v, x, y);
         if (key) {
@@ -3343,6 +3548,8 @@ static sk_rect overlay_bounds(gwin *w, const sk_image *f)
         int top = px(w, IDENTITY_H);
         r = sk_rect_union(r, sk_rect_make(0, top, f->w, SK_MAX(0, f->h - top)));
     }
+    if (w->tip_shown && w->tip && active_dview(w))
+        r = sk_rect_union(r, tip_box(w, f));
     return sk_rect_intersect(r, sk_image_bounds(f));
 }
 
@@ -3360,7 +3567,8 @@ static void draw(gwin *w)
     sk_rect dirty[DIRTY_MAX];
     size_t nd = 0;
     bool menu = sk_menu_open(w->menu), chooser = chooser_up(w), popup = sk_rename_popup_open(w->rename);
-    bool editing = sk_rename_editing(w->rename), overlay = menu || chooser || popup;
+    bool editing = sk_rename_editing(w->rename), tip = w->tip_shown && w->tip && active_dview(w);
+    bool overlay = menu || chooser || popup || tip;
     /* Below the drop-downs and the dialog everything is drawn into the
      * window's base, and copied into the frame where it changed and
      * under them, so that one open over the skin asks no whole skin a
@@ -3522,6 +3730,8 @@ static void draw(gwin *w)
             sk_menu_style ms = menu_style(w);
             sk_rename_popup_draw(w->rename, f, &ms);
         }
+        if (tip)
+            tip_draw(w, f);
     }
     /* A name being edited has the input method's candidates. */
     if (editing) {
@@ -3593,6 +3803,20 @@ static void term_paste(gwin *w, const char *utf8)
     sk_term_scroll_to_bottom(t);
     send_active(w, &out);
     sk_buf_free(&out);
+}
+
+/* Files dropped on the window are pasted, quoted, into its active tab,
+ * as the clipboard is (decision 0002); not into the sessions dashboard,
+ * which has no terminal, and not while New tab... is open. */
+static void on_drop(gwin *w, const char *const *paths, size_t n)
+{
+    snap_tab *t = active_tab(w);
+    if (chooser_up(w) || !t || t->kind == SK_TAB_DASHBOARD)
+        return;
+    sk_buf text = {0};
+    sk_drop_text(&text, paths, n);
+    term_paste(w, sk_buf_cstr(&text));
+    sk_buf_free(&text);
 }
 
 /* The app's own chords, which the CLI never sees: decision 0023's on
@@ -3945,8 +4169,21 @@ static bool strip_mouse(gwin *w, const sk_event *ev)
         int ww, wh;
         sk_window_size(w->win, &ww, &wh);
         bool outside = ev->mouse.x < 0 || ev->mouse.y < 0 || ev->mouse.x >= ww || ev->mouse.y >= wh;
-        if (w->dragging && outside)
+        if (w->dragging && outside) {
+            /* The new window opens at the drop, a little up and left of
+             * it, at this one's size, as popTab placed it. */
+            int ox, oy, cw, ch;
+            if (sk_window_origin(w->win, &ox, &oy)) {
+                sk_window_size(w->win, &cw, &ch);
+                g->pop_at.pending = true;
+                g->pop_at.x = SK_MAX(0, ox + (int)lround(ev->mouse.x) - 40);
+                g->pop_at.y = SK_MAX(0, oy + (int)lround(ev->mouse.y) - 10);
+                g->pop_at.w = cw;
+                g->pop_at.h = ch;
+                g->pop_at.until = sk_now_ms() + 2000;
+            }
             post_tab(g, do_pop, w->drag_tab, win);
+        }
         w->drag_tab = 0;
         w->dragging = false;
         return true;
@@ -3981,11 +4218,11 @@ static void on_mouse(gwin *w, const sk_event *ev)
     /* The skin next, but not while the terminal's selection or a tab's
      * drag holds the pointer. */
     if (!w->selecting && !w->drag_tab && !w->term_press && skin_mouse(w, ev)) {
-        pointer_shape(w, ev->mouse.y);
+        pointer_shape(w, ev->mouse.x, ev->mouse.y);
         return;
     }
     if (ev->type == SK_EV_MOUSE_MOVE)
-        pointer_shape(w, ev->mouse.y);
+        pointer_shape(w, ev->mouse.x, ev->mouse.y);
     sk_term *t = active_term(w);
     double gx, gy;
     grid_point(w, ev->mouse.x, ev->mouse.y, &gx, &gy);
@@ -3998,11 +4235,13 @@ static void on_mouse(gwin *w, const sk_event *ev)
         if (strip_mouse(w, ev))
             return;
     }
-    /* The pointer in the strips leaves the dashboard's row unlit. */
+    /* The pointer in the strips leaves the dashboard's row unlit, and
+     * its hover text gone. */
     if (chrome && ev->type == SK_EV_MOUSE_MOVE) {
         sk_dashview *dv = active_dview(w);
         if (dv && sk_dashview_hover(dv, -1e9, -1e9))
             redraw(w);
+        tip_set(w, NULL, 0, 0);
     }
     if (!t || (!chrome && dash_mouse(w, ev)))
         return;
@@ -4173,8 +4412,11 @@ static void on_event(void *ud, const sk_event *ev)
     switch (ev->type) {
     case SK_EV_CLOSE:
         /* As closing a window does (decision 0016): its tabs hang up,
-         * and the app ends with the last tab. */
-        post_tab(g, do_close_win, 0, w->snap.id);
+         * and the app ends with the last tab. Several ask first. */
+        if (w->snap.n >= 2 && !g->hidden)
+            ask_close(w);
+        else
+            post_tab(g, do_close_win, 0, w->snap.id);
         break;
     case SK_EV_RESIZE: {
         double s = sk_window_scale(w->win);
@@ -4200,6 +4442,7 @@ static void on_event(void *ud, const sk_event *ev)
         redraw(w);
         break;
     case SK_EV_KEY_DOWN:
+        tip_set(w, NULL, 0, 0);
         on_key(w, &ev->key);
         break;
     case SK_EV_MOUSE_DOWN:
@@ -4210,6 +4453,7 @@ static void on_event(void *ud, const sk_event *ev)
             w->term_press = false;
         break;
     case SK_EV_MOUSE_LEAVE: {
+        tip_set(w, NULL, 0, 0);
         if (w->skin) {
             sk_skinview_mouse(w->skin, SK_SKIN_MOUSE_LEAVE, 0, 0, 0);
             skin_frame(w);
@@ -4254,6 +4498,9 @@ static void on_event(void *ud, const sk_event *ev)
         if (ev->text && *ev->text && !sk_rename_editing(w->rename) && !sk_menu_open(w->menu))
             w->preedit = sk_xstrdup(ev->text);
         redraw(w);
+        break;
+    case SK_EV_DROP:
+        on_drop(w, ev->drop.paths, ev->drop.n);
         break;
     default:
         break;
@@ -4348,6 +4595,14 @@ static void window_json(sk_jw *jw, gwin *w)
     sk_jw_int(jw, ph);
     sk_jw_key(jw, SK_STR("scale"));
     sk_jw_number(jw, sk_window_scale(w->win));
+    /* Where it is on the screen, in points; 0, 0 when the system cannot
+     * say. */
+    int sx = 0, sy = 0;
+    sk_window_origin(w->win, &sx, &sy);
+    sk_jw_key(jw, SK_STR("x"));
+    sk_jw_int(jw, sx);
+    sk_jw_key(jw, SK_STR("y"));
+    sk_jw_int(jw, sy);
     sk_jw_key(jw, SK_STR("cols"));
     sk_jw_int(jw, w->ui_cols);
     sk_jw_key(jw, SK_STR("rows"));
@@ -4634,6 +4889,24 @@ static void ui_control(void *ud)
     } else if (sk_str_eq_c(op, "close")) {
         ev.type = SK_EV_CLOSE;
         on_event(g, &ev);
+    } else if (sk_str_eq_c(op, "drop")) {
+        /* Files dropped on the window, as the platform would give them. */
+        const sk_json *list = sk_json_get(msg, "paths");
+        sk_strv paths = {0};
+        for (size_t i = 0; list && list->type == SK_JSON_ARRAY && i < list->array.len; i++) {
+            sk_str p = {0};
+            if (sk_json_as_string(sk_json_at(list, i), &p))
+                sk_strv_push_n(&paths, p.ptr, p.len);
+        }
+        if (paths.len) {
+            ev.type = SK_EV_DROP;
+            ev.drop.paths = (const char *const *)paths.ptr;
+            ev.drop.n = paths.len;
+            on_event(g, &ev);
+        } else {
+            why = "no paths";
+        }
+        sk_strv_free(&paths);
     } else if (sk_str_eq_c(op, "menu")) {
         /* Until a skin places its button, the check gives the button's
          * rect, and the menu to show, or none to close it. */
@@ -4679,6 +4952,10 @@ static void on_control(void *ud, sk_control_req *req, const sk_json *msg)
         sk_control_ok(req, NULL);
         return;
     }
+    /* For the live checks: an internal error, as a broken invariant
+     * would make one. */
+    if (sk_str_eq_c(op, "die"))
+        sk_die("asked to by the control socket");
     ctl_msg *m = sk_xcalloc(1, sizeof *m);
     m->g = g;
     m->req = req;
@@ -4726,6 +5003,12 @@ static void on_control(void *ud, sk_control_req *req, const sk_json *msg)
             sk_jw_array_end(&jw);
             sk_jw_object_end(&jw);
         }
+        sk_jw_array_end(&jw);
+        /* Housekeeping's problems, by title. */
+        sk_jw_key(&jw, SK_STR("problems"));
+        sk_jw_array(&jw);
+        for (size_t i = 0; i < g->problems.len; i++)
+            sk_jw_string(&jw, sk_str_c(g->problems.ptr[i].title));
         sk_jw_array_end(&jw);
         sk_jw_object_end(&jw);
         /* The object's members alone, comma first, for the UI to wrap. */
@@ -4790,10 +5073,28 @@ static const char *raced_choice(gui *g, const sk_strv *choices, const char *home
     return choices->ptr[k];
 }
 
+/* text and a newline on stdout, past short writes. */
+static void echo_screen(const char *text)
+{
+    sk_buf b = {0};
+    sk_buf_printf(&b, "%s\n", text);
+    for (size_t done = 0; done < b.len;) {
+        ssize_t n = write(1, b.ptr + done, b.len - done);
+        if (n < 0 && errno == EINTR)
+            continue;
+        if (n <= 0) {
+            sk_log("last screen: %s", n < 0 ? strerror(errno) : "short write");
+            break;
+        }
+        done += (size_t)n;
+    }
+    sk_buf_free(&b);
+}
+
 int sk_gui_run(const sk_options *o, const sk_envp *env, const char *self)
 {
     sk_launch l;
-    int status = sk_launch_open(&l, o, env, self, "skinned");
+    int status = sk_launch_open(&l, o, env, self, NULL);
     if (status)
         return status;
     status = SK_EXIT_APP;
@@ -4909,6 +5210,7 @@ int sk_gui_run(const sk_options *o, const sk_envp *env, const char *self)
     g->cli.statusline = o->statusline;
     g->cli.spawned = on_spawn;
     g->cli.output = on_output;
+    g->cli.screen = tab_screen;
     g->cli.log = log_line;
     g->cli.tell = tell_line;
     g->cli.ud = g;
@@ -5052,6 +5354,13 @@ int sk_gui_run(const sk_options *o, const sk_envp *env, const char *self)
                 sk_loop_post(g->loop, do_hangup_all, g);
             pthread_join(core, NULL);
             status = sk_tabs_done(g->tabs) ? sk_tabs_exit_status(g->tabs) : g->status;
+            /* A window that ends because its last CLI exited by itself
+             * leaves that CLI's last screen in the terminal it was
+             * started from, as the CLI would have left it (decision
+             * 0030). */
+            const char *last = sk_tabs_done(g->tabs) ? sk_tabs_last_screen(g->tabs) : NULL;
+            if (last && isatty(1))
+                echo_screen(last);
         }
     }
     /* The feed reads the tabs' buses, and the tabs' watch agents are the

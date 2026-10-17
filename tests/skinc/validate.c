@@ -210,6 +210,9 @@ static void test_top_level_rules(void)
     expect("{\"name\": \"x\", \"window\": {\"width\": 900, \"height\": 700, \"minWidth\": 800, \"minHeight\": 150}, "
            BASE_MENU ", " BASE_TERM "}",
            NULL, "skin.json: window.minHeight: must be a number of pixels, at least 200");
+    expect("{\"name\": \"x\", \"window\": {\"width\": 20000, \"height\": 700, \"minWidth\": 800, \"minHeight\": 600}, "
+           BASE_MENU ", " BASE_TERM "}",
+           NULL, "skin.json: window.width: must be at most 16384 pixels");
     expect("{\"name\": \"x\", " BASE_WINDOW ", " BASE_MENU "}", NULL, "skin.json: terminal: missing");
 }
 
@@ -350,7 +353,11 @@ static void test_skinc_refusals(void)
            "PCM WAVE (.wav)");
     expect("{\"name\": \"x\", " BASE_WINDOW ", \"menu\": {\"rect\": {\"right\": 8, \"top\": 8, \"width\": 24, "
            "\"height\": 24}, \"image\": \"m.webp\"}, " BASE_TERM "}",
-           "m.webp", "skin.json: menu.image: \"m.webp\": skinc cannot compile this file type: images are PNG, JPEG, GIF or SVG");
+           "m.webp", "skin.json: menu.image: \"m.webp\": skinc cannot compile this file type: images are PNG, JPEG or SVG");
+    /* GIF passes the JavaScript validator's list, but skinc decodes no GIF. */
+    expect("{\"name\": \"x\", " BASE_WINDOW ", \"menu\": {\"rect\": {\"right\": 8, \"top\": 8, \"width\": 24, "
+           "\"height\": 24}, \"image\": \"m.gif\"}, " BASE_TERM "}",
+           "m.gif", "skin.json: menu.image: \"m.gif\": skinc cannot compile this file type: images are PNG, JPEG or SVG");
 }
 
 static void test_js_fixed(void)

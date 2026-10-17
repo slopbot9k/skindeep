@@ -4,9 +4,8 @@
  * Either way it is begun with a completion handler and the UI thread's
  * run loop goes on: no modal loop runs inside the app's handlers.
  *
- * The handler is a block. C has none, so it is laid out here as clang
- * lays one out (the Blocks ABI): a global block, which AppKit's copy
- * and release leave as it is, answering the one picker open. */
+ * The handler is a global block (uimac.h), answering the one picker
+ * open. */
 #include "../picker.h"
 
 #include "uimac.h"
@@ -15,23 +14,6 @@
 
 /* NSModalResponseOK. */
 #define RESPONSE_OK 1
-
-typedef struct {
-    unsigned long reserved, size;
-    const char *signature;
-} block_descriptor;
-
-typedef struct {
-    void *isa;
-    int flags, reserved;
-    void (*invoke)(void *self, long response);
-    const block_descriptor *descriptor;
-} block;
-
-/* libSystem's class of global blocks. */
-extern void *_NSConcreteGlobalBlock[32];
-
-enum { BLOCK_IS_GLOBAL = 1 << 28, BLOCK_HAS_SIGNATURE = 1 << 30 };
 
 /* The picker open: its panel, retained, and whom it answers. */
 static struct {
@@ -83,8 +65,7 @@ static void completed(void *self, long response)
     post(pending.done, pending.ud, dir, NULL, false);
 }
 
-static const block_descriptor descriptor = {0, sizeof(block), "v16@?0q8"};
-static block handler = {_NSConcreteGlobalBlock, BLOCK_IS_GLOBAL | BLOCK_HAS_SIGNATURE, 0, completed, &descriptor};
+SK_MACOS_BLOCK(handler, completed);
 
 id sk_macos_folder_panel(const sk_picker_opts *o)
 {

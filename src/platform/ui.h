@@ -121,6 +121,7 @@ typedef enum {
     SK_EV_MOUSE_MOVE,
     SK_EV_MOUSE_LEAVE,
     SK_EV_SCROLL,
+    SK_EV_DROP,        /* files dropped on the window, their paths */
 } sk_event_type;
 
 typedef struct {
@@ -146,6 +147,13 @@ typedef struct {
             bool precise;
             uint32_t mods;
         } scroll;
+        /* DROP. Every window takes a drag of files and refuses any other:
+         * AppKit's file URLs on macOS, XDND's text/uri-list on X11, where
+         * only local file:// URIs count. */
+        struct {
+            const char *const *paths; /* absolute, UTF-8, valid during the call */
+            size_t n;                 /* 1 or more */
+        } drop;
     };
 } sk_event;
 
@@ -195,14 +203,18 @@ typedef struct {
     /* Not shown on screen, for tests: it has its frame, takes presents
      * and readbacks, and gets the events a test sends it. */
     bool hidden;
-    /* Never takes the keyboard from the app's other windows, as the
-     * visualization's window (decision 0015): on macOS it cannot become
-     * the key window, and its first click reaches it; on X11 its
-     * WM_HINTS say it takes no input. It is shown without bringing the
-     * app forward, and sk_window_focus only raises it. Its pointer
-     * events come as any window's; its keys come only if a system
-     * gives it the keyboard regardless. */
-    bool no_focus;
+    /* Opens without taking the keyboard from the app's other windows, as
+     * the visualization's window does (decision 0015, Electron's
+     * showInactive): shown in front without bringing the app forward,
+     * and sk_window_focus only raises it. A click gives it the keyboard
+     * as on any window, and that first click reaches it too. */
+    bool inactive;
+    /* Where its content's top-left goes when at: in points, from the
+     * top-left of the screen the system counts from (the main display
+     * on macOS, the root window on X11). Else where the system puts
+     * it. */
+    bool at;
+    int x, y;
 } sk_window_opts;
 
 /* A window, shown unless o->hidden. NULL with *err a malloc'd reason. */
@@ -215,9 +227,12 @@ void sk_window_set_title(sk_window *w, const char *title);
  * it is smaller. */
 void sk_window_set_min_size(sk_window *w, int min_w, int min_h);
 void sk_window_size(const sk_window *w, int *pw, int *ph);
+/* Where w's content's top-left is, as sk_window_opts.x and y count it;
+ * false when the system cannot say. */
+bool sk_window_origin(const sk_window *w, int *x, int *y);
 double sk_window_scale(const sk_window *w);
 void sk_window_set_cursor(sk_window *w, sk_cursor c);
-/* Raise and give it the keyboard; a no_focus window is only raised. */
+/* Raise and give it the keyboard; an inactive window is only raised. */
 void sk_window_focus(sk_window *w);
 /* Where the text cursor is, in points from the content's top left, so
  * that an input method shows its candidates beside it. Linux ignores

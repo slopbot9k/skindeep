@@ -18,9 +18,14 @@
 #define SK_PRINTF(f, a)
 #endif
 
-/* Prints "skinned: <message>" to stderr and aborts. For a broken
- * invariant or memory exhausted, never for bad input. */
+/* Gives the message to the hook when one is set; else, or when the hook
+ * returns, prints "skinned: <message>" to stderr and aborts. For a
+ * broken invariant or memory exhausted, never for bad input. */
 _Noreturn void sk_die(const char *fmt, ...) SK_PRINTF(1, 2);
+/* What the app does on an internal error (decision 0003), set once
+ * before any thread starts. It runs once, on whatever thread died, out
+ * of memory maybe: it must not allocate. */
+void sk_die_hook(void (*hook)(const char *msg));
 
 /* malloc and friends that die instead of returning NULL. */
 void *sk_xmalloc(size_t n);

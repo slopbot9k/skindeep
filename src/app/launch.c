@@ -10,6 +10,7 @@
 #include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 /* SKINNED_RELAY, else the skinned-relay beside this program: the file
@@ -41,6 +42,23 @@ char *sk_launch_named(const sk_launch *l, const char *name, const char *suffix)
     return p;
 }
 
+/* The launch's log, <state>/<stamp>-[<name>-]<pid>.log in local time,
+ * as bin/skinned named it: the names sort by age, so the rotation keeps
+ * the newest. */
+static char *log_path(const sk_launch *l, const char *name)
+{
+    time_t now = time(NULL);
+    struct tm tm;
+    char stamp[32] = "00000000-000000";
+    if (localtime_r(&now, &tm))
+        strftime(stamp, sizeof stamp, "%Y%m%d-%H%M%S", &tm);
+    sk_buf base = {0};
+    sk_buf_printf(&base, "%s-%s%s%ld.log", stamp, name ? name : "", name ? "-" : "", (long)getpid());
+    char *p = sk_path_join(l->state, base.ptr);
+    sk_buf_free(&base);
+    return p;
+}
+
 int sk_launch_open(sk_launch *l, const sk_options *o, const sk_envp *env, const char *self, const char *name)
 {
     memset(l, 0, sizeof *l);
@@ -61,7 +79,7 @@ int sk_launch_open(sk_launch *l, const sk_options *o, const sk_envp *env, const 
         sk_launch_close(l);
         return SK_EXIT_APP;
     }
-    l->log_path = sk_launch_named(l, name, "log");
+    l->log_path = log_path(l, name);
     l->log_fd = open(l->log_path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0600);
     if (l->log_fd < 0) {
         sk_tell("cannot write %s: %s", l->log_path, strerror(errno));
@@ -69,6 +87,8 @@ int sk_launch_open(sk_launch *l, const sk_options *o, const sk_envp *env, const 
         return SK_EXIT_APP;
     }
     sk_log_set_fd(l->log_fd);
+    if (sk_runtime_rotate_logs(&e) != 0)
+        sk_log("logs: %s", strerror(errno));
     l->relay = relay_path(env, self);
     int moved = sk_claude_migrate_settings(l->store, l->relay);
     if (moved)

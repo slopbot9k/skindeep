@@ -7,6 +7,7 @@
 #define SK_X11_ASK_H
 
 #include "../../base/strv.h"
+#include "../ask.h"
 #include "picker.h"
 
 /* prog's arguments, its name first, each choice's index the tag it
@@ -22,10 +23,28 @@ void sk_ask_argv(sk_picker_prog prog, const char *title, const char *message, co
  * choices: the index it printed, 0 for a cancel, a failure, or anything
  * else. */
 int sk_ask_answer(const char *out, size_t n_out, int wstatus, size_t n);
+/* zenity's --text is Pango markup: s with &, < and > escaped, into
+ * out. */
+void sk_ask_markup(sk_buf *out, const char *s);
 /* The question asked with the first of zenity and kdialog on path, a
  * PATH value, waited for: the choice's index, or -1 when there is
  * neither or it could not run. */
 int sk_ask_run(const char *path, const char *title, const char *message, const char *detail,
                const char *const *choices, size_t n);
+
+
+/* The two-button question of sk_ask_confirm, prog's arguments:
+ *   zenity --question --title=T --text=MESSAGE\n\nDETAIL --ok-label=OK
+ *          --cancel-label=CANCEL
+ *   kdialog --title T --yes-label OK --no-label CANCEL --yesno TEXT */
+void sk_ask_confirm_argv(sk_picker_prog prog, const sk_ask_question *q, sk_strv *argv);
+/* What its wait status says: true for ok, which exits 0. */
+bool sk_ask_confirm_answer(int wstatus);
+/* 1 for ok, 0 for cancel, -1 when there was no way to ask. */
+typedef void (*sk_ask_ran)(void *ud, int answer);
+/* On loop's thread: q asked with the first of zenity and kdialog on
+ * path, the child reaped by loop, then done; done at once with -1 when
+ * there is neither or it cannot run. */
+void sk_ask_confirm_run(sk_loop *loop, const char *path, const sk_ask_question *q, sk_ask_ran done, void *ud);
 
 #endif

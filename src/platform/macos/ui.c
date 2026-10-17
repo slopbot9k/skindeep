@@ -13,9 +13,10 @@
  *
  * The view is an NSTextInputClient: keys the input method may want pass
  * through it, and come out as keys, text or a composition as ui.h has
- * them. */
+ * them. It is also a dragging destination for file URLs alone. */
 #include "uimac.h"
 
+#include "../../base/strv.h"
 #include "../../base/utf8.h"
 
 #include <dispatch/dispatch.h>
@@ -44,7 +45,7 @@ struct sk_window {
     CFRunLoopTimerRef pacer;
     void *ud;
     bool hidden;
-    bool no_focus; /* an sk_nokey_window, which never becomes key */
+    bool inactive; /* shown without taking the keyboard */
     int w, h;      /* points */
     double scale, forced_scale;
     bool sized;
@@ -321,6 +322,38 @@ static void update_size(sk_window *w, bool tell)
     }
 }
 
+/* The height of the screen AppKit counts from, the first: its points
+ * run up from its bottom, sk_window_opts' down from its top. */
+static double screen_top(void)
+{
+    id screens = sk_msg(sk_cls("NSScreen"), "screens");
+    id first = screens && sk_msg_ulong(screens, "count") ? SK_MSG(id (*)(id, SEL, unsigned long))(
+                                                                 screens, sk_sel("objectAtIndex:"), 0)
+                                                           : nil;
+    return first ? sk_msg_rect(first, "frame").size.height : 0;
+}
+
+/* nswin's content's top-left at (x, y), from the top-left of the first
+ * screen. */
+static void place_at(id nswin, int x, int y)
+{
+    CGRect frame = sk_msg_rect(nswin, "frame");
+    CGRect content = SK_MSG_STRET(CGRect (*)(id, SEL, CGRect))(nswin, sk_sel("contentRectForFrameRect:"), frame);
+    content.origin.x = x;
+    content.origin.y = screen_top() - y - content.size.height;
+    frame = SK_MSG_STRET(CGRect (*)(id, SEL, CGRect))(nswin, sk_sel("frameRectForContentRect:"), content);
+    SK_MSG(void (*)(id, SEL, CGRect, BOOL))(nswin, sk_sel("setFrame:display:"), frame, NO);
+}
+
+bool sk_window_origin(const sk_window *w, int *x, int *y)
+{
+    CGRect frame = sk_msg_rect(w->win, "frame");
+    CGRect content = SK_MSG_STRET(CGRect (*)(id, SEL, CGRect))(w->win, sk_sel("contentRectForFrameRect:"), frame);
+    *x = (int)lround(content.origin.x);
+    *y = (int)lround(screen_top() - content.origin.y - content.size.height);
+    return true;
+}
+
 void sk_window_size(const sk_window *w, int *pw, int *ph)
 {
     *pw = w->w;
@@ -443,19 +476,13 @@ static BOOL view_yes(id self, SEL cmd)
     return YES;
 }
 
-static BOOL view_no(id self, SEL cmd)
-{
-    (void)self, (void)cmd;
-    return NO;
-}
-
-/* A window that never becomes key takes its first click as a click, as
- * nothing else would: every other keeps NSView's answer, no. */
+/* An inactive window takes its first click as a click, as the click
+ * that gives it the keyboard: every other keeps NSView's answer, no. */
 static BOOL view_accepts_first_mouse(id self, SEL cmd, id ev)
 {
     (void)cmd, (void)ev;
     sk_window *w = win_of(self);
-    return w && w->no_focus ? YES : NO;
+    return w && w->inactive ? YES : NO;
 }
 
 static void view_update_layer(id self, SEL cmd)
@@ -947,6 +974,62 @@ static void win_resigned_key(id self, SEL cmd, id note)
     focus(self, false);
 }
 
+/* ---- Files dropped ---- */
+
+/* What a drag's pasteboard is read for: NSURLs, file URLs alone. */
+static id url_classes(void)
+{
+    return SK_MSG(id (*)(id, SEL, id))(sk_cls("NSArray"), sk_sel("arrayWithObject:"), sk_cls("NSURL"));
+}
+
+static id file_urls_only(void)
+{
+    id yes = SK_MSG(id (*)(id, SEL, BOOL))(sk_cls("NSNumber"), sk_sel("numberWithBool:"), YES);
+    return SK_MSG(id (*)(id, SEL, id, id))(sk_cls("NSDictionary"), sk_sel("dictionaryWithObject:forKey:"), yes,
+                                           NSPasteboardURLReadingFileURLsOnlyKey);
+}
+
+/* A drag that holds files is taken as a copy, anywhere over the view;
+ * any other is refused. */
+static unsigned long view_drag_entered(id self, SEL cmd, id info)
+{
+    (void)cmd;
+    if (!win_of(self))
+        return NSDragOperationNone;
+    id pb = sk_msg(info, "draggingPasteboard");
+    BOOL files = SK_MSG(BOOL (*)(id, SEL, id, id))(pb, sk_sel("canReadObjectForClasses:options:"), url_classes(),
+                                                   file_urls_only());
+    return files ? NSDragOperationCopy : NSDragOperationNone;
+}
+
+/* The drop: its files' paths go to the app as SK_EV_DROP. */
+static BOOL view_perform_drag(id self, SEL cmd, id info)
+{
+    (void)cmd;
+    sk_window *w = win_of(self);
+    if (!w)
+        return NO;
+    id pb = sk_msg(info, "draggingPasteboard");
+    id urls = SK_MSG(id (*)(id, SEL, id, id))(pb, sk_sel("readObjectsForClasses:options:"), url_classes(),
+                                              file_urls_only());
+    sk_strv paths = {0};
+    for (unsigned long i = 0; urls && i < sk_msg_ulong(urls, "count"); i++) {
+        id url = SK_MSG(id (*)(id, SEL, unsigned long))(urls, sk_sel("objectAtIndex:"), i);
+        const char *p = sk_utf8(sk_msg(url, "path"));
+        if (p && *p)
+            sk_strv_push(&paths, p);
+    }
+    bool took = paths.len > 0;
+    if (took) {
+        sk_event e = {.type = SK_EV_DROP, .win = w};
+        e.drop.paths = (const char *const *)paths.ptr;
+        e.drop.n = paths.len;
+        emit(&e);
+    }
+    sk_strv_free(&paths);
+    return took ? YES : NO;
+}
+
 /* ---- The application ---- */
 
 /* Every window is asked to close, Cmd+Q's and a logout's request alike,
@@ -1044,16 +1127,11 @@ static void make_classes(void)
     add(v, "windowDidResize:", (IMP)win_resized, "v@:@");
     add(v, "windowDidBecomeKey:", (IMP)win_became_key, "v@:@");
     add(v, "windowDidResignKey:", (IMP)win_resigned_key, "v@:@");
+    add(v, "draggingEntered:", (IMP)view_drag_entered, "Q@:@");
+    add(v, "draggingUpdated:", (IMP)view_drag_entered, "Q@:@");
+    add(v, "performDragOperation:", (IMP)view_perform_drag, SK_ENC_BOOL "@:@");
     objc_registerClassPair(v);
     win_ivar = ivar_getOffset(class_getInstanceVariable(v, "sk_win"));
-
-    /* The window of sk_window_opts.no_focus: never key, never main. */
-    Class k = objc_allocateClassPair((Class)sk_cls("NSWindow"), "sk_nokey_window", 0);
-    if (!k)
-        sk_die("cannot make the class sk_nokey_window");
-    add(k, "canBecomeKeyWindow", (IMP)view_no, SK_ENC_BOOL "@:");
-    add(k, "canBecomeMainWindow", (IMP)view_no, SK_ENC_BOOL "@:");
-    objc_registerClassPair(k);
 
     Class d = objc_allocateClassPair((Class)sk_cls("NSObject"), "sk_app_delegate", 0);
     if (!d)
@@ -1341,7 +1419,7 @@ sk_window *sk_window_new(const sk_window_opts *o, char **err)
     unsigned long style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable |
                           NSWindowStyleMaskResizable;
     id nswin = SK_MSG(id (*)(id, SEL, CGRect, unsigned long, unsigned long, BOOL))(
-        sk_msg(sk_cls(o->no_focus ? "sk_nokey_window" : "NSWindow"), "alloc"),
+        sk_msg(sk_cls("NSWindow"), "alloc"),
         sk_sel("initWithContentRect:styleMask:backing:defer:"), r, style, NSBackingStoreBuffered, NO);
     if (!nswin) {
         objc_autoreleasePoolPop(pool);
@@ -1353,7 +1431,7 @@ sk_window *sk_window_new(const sk_window_opts *o, char **err)
     w->win = nswin;
     w->ud = o->ud;
     w->hidden = o->hidden;
-    w->no_focus = o->no_focus;
+    w->inactive = o->inactive;
     w->creating = true;
     w->cursor = SK_CURSOR_ARROW;
     sk_msg_void_bool(nswin, "setReleasedWhenClosed:", NO);
@@ -1379,6 +1457,9 @@ sk_window *sk_window_new(const sk_window_opts *o, char **err)
         view, nil);
     sk_msg_void_id(view, "addTrackingArea:", area);
     sk_release(area);
+    /* Files may be dropped on it, and nothing else. */
+    sk_msg_void_id(view, "registerForDraggedTypes:",
+                   SK_MSG(id (*)(id, SEL, id))(sk_cls("NSArray"), sk_sel("arrayWithObject:"), NSPasteboardTypeFileURL));
     sk_msg_void_id(nswin, "setContentView:", view);
     sk_msg_void_id(nswin, "setDelegate:", view);
     SK_MSG(BOOL (*)(id, SEL, id))(nswin, sk_sel("makeFirstResponder:"), view);
@@ -1400,11 +1481,15 @@ sk_window *sk_window_new(const sk_window_opts *o, char **err)
 
     w->next = ui.windows;
     ui.windows = w;
+    /* Placed where asked, else centred as Electron centres a window. */
+    if (o->at)
+        place_at(nswin, o->x, o->y);
     if (!w->hidden) {
-        sk_msg_void(nswin, "center");
-        /* A window that takes no focus is shown in front without the
-         * app being brought forward or any window losing the keys. */
-        if (w->no_focus) {
+        if (!o->at)
+            sk_msg_void(nswin, "center");
+        /* An inactive window is shown in front without the app being
+         * brought forward or any window losing the keys. */
+        if (w->inactive) {
             sk_msg_void(nswin, "orderFrontRegardless");
         } else {
             activate();
@@ -1494,7 +1579,7 @@ void sk_window_focus(sk_window *w)
     if (w->hidden)
         return;
     void *pool = objc_autoreleasePoolPush();
-    if (w->no_focus) {
+    if (w->inactive) {
         sk_msg_void(w->win, "orderFrontRegardless");
     } else {
         activate();

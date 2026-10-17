@@ -47,6 +47,24 @@ static void subtree(const sk_pack *p, uint32_t e, uint32_t *out, uint32_t *n, ui
         subtree(p, c, out, n, cap);
 }
 
+/* How many elements e's subtree holds, e among them. */
+static uint32_t subtree_size(const sk_pack *p, uint32_t e)
+{
+    uint32_t n = 1;
+    for (uint32_t c = p->els[e].first_child; c != NONE; c = p->els[c].next_sibling)
+        n += subtree_size(p, c);
+    return n;
+}
+
+/* e's subtree, malloc'd to its size, into *out and *n. */
+static void subtree_of(const sk_pack *p, uint32_t e, uint32_t **out, uint32_t *n)
+{
+    uint32_t size = subtree_size(p, e);
+    *out = sk_xreallocarray(NULL, size, sizeof **out);
+    *n = 0;
+    subtree(p, e, *out, n, size);
+}
+
 static void lists_init(sk_skinview *v)
 {
     const sk_pack *p = v->p;
@@ -65,8 +83,7 @@ static void lists_init(sk_skinview *v)
         L->widget = el->widget;
         L->row = e;
         L->items = el->parent;
-        L->sub = sk_xreallocarray(NULL, p->nels, sizeof *L->sub);
-        subtree(p, e, L->sub, &L->nsub, p->nels);
+        subtree_of(p, e, &L->sub, &L->nsub);
         for (uint32_t k = 0; k < L->nsub; k++) {
             v->row_of[L->sub[k]] = (int32_t)v->nlists;
             v->sub_at[L->sub[k]] = k;
@@ -189,9 +206,64 @@ static const sk_player *layer_px(sk_skinview *v, uint32_t i)
     return d->tried == 2 ? &d->pl : NULL;
 }
 
+/* Whether a and b, edges in device pixels, are within a pixel. */
+static bool edges_near(double a0, double a1, double b0, double b1)
+{
+    return fabs(a0 - b0) <= 1.001 && fabs(a1 - b1) <= 1.001;
+}
+
+/* The node a layer of node n is placed from, as anchor_of finds an
+ * element's, over the nodes laid out. */
+static uint32_t node_anchor(const sk_skinview *v, uint32_t n)
+{
+    const sk_layout *l = &v->layout;
+    uint32_t a = n;
+    for (uint32_t depth = 0; a < l->n && a < v->nnodes && depth <= SK_PACK_MAX_DEPTH; depth++) {
+        uint8_t kind = v->p->els[v->nodes[a].el].kind;
+        if (kind == SK_EL_SVG || kind < SK_EL_G || kind > SK_EL_IMAGE)
+            return a;
+        a = l->nodes[a].parent;
+    }
+    return n;
+}
+
+/* Whether layer y covers what node n, placed from node a, paints as laid
+ * out now: a NINE's box no smaller than the corners and edges it was
+ * drawn for, else the subtree's ink, edge for edge within a pixel. The
+ * loader asks it of the first state; the painter of every frame, so a
+ * box that grew in a state the layer was not drawn in paints live. */
+static bool layer_fits(const sk_skinview *v, const sk_pack_layer *y, uint32_t n, uint32_t a)
+{
+    const sk_layout *l = &v->layout;
+    if (n >= l->n || a >= l->n)
+        return false;
+    const sk_lbox *b = &l->boxes[n], *ab = &l->boxes[a];
+    double s = y->scale;
+    bool ok;
+    /* The layer's edges, device pixels of the anchor's space. */
+    double lx0 = (ab->border.x + y->x) * s, ly0 = (ab->border.y + y->y) * s;
+    double lx1 = lx0 + y->w, ly1 = ly0 + y->h;
+    if (y->kind == SK_LAYER_NINE) {
+        double bx0 = b->border.x * s, by0 = b->border.y * s;
+        ok = !b->svg_content && y->ox <= b->border.w + 1e-3f && y->oy <= b->border.h + 1e-3f &&
+             lx0 <= bx0 + 1e-3 && ly0 <= by0 + 1e-3 && lx1 >= bx0 + y->ox * s - 1e-3 &&
+             ly1 >= by0 + y->oy * s - 1e-3 && lx0 + y->slice[SK_LEFT] >= bx0 - 1e-3 &&
+             lx0 + y->slice[SK_LEFT] < bx0 + y->ox * s && ly0 + y->slice[SK_TOP] >= by0 - 1e-3 &&
+             ly0 + y->slice[SK_TOP] < by0 + y->oy * s;
+    } else {
+        /* What the element paints, in its anchor's space. */
+        sk_frect ink = b->ink;
+        if (b->svg_content)
+            ink = sk_frect_map(&ab->viewbox, ink);
+        ok = edges_near(lx0, lx1, floor(ink.x * s), ceil((ink.x + ink.w) * s)) &&
+             edges_near(ly0, ly1, floor(ink.y * s), ceil((ink.y + ink.h) * s));
+    }
+    return ok;
+}
+
 /* The painter's question: the layer node n draws as for part where it
- * is drawn at k, of those of its element for the style it shows; the
- * one at k's scale, else the one nearest above it. */
+ * is drawn at k, of those of its element for the style it shows that
+ * fit its box as laid out: the one at k's scale, else one above it. */
 static const sk_player *find_layer(void *data, uint32_t n, uint8_t part, float k)
 {
     sk_skinview *v = data;
@@ -210,13 +282,19 @@ static const sk_player *find_layer(void *data, uint32_t n, uint8_t part, float k
     const sk_pack_el *e = &v->p->els[v->nodes[n].el];
     uint32_t si = (uint32_t)(v->nodes[n].base - v->p->styles);
     uint8_t scale = k > 1 + 1e-3f ? 2 : 1;
-    uint32_t best = NONE;
+    uint32_t best = NONE, a = NONE;
     for (uint32_t i = e->layer; i < e->layer + e->nlayers; i++) {
         const sk_pack_layer *y = &v->p->layers[i];
         bool nine = y->kind == SK_LAYER_NINE;
         if (nine != (part == SK_PART_NINE) || y->kind == SK_LAYER_MASK || (y->style != NONE && y->style != si))
             continue;
-        if (best == NONE || y->scale == scale)
+        /* At k's scale, else one above it, resampled down: one below would
+         * be blurred up, and the subtree paints sharper live. */
+        if (y->scale < scale || (best != NONE && v->p->layers[best].scale == scale))
+            continue;
+        if (a == NONE)
+            a = node_anchor(v, n);
+        if (layer_fits(v, y, n, a))
             best = i;
     }
     return best == NONE ? NULL : layer_px(v, best);
@@ -345,8 +423,7 @@ static void kept_find(sk_skinview *v, const uint8_t *settled, const uint8_t *dea
             sk_vkept *k = &v->kept[v->nkept];
             memset(k, 0, sizeof *k);
             k->node = c;
-            k->sub = sk_xreallocarray(NULL, p->nels, sizeof *k->sub);
-            subtree(p, c, k->sub, &k->nsub, p->nels);
+            subtree_of(p, c, &k->sub, &k->nsub);
             v->kept_of[c] = v->nkept++;
         } else if (!settled[c] && depth < 64) {
             kept_find(v, settled, dear, c, depth + 1);
@@ -490,12 +567,6 @@ static void choose_layers(sk_skinview *v)
     kept_choose(v);
 }
 
-/* Whether a and b, edges in device pixels, are within a pixel. */
-static bool edges_near(double a0, double a1, double b0, double b1)
-{
-    return fabs(a0 - b0) <= 1.001 && fabs(a1 - b1) <= 1.001;
-}
-
 bool sk_view_layers_fit(sk_skinview *v, char *err, size_t err_len)
 {
     const sk_pack *p = v->p;
@@ -511,27 +582,8 @@ bool sk_view_layers_fit(sk_skinview *v, char *err, size_t err_len)
             continue;
         if (y->style != NONE && y->style != (uint32_t)(x->base - p->styles))
             continue;
-        const sk_lbox *b = &l->boxes[e], *ab = &l->boxes[a];
-        double s = y->scale;
-        /* The layer's edges, device pixels of the anchor's space. */
-        double lx0 = (ab->border.x + y->x) * s, ly0 = (ab->border.y + y->y) * s;
-        double lx1 = lx0 + y->w, ly1 = ly0 + y->h;
-        bool ok;
-        if (y->kind == SK_LAYER_NINE) {
-            double bx0 = b->border.x * s, by0 = b->border.y * s;
-            ok = !b->svg_content && y->ox <= b->border.w + 1e-3f && y->oy <= b->border.h + 1e-3f &&
-                 lx0 <= bx0 + 1e-3 && ly0 <= by0 + 1e-3 && lx1 >= bx0 + y->ox * s - 1e-3 &&
-                 ly1 >= by0 + y->oy * s - 1e-3 && lx0 + y->slice[SK_LEFT] >= bx0 - 1e-3 &&
-                 lx0 + y->slice[SK_LEFT] < bx0 + y->ox * s && ly0 + y->slice[SK_TOP] >= by0 - 1e-3 &&
-                 ly0 + y->slice[SK_TOP] < by0 + y->oy * s;
-        } else {
-            /* What the element paints, in its anchor's space. */
-            sk_frect ink = b->ink;
-            if (b->svg_content)
-                ink = sk_frect_map(&ab->viewbox, ink);
-            ok = edges_near(lx0, lx1, floor(ink.x * s), ceil((ink.x + ink.w) * s)) &&
-                 edges_near(ly0, ly1, floor(ink.y * s), ceil((ink.y + ink.h) * s));
-        }
+        const sk_lbox *b = &l->boxes[e];
+        bool ok = layer_fits(v, y, e, a);
         if (!ok) {
             if (err && err_len)
                 snprintf(err, err_len, "LAYR %u: %u x %u pixels at %g, %g do not fit element %u's box of %g x %g",
@@ -768,16 +820,31 @@ sk_skinpack *sk_skinview_pack(const sk_skinview *v)
     return v->sp;
 }
 
+/* Where a stage may lie, in CSS pixels, and its scale: bounded, so
+ * that rounding any of its edges to pixels stays far from overflow. A
+ * window gives far less, and the loader bounds a pack's own size. */
+#define STAGE_MAX 1e6
+#define SCALE_MAX 64.0
+
+static double clamp_stage(double v, double lo)
+{
+    return isfinite(v) ? fmin(STAGE_MAX, fmax(lo, v)) : 0;
+}
+
 void sk_skinview_set_stage(sk_skinview *v, double x, double y, double w, double h, double scale)
 {
-    if (!(scale > 0))
+    if (!(scale > 0 && scale <= SCALE_MAX))
         scale = 1;
+    x = clamp_stage(x, -STAGE_MAX);
+    y = clamp_stage(y, -STAGE_MAX);
+    w = clamp_stage(w, 0);
+    h = clamp_stage(h, 0);
     if (x == v->sx && y == v->sy && w == v->sw && h == v->sh && scale == v->scale)
         return;
     v->sx = x;
     v->sy = y;
-    v->sw = fmax(0, w);
-    v->sh = fmax(0, h);
+    v->sw = w;
+    v->sh = h;
     v->scale = scale;
     stage_geometry(v);
     sk_fade_free(&v->fade);

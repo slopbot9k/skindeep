@@ -8,7 +8,13 @@
  * The clipboard follows the ICCCM: an unmapped window owns the
  * selections and receives conversions, and text past one request goes by
  * INCR both ways. Getting the clipboard always asks the server, even when
- * this process owns it. */
+ * this process owns it.
+ *
+ * Files come by XDND, version 5. Every window is XdndAware; a drag that
+ * offers text/uri-list is taken as a copy anywhere over it, any other is
+ * refused. The drop's list is asked of its source as the clipboard is
+ * asked, in the same queue and by INCR when it is long, and the source
+ * hears XdndFinished once it is read. */
 #include "xui.h"
 
 #include "../../base/log.h"
@@ -43,19 +49,32 @@ enum {
     A_NET_WM_NAME,
     A_NET_WM_PID,
     A_NET_ACTIVE_WINDOW,
+    A_NET_WM_USER_TIME,
     A_UTF8_STRING,
     A_CLIPBOARD,
     A_TARGETS,
     A_INCR,
     A_TEXT,
     A_SELECTION,
+    A_XDND_AWARE,
+    A_XDND_ENTER,
+    A_XDND_POSITION,
+    A_XDND_STATUS,
+    A_XDND_LEAVE,
+    A_XDND_DROP,
+    A_XDND_FINISHED,
+    A_XDND_SELECTION,
+    A_XDND_TYPE_LIST,
+    A_XDND_ACTION_COPY,
+    A_URI_LIST,
     N_ATOMS
 };
 
 static const char *const ATOM_NAMES[N_ATOMS] = {
     "WM_PROTOCOLS", "WM_DELETE_WINDOW", "_NET_WM_PING", "_NET_WM_NAME", "_NET_WM_PID",
-    "_NET_ACTIVE_WINDOW", "UTF8_STRING", "CLIPBOARD", "TARGETS", "INCR", "TEXT",
-    "SKINNED_SELECTION",
+    "_NET_ACTIVE_WINDOW", "_NET_WM_USER_TIME", "UTF8_STRING", "CLIPBOARD", "TARGETS", "INCR", "TEXT",
+    "SKINNED_SELECTION", "XdndAware", "XdndEnter", "XdndPosition", "XdndStatus", "XdndLeave",
+    "XdndDrop", "XdndFinished", "XdndSelection", "XdndTypeList", "XdndActionCopy", "text/uri-list",
 };
 
 /* The cursor font's glyphs (X11's cursorfont.h). */
@@ -81,7 +100,7 @@ struct sk_window {
     void *ud;
     int pw, ph; /* pixels */
     bool hidden, mapped, focused;
-    bool no_focus; /* WM_HINTS's input False: the window manager never gives it the keys */
+    bool inactive; /* mapped with _NET_WM_USER_TIME 0: the window manager gives it no keys then */
     sk_image frame;
     uint32_t seg; /* the frame's MIT-SHM segment, 0 for none */
     void *shm;
@@ -100,10 +119,14 @@ typedef struct {
     bool repeat;
 } ui_timer;
 
+/* A conversion asked of a selection's owner, one at a time: the
+ * clipboard's text, or a drop's text/uri-list at the drop's time. A
+ * drop's ud is xui's own (owned), freed by the close when it waits. */
 typedef struct {
-    bool primary;
+    uint32_t selection, target, time;
     void (*done)(void *ud, const char *utf8);
     void *ud;
+    bool owned;
 } clip_get;
 
 static struct {
@@ -128,12 +151,21 @@ static struct {
     /* The selections owned: CLIPBOARD's text, then PRIMARY's. */
     char *owned[2];
     SK_VEC(sk_x11_incr) sends;
-    /* Clipboard reads, the first in progress when get_active. */
+    /* Selection reads, the first in progress when get_active. */
     SK_VEC(clip_get) gets;
     bool get_active, get_incr;
     uint32_t get_target, get_type;
     sk_buf get_data;
     int get_timer;
+    /* The drag over a window (XDND), from its XdndEnter to its drop or
+     * its leave: the source's window, 0 for none, the window it is
+     * over, the version the source speaks, and whether it offers
+     * text/uri-list. */
+    struct {
+        uint32_t source, target;
+        uint8_t version;
+        bool files;
+    } drag;
 } ui;
 
 static void dispatch(void);
@@ -193,6 +225,13 @@ static bool host_lsb(void)
     uint8_t b;
     memcpy(&b, &one, 1);
     return b == 1;
+}
+
+/* A position in pixels, which may be 0 or less, as X11's int16. */
+static int pos_px(int points)
+{
+    long v = lround(points * ui.scale);
+    return (int)SK_MIN(SK_MAX(v, -32768), 32767);
 }
 
 static int px(int points)
@@ -261,6 +300,9 @@ static void free_all(void)
     for (size_t i = 0; i < ui.sends.len; i++)
         free(ui.sends.ptr[i].data);
     sk_vec_free(&ui.sends);
+    for (size_t i = 0; i < ui.gets.len; i++)
+        if (ui.gets.ptr[i].owned)
+            free(ui.gets.ptr[i].ud);
     sk_vec_free(&ui.gets);
     sk_buf_free(&ui.get_data);
     free(ui.owned[0]);
@@ -621,18 +663,31 @@ static void set_properties(sk_window *w, const sk_window_opts *o)
     }
     uint32_t pid = (uint32_t)getpid();
     put_card32(w->id, ui.atoms[A_NET_WM_PID], SK_X11_CARDINAL, &pid, 1);
-    /* WM_HINTS: it takes input, unless it is never to take the focus
-     * (ICCCM's No Input model, with no WM_TAKE_FOCUS among the
-     * protocols), and starts in the normal state. */
-    uint32_t hints[9] = {1 | 2, o->no_focus ? 0 : 1, 1};
+    /* WM_HINTS: it takes input and starts in the normal state. An
+     * inactive window's user time is 0, which EWMH asks a window manager
+     * not to focus on its map: a click gives it the keys later. */
+    uint32_t hints[9] = {1 | 2, 1, 1};
     put_card32(w->id, SK_X11_WM_HINTS, SK_X11_WM_HINTS, hints, SK_LEN(hints));
+    if (o->inactive) {
+        uint32_t never = 0;
+        put_card32(w->id, ui.atoms[A_NET_WM_USER_TIME], SK_X11_CARDINAL, &never, 1);
+    }
     uint32_t size[18] = {0};
     if (o->min_w > 0 || o->min_h > 0) {
         size[0] = 1 << 4; /* PMinSize */
         size[5] = o->min_w > 0 ? (uint32_t)px(o->min_w) : 1;
         size[6] = o->min_h > 0 ? (uint32_t)px(o->min_h) : 1;
     }
+    /* Placed: USPosition, so the window manager keeps it there. */
+    if (o->at) {
+        size[0] |= 1 << 0 | 1 << 2; /* USPosition, PPosition */
+        size[1] = (uint32_t)pos_px(o->x);
+        size[2] = (uint32_t)pos_px(o->y);
+    }
     put_card32(w->id, SK_X11_WM_NORMAL_HINTS, SK_X11_WM_SIZE_HINTS, size, SK_LEN(size));
+    /* Files may be dropped on it. */
+    uint32_t xdnd = SK_X11_XDND_VERSION;
+    put_card32(w->id, ui.atoms[A_XDND_AWARE], SK_X11_ATOM, &xdnd, 1);
     set_title(w, o->title ? o->title : "");
 }
 
@@ -646,7 +701,7 @@ sk_window *sk_xui_window_new(const sk_window_opts *o, char **err)
     sk_window *w = sk_xcalloc(1, sizeof *w);
     w->ud = o->ud;
     w->hidden = o->hidden;
-    w->no_focus = o->no_focus;
+    w->inactive = o->inactive;
     w->pw = px(o->w > 0 ? o->w : 800);
     w->ph = px(o->h > 0 ? o->h : 600);
     w->id = sk_x11_id(c);
@@ -654,7 +709,8 @@ sk_window *sk_xui_window_new(const sk_window_opts *o, char **err)
     uint32_t values[4] = {0, 1 /* NorthWest */, EVENTS, ui.colormap};
     if (ui.colormap)
         mask |= SK_X11_CW_COLORMAP;
-    uint64_t made = sk_x11_create_window(c, 24, w->id, c->root, 0, 0, w->pw, w->ph,
+    int x = o->at ? pos_px(o->x) : 0, y = o->at ? pos_px(o->y) : 0;
+    uint64_t made = sk_x11_create_window(c, 24, w->id, c->root, x, y, w->pw, w->ph,
                                          1 /* InputOutput */, c->visual, mask, values);
     set_properties(w, o);
     int e = sk_x11_check(c, made);
@@ -736,6 +792,21 @@ void sk_xui_window_size(const sk_window *w, int *pw, int *ph)
     *ph = points(w->ph);
 }
 
+bool sk_xui_window_origin(const sk_window *w, int *x, int *y)
+{
+    sk_x11_reply r;
+    uint8_t e;
+    if (!ui.c || !sk_x11_reply_wait(ui.c, sk_x11_translate_coordinates(ui.c, w->id, ui.c->root, 0, 0), &r, &e))
+        return false;
+    bool ok = r.len >= 16;
+    if (ok) {
+        *x = points((int16_t)sk_x11_get16(r.data + 12));
+        *y = points((int16_t)sk_x11_get16(r.data + 14));
+    }
+    sk_x11_reply_free(&r);
+    return ok;
+}
+
 double sk_xui_window_scale(const sk_window *w)
 {
     (void)w;
@@ -787,7 +858,7 @@ void sk_xui_window_focus(sk_window *w)
     sk_x11 *c = ui.c;
     uint32_t above = 0;
     sk_x11_configure_window(c, w->id, 1 << 6 /* stack mode */, &above);
-    if (w->no_focus) {
+    if (w->inactive) {
         settle();
         return;
     }
@@ -956,10 +1027,14 @@ static void configure(sk_window *w, const sk_x11_event *ev)
     emit(&e);
 }
 
+static void dnd_message(sk_window *w, const sk_x11_event *ev);
+
 static void client_message(sk_window *w, const sk_x11_event *ev, const uint8_t *raw)
 {
-    if (ev->atom != ui.atoms[A_WM_PROTOCOLS])
+    if (ev->atom != ui.atoms[A_WM_PROTOCOLS]) {
+        dnd_message(w, ev);
         return;
+    }
     if (ev->data[0] == ui.atoms[A_WM_DELETE_WINDOW]) {
         sk_event e = {.type = SK_EV_CLOSE, .win = w};
         emit(&e);
@@ -1211,9 +1286,9 @@ static void arm_get_timer(void)
 
 static void convert(uint32_t target)
 {
+    const clip_get *g = &ui.gets.ptr[0];
     ui.get_target = target;
-    sk_x11_convert_selection(ui.c, ui.helper, sel_atom(ui.gets.ptr[0].primary), target,
-                             ui.atoms[A_SELECTION], 0);
+    sk_x11_convert_selection(ui.c, ui.helper, g->selection, target, ui.atoms[A_SELECTION], g->time);
     arm_get_timer();
 }
 
@@ -1224,7 +1299,15 @@ static void get_start(void)
     ui.get_active = true;
     ui.get_incr = false;
     sk_buf_clear(&ui.get_data);
-    convert(ui.atoms[A_UTF8_STRING]);
+    convert(ui.gets.ptr[0].target);
+}
+
+/* A read joins the queue, and starts when none is in progress. */
+static void get_push(clip_get g)
+{
+    sk_vec_push(&ui.gets, g);
+    if (!ui.get_active)
+        get_start();
 }
 
 /* The text of a property's bytes, malloc'd; NULL for none. */
@@ -1250,7 +1333,7 @@ static void deliver(char *text)
 static void on_selection_notify(const sk_x11_event *ev)
 {
     if (!ui.get_active || ui.get_incr || ev->requestor != ui.helper ||
-        ev->selection != sel_atom(ui.gets.ptr[0].primary) || ev->target != ui.get_target)
+        ev->selection != ui.gets.ptr[0].selection || ev->target != ui.get_target)
         return;
     if (!ev->property) {
         if (ui.get_target == ui.atoms[A_UTF8_STRING])
@@ -1310,11 +1393,141 @@ void sk_xui_clipboard_get(bool primary, void (*done)(void *ud, const char *utf8)
         done(ud, NULL);
         return;
     }
-    clip_get g = {primary, done, ud};
-    sk_vec_push(&ui.gets, g);
-    if (!ui.get_active)
-        get_start();
+    /* CurrentTime: whatever the owner holds now. */
+    clip_get g = {sel_atom(primary), ui.atoms[A_UTF8_STRING], 0, done, ud, false};
+    get_push(g);
     settle();
+}
+
+/* ---- Files dropped (XDND) ---- */
+
+/* A drop whose list is asked of its source: the window it fell on, and
+ * the source, which waits for XdndFinished. */
+typedef struct {
+    uint32_t window, source;
+    uint8_t version;
+} drop_req;
+
+/* An XDND message to the source's window, data its l[]. */
+static void to_source(uint32_t source, uint32_t type, const uint32_t data[5])
+{
+    uint8_t ev[32] = {SK_X11_CLIENT_MESSAGE, 32};
+    sk_x11_set32(ev + 4, source);
+    sk_x11_set32(ev + 8, type);
+    for (int i = 0; i < 5; i++)
+        sk_x11_set32(ev + 12 + 4 * i, data[i]);
+    sk_x11_send_event(ui.c, false, source, 0, ev);
+}
+
+/* The drop is over. Version 5 tells the source whether the files were
+ * taken, and that they were copied. */
+static void drop_finished(uint32_t window, uint32_t source, uint8_t version, bool took)
+{
+    bool tell = took && version >= 5;
+    uint32_t data[5] = {window, tell, tell ? ui.atoms[A_XDND_ACTION_COPY] : 0, 0, 0};
+    to_source(source, ui.atoms[A_XDND_FINISHED], data);
+}
+
+/* Whether a drag offers text/uri-list: among XdndEnter's three types, or
+ * in the source's XdndTypeList when it has more. */
+static bool offers_files(const sk_x11_event *ev)
+{
+    uint32_t uris = ui.atoms[A_URI_LIST];
+    if (!(ev->data[1] & 1))
+        return ev->data[2] == uris || ev->data[3] == uris || ev->data[4] == uris;
+    sk_x11_reply r;
+    sk_x11_prop p;
+    bool found = false;
+    if (sk_x11_prop_get(ui.c, false, ev->data[0], ui.atoms[A_XDND_TYPE_LIST], SK_X11_ATOM, 4096, &r,
+                        &p) &&
+        p.format == 32)
+        for (size_t i = 0; i + 4 <= p.len && !found; i += 4)
+            found = sk_x11_get32(p.value + i) == uris;
+    sk_x11_reply_free(&r);
+    return found;
+}
+
+/* A drag comes over w. A source of a later version than this one is not
+ * heard, as XDND has it. */
+static void drag_enter(sk_window *w, const sk_x11_event *ev)
+{
+    uint8_t version = (uint8_t)(ev->data[1] >> 24);
+    memset(&ui.drag, 0, sizeof ui.drag);
+    if (version > SK_X11_XDND_VERSION)
+        return;
+    ui.drag.source = ev->data[0];
+    ui.drag.target = w->id;
+    ui.drag.version = version;
+    ui.drag.files = offers_files(ev);
+}
+
+/* Whether ev is of the drag in progress over w. */
+static bool of_drag(const sk_window *w, const sk_x11_event *ev)
+{
+    return ui.drag.source && ev->data[0] == ui.drag.source && w->id == ui.drag.target;
+}
+
+/* XdndStatus: a drag of files is taken as a copy, any other refused. The
+ * empty rectangle asks for a position at every move. */
+static void drag_position(sk_window *w, const sk_x11_event *ev)
+{
+    bool take = of_drag(w, ev) && ui.drag.files;
+    uint32_t action = take && ui.drag.version >= 2 ? ui.atoms[A_XDND_ACTION_COPY] : 0;
+    uint32_t data[5] = {w->id, take, 0, 0, action};
+    to_source(ev->data[0], ui.atoms[A_XDND_STATUS], data);
+}
+
+static void dropped(void *ud, const char *text);
+
+/* The drop: its list asked of the source at the drop's time, or, for a
+ * drag of anything else, XdndFinished at once. */
+static void drag_drop(sk_window *w, const sk_x11_event *ev)
+{
+    bool take = of_drag(w, ev) && ui.drag.files;
+    uint8_t version = ui.drag.version;
+    memset(&ui.drag, 0, sizeof ui.drag);
+    if (!take) {
+        drop_finished(w->id, ev->data[0], version, false);
+        return;
+    }
+    drop_req *d = sk_xmalloc(sizeof *d);
+    *d = (drop_req){w->id, ev->data[0], version};
+    clip_get g = {ui.atoms[A_XDND_SELECTION], ui.atoms[A_URI_LIST], ev->data[2], dropped, d, true};
+    get_push(g);
+}
+
+/* The source's answer. It hears the drop is over, then the files go to
+ * the window as SK_EV_DROP, while it is still there. */
+static void dropped(void *ud, const char *text)
+{
+    drop_req *d = ud;
+    sk_strv paths = {0};
+    if (text)
+        sk_x11_uri_list_files(text, strlen(text), &paths);
+    sk_window *w = find(d->window);
+    drop_finished(d->window, d->source, d->version, w && paths.len);
+    if (w && paths.len) {
+        sk_event e = {.type = SK_EV_DROP, .win = w};
+        e.drop.paths = (const char *const *)paths.ptr;
+        e.drop.n = paths.len;
+        emit(&e);
+    }
+    sk_strv_free(&paths);
+    free(d);
+}
+
+static void dnd_message(sk_window *w, const sk_x11_event *ev)
+{
+    if (ev->detail != 32 || !ev->data[0])
+        return;
+    if (ev->atom == ui.atoms[A_XDND_ENTER])
+        drag_enter(w, ev);
+    else if (ev->atom == ui.atoms[A_XDND_POSITION])
+        drag_position(w, ev);
+    else if (ev->atom == ui.atoms[A_XDND_DROP])
+        drag_drop(w, ev);
+    else if (ev->atom == ui.atoms[A_XDND_LEAVE] && of_drag(w, ev))
+        memset(&ui.drag, 0, sizeof ui.drag);
 }
 
 /* ---- Events ---- */

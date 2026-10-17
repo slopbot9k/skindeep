@@ -9,7 +9,9 @@
 #include "../app/gui.h"
 #include "../app/headless.h"
 #include "../app/identity.h"
+#include "../base/log.h"
 #include "../core/command.h"
+#include "../core/session.h"
 
 #include <fcntl.h>
 #include <signal.h>
@@ -30,12 +32,24 @@ static void hold_stdio(void)
         close(fd);
 }
 
+/* An internal error (decision 0003): the user told, every CLI hung up
+ * by the kill policy of decision 0016, then 125. sk_die can come from
+ * any thread, out of memory: nothing here allocates. */
+static void internal_error(const char *msg)
+{
+    sk_log_now("internal error: ", msg);
+    sk_tell_now("internal error: ", msg);
+    sk_session_hangup_every(SK_SESSION_GRACE_MS);
+    _exit(SK_EXIT_APP);
+}
+
 int main(int argc, char **argv)
 {
     (void)argc;
     hold_stdio();
     signal(SIGPIPE, SIG_IGN);
     sk_tell_adopt(3);
+    sk_die_hook(internal_error);
     sk_identity_set_argv_source(sk_identity_kernel_argv);
     /* --headless is this build's own option, taken before the parser
      * that knows bin/skinned's options sees the rest. */

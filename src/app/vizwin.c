@@ -132,7 +132,7 @@ static bool open_window(sk_vizwin *v)
         .min_h = SK_VIZWIN_MIN_H,
         .ud = v,
         .hidden = v->c.hidden,
-        .no_focus = true,
+        .inactive = true,
     };
     char *err = NULL;
     v->win = sk_window_new(&o, &err);
@@ -576,7 +576,8 @@ bool sk_vizwin_event(sk_vizwin *v, const sk_event *ev)
         sk_window_request_frame(v->win);
         break;
     case SK_EV_KEY_DOWN:
-        /* The space bar, should a system give this window the keys. */
+        /* The space bar steps the active tab's pane, once a click gave
+         * this window the keys. */
         if ((ev->key.base == ' ' || !strcmp(ev->key.text, " ")) && !ev->key.repeat && v->c.feed)
             sk_vizfeed_post_step(v->c.feed);
         break;

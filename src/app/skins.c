@@ -302,8 +302,18 @@ bool sk_skins_start(sk_skins *r, const char *spec, sk_buf *errors)
     if (strchr(spec, '/'))
         return sk_skins_open(r, spec, errors);
     if (!is_shipped(r, spec)) {
-        sk_buf_printf(errors, "skins/%s: skin: directory not found\n", spec);
-        return false;
+        /* A folder of the repository's skins/ that the build did not link
+         * in, as registry.js took any folder there by name: opened as a
+         * skin by path is, and compiled. */
+        char *dir = r->shipped_dir && *spec != '.' ? sk_path_join(r->shipped_dir, spec) : NULL;
+        bool ok = false;
+        struct stat st;
+        if (dir && stat(dir, &st) == 0 && S_ISDIR(st.st_mode))
+            ok = sk_skins_open(r, dir, errors);
+        else
+            sk_buf_printf(errors, "skins/%s: skin: directory not found\n", spec);
+        free(dir);
+        return ok;
     }
     sk_skinpack *p = load_shipped(spec, errors);
     if (p)

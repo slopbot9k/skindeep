@@ -488,6 +488,46 @@ static void test_board(void)
     pane_close(&p);
 }
 
+/* The hover texts of dashboard.js's title attributes: a dial's name and
+ * the board's over their headers, a row's folder whole, and its issues
+ * spelled out over its board cell; nothing elsewhere. */
+static void test_titles(void)
+{
+    static const row_spec rows[] = {
+        {"a", "a", "~/projects/a long folder", "working", false, NULL, NULL},
+        {"b", "b", "~/b", "working", false, NULL,
+         "{\"state\":\"ok\",\"open\":[3,4],\"closed\":[0,1],\"openNow\":9,\"closed14\":4}"},
+    };
+    pane p;
+    pane_open(&p, 2, 1100, 400);
+    update(&p, 3, "[\"pty.out_bps\"]", rows, 2);
+    pane_draw(&p);
+    sk_dashview_layout l;
+    CHECK(sk_dashview_layout_of(p.v, &l));
+    double fx, fw, dx, dw, bx, bw;
+    CHECK(sk_dashview_column(p.v, 1, &fx, &fw));
+    CHECK(sk_dashview_column(p.v, l.columns - 2, &dx, &dw));
+    CHECK(sk_dashview_column(p.v, l.columns - 1, &bx, &bw));
+    sk_buf t = {0};
+    double head = l.header_y + 2, r0 = l.rows_y + 2, r1 = l.rows_y + l.row_h + 2;
+    CHECK(sk_dashview_title_at(p.v, dx + 2, head, &t));
+    CHECK_STR(sk_buf_cstr(&t), "pty.out_bps");
+    CHECK(sk_dashview_title_at(p.v, bx + 2, head, &t));
+    CHECK_STR(sk_buf_cstr(&t), "issues on the project's board: open now / closed in the last 14 days");
+    CHECK(sk_dashview_title_at(p.v, fx + 2, r0, &t));
+    CHECK_STR(sk_buf_cstr(&t), "~/projects/a long folder");
+    CHECK(sk_dashview_title_at(p.v, bx + 2, r1, &t));
+    CHECK_STR(sk_buf_cstr(&t), "9 issues open now, 4 closed in the last 14 days");
+    /* No board, a label, the folder header, the head line: nothing. */
+    CHECK(!sk_dashview_title_at(p.v, bx + 2, r0, &t));
+    CHECK(!sk_dashview_title_at(p.v, 20, r0, &t));
+    CHECK(!sk_dashview_title_at(p.v, fx + 2, head, &t));
+    CHECK(!sk_dashview_title_at(p.v, fx + 2, 2, &t));
+    CHECK_INT(t.len, 0);
+    sk_buf_free(&t);
+    pane_close(&p);
+}
+
 /* state() of dashboard.js, as JSON.stringify writes it. */
 static void test_state(void)
 {
@@ -705,6 +745,6 @@ static void test_golden(void)
 
 const sk_test sk_suite_dashview[] = {
     T(test_format), T(test_columns), T(test_dials), T(test_wrap),  T(test_hit),    T(test_hover),
-    T(test_scroll), T(test_empty),   T(test_ended), T(test_board), T(test_state), T(test_golden),
+    T(test_scroll), T(test_empty),   T(test_ended), T(test_board), T(test_titles), T(test_state), T(test_golden),
     {0},
 };

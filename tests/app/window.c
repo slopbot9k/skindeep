@@ -1,11 +1,12 @@
 /* skinned's window, driven through its control socket: the live checks
  * of scripts/checks/tabs.js (decision 0023) in C, as decision 0036
  * plans. The real program runs with its window hidden; the checks type,
- * press the app's chords, click and read the probe. They need a display:
- * the window server on macOS, $DISPLAY on Linux (Xvfb in CI); without
- * one they print a skip line. */
+ * press the app's chords, click, drop files and read the probe. They
+ * need a display: the window server on macOS, $DISPLAY on Linux (Xvfb
+ * in CI); without one they print a skip line. */
 #include "../../src/app/lastskin.h"
 #include "../../src/base/arena.h"
+#include "../../src/base/paths.h"
 #include "../../src/base/json.h"
 #include "../../src/base/strv.h"
 #include "../../src/core/loop.h"
@@ -16,8 +17,10 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <signal.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/un.h>
 #include <sys/wait.h>
 #include <time.h>
@@ -77,6 +80,8 @@ static bool start(app *a, const char *const *cmd)
     sk_strv_pushf(&env, "XDG_RUNTIME_DIR=%s/run", tmp);
     sk_strv_pushf(&env, "SKINNED_CONTROL=%s", sock.ptr);
     sk_strv_push(&env, "SKINNED_HIDDEN=1");
+    /* Silent: a skin's sounds would play on the machine's real output. */
+    sk_strv_push(&env, "SKINNED_MUTE=1");
     a->pid = fork();
     if (a->pid == 0) {
         /* Its stderr is kept in the test's folder, for what a sanitizer
@@ -86,6 +91,12 @@ static bool start(app *a, const char *const *cmd)
         int null = open("/dev/null", O_RDWR), err = open("skinned.err", O_WRONLY | O_CREAT | O_TRUNC, 0644);
         if (null < 0 || err < 0 || dup2(null, 0) < 0 || dup2(null, 1) < 0 || dup2(err, 2) < 0)
             _exit(98);
+        /* As a terminal starts it: no fd past stderr, so sk_tell writes
+         * to stderr too. */
+        if (null > 2)
+            close(null);
+        if (err > 2)
+            close(err);
         execve(whole, sk_strv_argv(&argv), sk_strv_argv(&env));
         _exit(99);
     }
@@ -420,6 +431,18 @@ static void test_a_tab_dragged_out_gets_its_own_window(void)
     }
     const sk_json *wins = sk_json_get(p, "windows");
     CHECK_INT(len_of(wins), 2);
+    /* At the drop, up and left of it, at the first window's size, as
+     * popTab placed it. */
+    const sk_json *w0 = sk_json_at(wins, 0), *w1 = sk_json_at(wins, 1);
+    if (num(w0, "id") != 0) {
+        const sk_json *t = w0;
+        w0 = w1;
+        w1 = t;
+    }
+    CHECK_INT((int)num(w1, "x"), SK_MAX(0, (int)num(w0, "x") + 120 - 40));
+    CHECK_INT((int)num(w1, "y"), SK_MAX(0, (int)num(w0, "y") - 60 - 10));
+    CHECK_INT((int)num(w1, "w"), (int)num(w0, "w"));
+    CHECK_INT((int)num(w1, "h"), (int)num(w0, "h"));
     int second = -1;
     for (size_t i = 0; i < len_of(wins); i++) {
         const sk_json *w = sk_json_at(wins, i);
@@ -921,6 +944,120 @@ static void test_the_skin(void)
     CHECK_INT(finish(&a, 5000), 128 + SIGHUP);
 }
 
+/* A CLI that exits on its own with a status other than 0 while another
+ * tab remains is a problem under Housekeeping (decision 0023); one the
+ * user closed is none. */
+static void test_a_failed_cli_is_a_problem(void)
+{
+    app a;
+    const char *cmd[] = {"sh", NULL};
+    if (!start(&a, cmd))
+        return;
+    sk_arena ar;
+    sk_arena_init(&ar, 0);
+    ok(&a, "{\"op\":\"key\",\"key\":\"t\",\"mods\":" APP_MODS "}");
+    const sk_json *p = NULL;
+    for (uint64_t until = sk_now_ms() + 5000; sk_now_ms() < until; sk_test_sleep_ms(50)) {
+        p = probe(&a, &ar);
+        double pid = 0;
+        sk_json_as_number(sk_json_get(sk_json_at(sk_json_get(p, "tabs"), 1), "pid"), &pid);
+        if (len_of(sk_json_get(p, "tabs")) == 2 && pid > 0)
+            break;
+    }
+    CHECK_INT(len_of(sk_json_get(p, "tabs")), 2);
+    CHECK_INT(len_of(sk_json_get(p, "problems")), 0);
+    /* The new tab, active, ends with 3. */
+    sk_test_sleep_ms(300);
+    ok(&a, "{\"op\":\"type\",\"text\":\"exit 3\\n\"}");
+    sk_str title = {0};
+    for (uint64_t until = sk_now_ms() + 5000; sk_now_ms() < until && !title.len; sk_test_sleep_ms(50)) {
+        p = probe(&a, &ar);
+        sk_json_as_string(sk_json_at(sk_json_get(p, "problems"), 0), &title);
+    }
+    CHECK(sk_str_suffix(title, SK_STR(" exited with status 3")));
+    CHECK_INT(len_of(sk_json_get(p, "tabs")), 1);
+    CHECK_INT(len_of(sk_json_get(p, "problems")), 1);
+    sk_arena_free(&ar);
+    ok(&a, "{\"op\":\"hangup\"}");
+    CHECK_INT(finish(&a, 5000), 128 + SIGHUP);
+}
+
+/* An internal error (decision 0003): the user told, every CLI hung up by
+ * the kill policy of decision 0016, one that ignores the hang-up killed
+ * after the grace, and 125. */
+static void test_an_internal_error_ends_the_clis(void)
+{
+    app a;
+    const char *cmd[] = {"sh", "-c", "trap '' HUP; while :; do sleep 1; done", NULL};
+    if (!start(&a, cmd))
+        return;
+    sk_arena ar;
+    sk_arena_init(&ar, 0);
+    double pid = 0;
+    for (uint64_t until = sk_now_ms() + 5000; sk_now_ms() < until && pid <= 0; sk_test_sleep_ms(50))
+        sk_json_as_number(sk_json_get(sk_json_at(sk_json_get(probe(&a, &ar), "tabs"), 0), "pid"), &pid);
+    CHECK(pid > 0);
+    /* Answered by no one: the app is gone. */
+    (void)ask(&a, &ar, "{\"op\":\"die\"}");
+    sk_arena_free(&ar);
+    CHECK_INT(finish(&a, 6000), 125);
+    if (pid > 0)
+        CHECK(kill(-(pid_t)pid, 0) != 0 && errno == ESRCH);
+    sk_buf path = {0};
+    sk_buf_printf(&path, "%s/skinned.err", sk_test_tmpdir());
+    char *err = sk_test_read(path.ptr, NULL);
+    if (!(err && strstr(err, "skinned: internal error: asked to by the control socket\n")))
+        sk_test_fail(__FILE__, __LINE__, "the user was not told; stderr:\n%.2000s", err ? err : "(none)");
+    free(err);
+    sk_buf_free(&path);
+}
+
+/* A Claude Code that refuses to resume a session running in the
+ * background, as 2.1.296 does, ends by itself: the tab reads the
+ * refusal off its last screen and opens the session with `claude
+ * attach ID` in its place (decision 0030). */
+static void test_a_refused_background_session_opens_with_attach(void)
+{
+    char *dir = sk_path_join(sk_test_tmpdir(), "fakebin"), *claude = sk_path_join(dir, "claude");
+    CHECK_INT(sk_mkdirs(dir, 0700), 0);
+    FILE *f = fopen(claude, "w");
+    CHECK(f != NULL);
+    if (f) {
+        fputs("#!/bin/sh\n"
+              "for a in \"$@\"; do [ \"$a\" = attach ] && { echo attached; exec cat; }; done\n"
+              "echo '\"Fix it\" is running in the background (5e3a91c0). Run `claude attach 5e3a91c0` to open it,"
+              " or `claude stop 5e3a91c0` first'\n"
+              "exit 1\n",
+              f);
+        fclose(f);
+    }
+    chmod(claude, 0755);
+    app a;
+    const char *cmd[] = {claude, "--resume", "abc", NULL};
+    if (!start(&a, cmd)) {
+        free(dir);
+        free(claude);
+        return;
+    }
+    sk_arena ar;
+    sk_arena_init(&ar, 0);
+    bool attached = false;
+    for (uint64_t until = sk_now_ms() + 8000; sk_now_ms() < until && !attached; sk_test_sleep_ms(100)) {
+        const sk_json *argv = sk_json_get(sk_json_at(sk_json_get(probe(&a, &ar), "tabs"), 0), "argv");
+        sk_str s0 = {0}, s1 = {0}, s2 = {0};
+        attached = len_of(argv) == 3 && sk_json_as_string(sk_json_at(argv, 0), &s0) &&
+                   sk_str_eq_c(s0, claude) && sk_json_as_string(sk_json_at(argv, 1), &s1) &&
+                   sk_str_eq_c(s1, "attach") && sk_json_as_string(sk_json_at(argv, 2), &s2) &&
+                   sk_str_eq_c(s2, "5e3a91c0");
+    }
+    CHECK(attached);
+    sk_arena_free(&ar);
+    ok(&a, "{\"op\":\"hangup\"}");
+    CHECK_INT(finish(&a, 5000), 128 + SIGHUP);
+    free(dir);
+    free(claude);
+}
+
 /* Windows that recorded different skins within 5 s of each other: a
  * launch with no dialog to show takes the newest, forgets the records,
  * and records its own. */
@@ -977,6 +1114,24 @@ static void click_box(app *a, const sk_json *box)
     ok(a, req);
 }
 
+/* Files dropped on the window are pasted into the active tab, each path
+ * quoted for a shell and a space after, by the paste that honours
+ * bracketed paste mode (decision 0002). The CLI turns the mode on, says
+ * so, then shows what reaches it, its controls made visible. */
+static void test_files_dropped_are_pasted_quoted(void)
+{
+    app a;
+    const char *cmd[] = {"sh", "-c", "printf '\\033[?2004hready\\n'; exec cat -v", NULL};
+    if (!start(&a, cmd))
+        return;
+    CHECK(wait_screen(&a, "ready", 5000));
+    ok(&a, "{\"op\":\"drop\",\"paths\":[\"/tmp/two words\",\"/srv/plain.txt\",\"/tmp/it's\"]}");
+    ok(&a, "{\"op\":\"key\",\"key\":\"Enter\"}");
+    CHECK(wait_screen(&a, "^[[200~'/tmp/two words' /srv/plain.txt '/tmp/it'\\''s' ^[[201~", 5000));
+    ok(&a, "{\"op\":\"hangup\"}");
+    CHECK_INT(finish(&a, 5000), 128 + SIGHUP);
+}
+
 /* New tab... (decision 0025) from File: it opens with the command line
  * in focus and takes the keys; a folder that is not there is refused in
  * the dialog, which stays open; Escape closes it and the terminal has
@@ -1025,6 +1180,8 @@ static void test_the_new_tab_chooser(void)
     }
     CHECK(err.ptr && strstr(err.ptr, "no such folder: /no/such/folder"));
     CHECK_INT(len_of(sk_json_get(p, "tabs")), 1);
+    /* A file dropped meanwhile is not pasted into the terminal. */
+    ok(&a, "{\"op\":\"drop\",\"paths\":[\"/while/open\"]}");
     ok(&a, "{\"op\":\"key\",\"key\":\"Escape\"}");
     p = probe(&a, &ar);
     sk_json_as_bool(sk_json_dig(p, "chooser", "open", NULL), &open);
@@ -1032,6 +1189,7 @@ static void test_the_new_tab_chooser(void)
     ok(&a, "{\"op\":\"type\",\"text\":\"after\"}");
     ok(&a, "{\"op\":\"key\",\"key\":\"Enter\"}");
     CHECK(wait_screen(&a, "after\nafter", 5000));
+    CHECK(!screen_has(probe(&a, &ar), "/while/open"));
     sk_arena_free(&ar);
     ok(&a, "{\"op\":\"hangup\"}");
     CHECK_INT(finish(&a, 5000), 128 + SIGHUP);
@@ -1048,10 +1206,14 @@ const sk_test sk_suite_window[] = {
     T(test_a_tab_dragged_along_the_strip),
     T(test_the_menus),
     T(test_the_sessions_dashboard),
+    T(test_files_dropped_are_pasted_quoted),
     T(test_the_new_tab_chooser),
     T(test_a_tab_renamed),
     T(test_the_strip_waits_for_a_rename),
     T(test_the_skin),
     T(test_raced_skins),
+    T(test_a_refused_background_session_opens_with_attach),
+    T(test_a_failed_cli_is_a_problem),
+    T(test_an_internal_error_ends_the_clis),
     {0},
 };

@@ -27,6 +27,10 @@ typedef struct {
     void (*spawned)(void *ud, sk_tab *tab, pid_t pid);
     /* Bytes from the tab's pty, as they came. Optional. */
     void (*output)(void *ud, sk_tab *tab, const char *bytes, size_t n);
+    /* The text of the tab's terminal, malloc'd, or NULL: asked once, as
+     * its CLI ends by itself, for its last screen (decision 0030).
+     * Optional. */
+    char *(*screen)(void *ud, sk_tab *tab);
     sk_log_fn log;
     sk_log_fn tell;
     void *ud;

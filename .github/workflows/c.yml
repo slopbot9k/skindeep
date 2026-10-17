@@ -19,9 +19,10 @@ jobs:
       matrix:
         include:
           # Linux runs the tests under Xvfb, so the window tests have a
-          # display; macOS has no X server and skips them. -noreset: Xvfb
-          # resets when its last client leaves and closes connections made
-          # meanwhile, and each window test connects anew.
+          # display; on macOS they open hidden windows on the runner's own
+          # window server. -noreset: Xvfb resets when its last client leaves
+          # and closes connections made meanwhile, and each window test
+          # connects anew.
           - {os: ubuntu-latest, cc: gcc, xvfb: 'xvfb-run -a -s "-screen 0 1280x1024x24 -noreset"'}
           - {os: ubuntu-latest, cc: clang, xvfb: 'xvfb-run -a -s "-screen 0 1280x1024x24 -noreset"'}
           - {os: macos-latest, cc: cc}

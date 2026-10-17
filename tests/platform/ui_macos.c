@@ -1,8 +1,8 @@
 /* platform/ui.h on macOS, on hidden windows: frames presented and read
  * back, sizes and scales, the key and mouse events AppKit would send
  * the window, input methods, frame pacing, tasks and timers from any
- * thread, and the clipboard, which is put back as the user had it.
- * Elsewhere the suite is empty. */
+ * thread, the clipboard, which is put back as the user had it, and
+ * files dropped. Elsewhere the suite is empty. */
 #include "../test.h"
 
 #ifdef __APPLE__
@@ -10,8 +10,10 @@
 #include "../../src/base/utf8.h"
 #include "../../src/platform/macos/uimac.h"
 
+#include <fcntl.h>
 #include <pthread.h>
 #include <time.h>
+#include <unistd.h>
 
 #define MAX_EVENTS 256
 
@@ -19,6 +21,8 @@ static sk_event events[MAX_EVENTS];
 static size_t n_events;
 /* The text of each TEXT and PREEDIT, which lasts only the call. */
 static char texts[MAX_EVENTS][64];
+/* The last drop's paths, a line each, which last only the call too. */
+static char *dropped;
 /* What a test does on an event, besides recording it. */
 static void (*react)(const sk_event *ev);
 
@@ -30,6 +34,14 @@ static void record(void *ud, const sk_event *ev)
         if (ev->type == SK_EV_TEXT || ev->type == SK_EV_PREEDIT) {
             snprintf(texts[n_events], sizeof texts[n_events], "%s", ev->text);
             events[n_events].text = texts[n_events];
+        }
+        if (ev->type == SK_EV_DROP) {
+            sk_buf b = {0};
+            for (size_t i = 0; i < ev->drop.n; i++)
+                sk_buf_printf(&b, "%s%s", i ? "\n" : "", ev->drop.paths[i]);
+            free(dropped);
+            dropped = b.ptr;
+            events[n_events].drop.paths = NULL;
         }
         n_events++;
     }
@@ -1050,15 +1062,37 @@ static void test_focus_follows_the_key_window(void)
     close_ui();
 }
 
-/* The visualization's window (decision 0015): it can never become the
- * key window, so the keyboard stays with the terminal, and its first
- * click is a click. */
-static void test_a_window_that_takes_no_focus(void)
+/* A window placed where it is asked (a tab dragged out, decision 0023):
+ * its content's top-left there, from the first screen's top-left, and
+ * read back so. */
+static void test_a_placed_window(void)
 {
     if (!open_ui())
         return;
     char *err = NULL;
-    sk_window_opts o = {.title = "viz", .w = 80, .h = 60, .hidden = true, .no_focus = true};
+    sk_window_opts o = {.title = "at", .w = 120, .h = 90, .hidden = true, .at = true, .x = 140, .y = 160};
+    sk_window *w = sk_window_new(&o, &err);
+    CHECK(w != NULL);
+    int x = 0, y = 0;
+    if (w) {
+        CHECK(sk_window_origin(w, &x, &y));
+        CHECK_INT(x, 140);
+        CHECK_INT(y, 160);
+    } else {
+        free(err);
+    }
+    close_ui();
+}
+
+/* The visualization's window (decision 0015): it opens without taking
+ * the keyboard and a focus asked of it only raises it, but a click may
+ * give it the keys as any window's, and that first click is a click. */
+static void test_an_inactive_window(void)
+{
+    if (!open_ui())
+        return;
+    char *err = NULL;
+    sk_window_opts o = {.title = "viz", .w = 80, .h = 60, .hidden = true, .inactive = true};
     sk_window *v = sk_window_new(&o, &err);
     sk_window *w = hidden_window(80, 60);
     CHECK(v != NULL);
@@ -1068,13 +1102,11 @@ static void test_a_window_that_takes_no_focus(void)
         return;
     }
     id nv = sk_macos_nswindow(v), nw = sk_macos_nswindow(w);
-    CHECK(!sk_msg_bool(nv, "canBecomeKeyWindow"));
-    CHECK(!sk_msg_bool(nv, "canBecomeMainWindow"));
+    CHECK(sk_msg_bool(nv, "canBecomeKeyWindow"));
     CHECK(sk_msg_bool(nw, "canBecomeKeyWindow"));
     CHECK(SK_MSG(BOOL (*)(id, SEL, id))(view_of(v), sk_sel("acceptsFirstMouse:"), nil));
     CHECK(!SK_MSG(BOOL (*)(id, SEL, id))(view_of(w), sk_sel("acceptsFirstMouse:"), nil));
     n_events = 0;
-    sk_msg_void(nv, "makeKeyWindow");
     sk_window_focus(v);
     run_for(5);
     CHECK(!sk_msg_bool(nv, "isKeyWindow"));
@@ -1379,6 +1411,123 @@ static void test_the_clipboard_holds_text(void)
     close_ui();
 }
 
+/* ---- Files dropped ---- */
+
+/* What a drag hands the view in place of AppKit's own NSDraggingInfo,
+ * which no synthetic event brings a hidden window: its pasteboard. */
+static id drag_pasteboard;
+
+static id info_pasteboard(id self, SEL cmd)
+{
+    (void)self, (void)cmd;
+    return drag_pasteboard;
+}
+
+static id dragging_info(id pb)
+{
+    static Class cls;
+    if (!cls) {
+        cls = objc_allocateClassPair((Class)sk_cls("NSObject"), "sk_test_dragging_info", 0);
+        class_addMethod(cls, sk_sel("draggingPasteboard"), (IMP)info_pasteboard, "@@:");
+        objc_registerClassPair(cls);
+    }
+    drag_pasteboard = pb;
+    return sk_autorelease(sk_new("sk_test_dragging_info"));
+}
+
+/* A pasteboard item of path's file URL, as a file manager writes one.
+ * NSURL's own writing would add a sandbox extension, which reading it
+ * back outside a sandbox complains of. */
+static id file_item(const char *path)
+{
+    id url = sk_msg_id(sk_cls("NSURL"), "fileURLWithPath:", sk_nsstring(path));
+    id item = sk_autorelease(sk_new("NSPasteboardItem"));
+    SK_MSG(BOOL (*)(id, SEL, id, id))(item, sk_sel("setString:forType:"), sk_msg(url, "absoluteString"),
+                                      NSPasteboardTypeFileURL);
+    return item;
+}
+
+static unsigned long drag_entered(id view, id info)
+{
+    return SK_MSG(unsigned long (*)(id, SEL, id))(view, sk_sel("draggingEntered:"), info);
+}
+
+static BOOL perform_drag(id view, id info)
+{
+    return SK_MSG(BOOL (*)(id, SEL, id))(view, sk_sel("performDragOperation:"), info);
+}
+
+/* The same with stderr closed: NSURL, read off a pasteboard outside a
+ * sandbox, says on stderr that it could not take up the sandbox access
+ * a file URL carries, which a process with no sandbox has no need of. */
+static BOOL quiet_perform_drag(id view, id info)
+{
+    int saved = dup(2), null = open("/dev/null", O_WRONLY);
+    if (null >= 0)
+        dup2(null, 2);
+    BOOL took = perform_drag(view, info);
+    if (saved >= 0)
+        dup2(saved, 2);
+    if (saved >= 0)
+        close(saved);
+    if (null >= 0)
+        close(null);
+    return took;
+}
+
+/* The view takes drags of file URLs alone; a drag that holds files is a
+ * copy, and its drop gives the files' paths. One of text is refused,
+ * and its drop gives nothing. The pasteboard is a private one, and the
+ * user's clipboard is not touched. */
+static void test_files_dropped_on_a_window(void)
+{
+    if (!open_ui())
+        return;
+    sk_window *w = hidden_window(200, 100);
+    id view = view_of(w);
+    id types = sk_msg(view, "registeredDraggedTypes");
+    CHECK(types && sk_msg_ulong(types, "count") == 1);
+    CHECK(types && SK_MSG(BOOL (*)(id, SEL, id))(types, sk_sel("containsObject:"), NSPasteboardTypeFileURL));
+
+    char a[1024], b[1024];
+    snprintf(a, sizeof a, "%s/it's here.txt", sk_test_tmpdir());
+    snprintf(b, sizeof b, "%s/plain", sk_test_tmpdir());
+    FILE *fa = fopen(a, "w"), *fb = fopen(b, "w");
+    CHECK(fa && fb);
+    if (fa)
+        fclose(fa);
+    if (fb)
+        fclose(fb);
+    id pb = sk_msg(sk_cls("NSPasteboard"), "pasteboardWithUniqueName");
+    id items = sk_autorelease(sk_new("NSMutableArray"));
+    sk_msg_void_id(items, "addObject:", file_item(a));
+    sk_msg_void_id(items, "addObject:", file_item(b));
+    sk_msg_long(pb, "clearContents");
+    CHECK(SK_MSG(BOOL (*)(id, SEL, id))(pb, sk_sel("writeObjects:"), items));
+    id info = dragging_info(pb);
+    CHECK_INT(drag_entered(view, info), NSDragOperationCopy);
+    CHECK(quiet_perform_drag(view, info));
+    const sk_event *e = last(SK_EV_DROP);
+    CHECK(e && e->win == w && e->drop.n == 2);
+    char both[2100];
+    snprintf(both, sizeof both, "%s\n%s", a, b);
+    CHECK_STR(dropped, both);
+
+    size_t drops = count(SK_EV_DROP);
+    sk_msg_long(pb, "clearContents");
+    SK_MSG(BOOL (*)(id, SEL, id, id))(pb, sk_sel("setString:forType:"), sk_nsstring("just text"),
+                                      NSPasteboardTypeString);
+    CHECK_INT(drag_entered(view, info), NSDragOperationNone);
+    CHECK(!perform_drag(view, info));
+    CHECK_INT(count(SK_EV_DROP), drops);
+
+    sk_msg_void(pb, "releaseGlobally");
+    drag_pasteboard = nil;
+    free(dropped);
+    dropped = NULL;
+    close_ui();
+}
+
 /* New tab...'s folder picker as it is made, never shown here: it takes
  * one folder and no file, hidden folders when asked, its title, and the
  * folder it starts in. */
@@ -1420,13 +1569,15 @@ const sk_test sk_suite_ui_macos[] = {
     T(test_scrolling_in_lines_and_points),
     T(test_close_asks_and_the_app_decides),
     T(test_focus_follows_the_key_window),
-    T(test_a_window_that_takes_no_focus),
+    T(test_an_inactive_window),
+    T(test_a_placed_window),
     T(test_frames_come_once_per_request_at_the_refresh),
     T(test_posted_tasks_run_in_order_on_the_main_thread),
     T(test_timers_fire_repeat_and_cancel),
     T(test_quit_from_another_thread_ends_the_run),
     T(test_open_only_on_the_main_thread),
     T(test_the_clipboard_holds_text),
+    T(test_files_dropped_on_a_window),
     T(test_the_folder_panel_chooses_one_folder),
     {0},
 };
