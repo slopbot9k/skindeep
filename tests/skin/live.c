@@ -19,27 +19,31 @@ static double fixed_wall(void *ud)
     return WALL;
 }
 
+/* A number as a static table takes it: SK_NUM's compound literal is
+ * no constant to ISO C. */
+#define NUM(n) {SK_VAL_NUM, (n), NULL}
+
 static const sk_skin_metric METRICS[] = {
-    {"context.used_pct", SK_NUM(42.5)},
-    {"context.used_tokens", SK_NUM(85000)},
-    {"context.compact_at_pct", SK_NUM(80)},
-    {"context.compact_threshold", SK_NUM(160000)},
-    {"cost.usd", SK_NUM(1.234)},
-    {"tools.total", SK_NUM(17)},
-    {"tokens.in", SK_NUM(123456)},
-    {"tokens.out", SK_NUM(4321)},
-    {"tokens.out_rate", SK_NUM(60)},
+    {"context.used_pct", NUM(42.5)},
+    {"context.used_tokens", NUM(85000)},
+    {"context.compact_at_pct", NUM(80)},
+    {"context.compact_threshold", NUM(160000)},
+    {"cost.usd", NUM(1.234)},
+    {"tools.total", NUM(17)},
+    {"tokens.in", NUM(123456)},
+    {"tokens.out", NUM(4321)},
+    {"tokens.out_rate", NUM(60)},
     {"model.name", {SK_VAL_STR, 0, "Opus 5.5"}},
-    {"session.clock_s", SK_NUM(1234)},
-    {"state.busy", SK_NUM(1)},
-    {"pty.out_bps", SK_NUM(400)},
-    {"proc.cpu_pct", SK_NUM(35)},
-    {"proc.mem_mb", SK_NUM(420)},
-    {"cache.hit_ratio", SK_NUM(0.8)},
-    {"agents.active", SK_NUM(2)},
-    {"event.tool", SK_NUM(3)},
-    {"limits.five_hour_pct", SK_NUM(30)},
-    {"limits.five_hour_resets_at", SK_NUM(WALL + 3 * 3600 + 120)},
+    {"session.clock_s", NUM(1234)},
+    {"state.busy", NUM(1)},
+    {"pty.out_bps", NUM(400)},
+    {"proc.cpu_pct", NUM(35)},
+    {"proc.mem_mb", NUM(420)},
+    {"cache.hit_ratio", NUM(0.8)},
+    {"agents.active", NUM(2)},
+    {"event.tool", NUM(3)},
+    {"limits.five_hour_pct", NUM(30)},
+    {"limits.five_hour_resets_at", NUM(WALL + 3 * 3600 + 120)},
     {"limits.items",
      {SK_VAL_LIST, 0,
       "[{\"key\":\"five_hour\",\"label\":\"5h\",\"window\":\"5h\",\"model\":null,\"pct\":30,\"resets_at\":1700010920},"
