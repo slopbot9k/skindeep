@@ -28,6 +28,12 @@
 
 #include <stdio.h>
 
+/* Every text here is a label snprintf may cut short, which draws a
+ * shorter label: gcc's warning that one might be is no error here. */
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic ignored "-Wformat-truncation"
+#endif
+
 /* The event clock: every NIST rate divided by EVENT, one factor, so the
  * ratios between levels stay true. The light clock: light at c / LIGHT.
  * The ground term 3P is where a cascade rests. */
@@ -677,7 +683,9 @@ static void wl_text(double nm, char *out, size_t n)
 
 static void time_text(double s, char *out, size_t n)
 {
-    char v[32];
+    /* Three significant digits at most, or a short exponent form: the
+     * unit always fits after them in out. */
+    char v[16];
     if (s < 1e-6) {
         precision3(s * 1e9, v, sizeof v);
         snprintf(out, n, "%s ns", v);
@@ -705,7 +713,7 @@ static void sci(double x, char *out, size_t n)
         e++;
     while (x < sk_vm_pow(10, e) && e > -300)
         e--;
-    char v[32];
+    char v[16];
     fixed(x / sk_vm_pow(10, e), 2, v, sizeof v);
     size_t k = strlen(v);
     while (k > 0 && v[k - 1] == '0')

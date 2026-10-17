@@ -76,8 +76,12 @@ static bool start(app *a, const char *const *cmd)
     sk_strv_push(&env, "SKINNED_HIDDEN=1");
     a->pid = fork();
     if (a->pid == 0) {
-        int null = open("/dev/null", O_RDWR);
-        if (null < 0 || dup2(null, 0) < 0 || dup2(null, 1) < 0 || dup2(null, 2) < 0 || chdir(tmp) != 0)
+        /* Its stderr is kept in the test's folder, for what a sanitizer
+         * says (finish). */
+        if (chdir(tmp) != 0)
+            _exit(98);
+        int null = open("/dev/null", O_RDWR), err = open("skinned.err", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (null < 0 || err < 0 || dup2(null, 0) < 0 || dup2(null, 1) < 0 || dup2(err, 2) < 0)
             _exit(98);
         execve(whole, sk_strv_argv(&argv), sk_strv_argv(&env));
         _exit(99);
@@ -135,6 +139,14 @@ static int finish(app *a, int ms)
         sk_test_sleep_ms(20);
     }
     a->pid = 0;
+    /* What a sanitizer said is the failure, whatever the status. */
+    sk_buf path = {0};
+    sk_buf_printf(&path, "%s/skinned.err", sk_test_tmpdir());
+    char *err = sk_test_read(path.ptr, NULL);
+    if (err && (strstr(err, "Sanitizer") || strstr(err, "runtime error:")))
+        sk_test_fail(__FILE__, __LINE__, "skinned's stderr:\n%.4000s", err);
+    free(err);
+    sk_buf_free(&path);
     return WIFEXITED(ws) ? WEXITSTATUS(ws) : 128 + WTERMSIG(ws);
 }
 
@@ -817,10 +829,13 @@ static void test_the_new_tab_chooser(void)
     CHECK(row != NULL);
     if (row)
         press_row(&a, p, row, 20);
+    /* Open, and drawn: the boxes come with the first frame. */
     bool open = false;
-    for (uint64_t until = sk_now_ms() + 5000; sk_now_ms() < until && !open; sk_test_sleep_ms(50)) {
+    for (uint64_t until = sk_now_ms() + 5000; sk_now_ms() < until; sk_test_sleep_ms(50)) {
         p = probe(&a, &ar);
         sk_json_as_bool(sk_json_dig(p, "chooser", "open", NULL), &open);
+        if (open && sk_json_dig(p, "chooser_boxes", "folder", NULL))
+            break;
     }
     CHECK(open);
     sk_str focus = {0};
