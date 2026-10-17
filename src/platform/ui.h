@@ -192,6 +192,14 @@ typedef struct {
     /* Not shown on screen, for tests: it has its frame, takes presents
      * and readbacks, and gets the events a test sends it. */
     bool hidden;
+    /* Never takes the keyboard from the app's other windows, as the
+     * visualization's window (decision 0015): on macOS it cannot become
+     * the key window, and its first click reaches it; on X11 its
+     * WM_HINTS say it takes no input. It is shown without bringing the
+     * app forward, and sk_window_focus only raises it. Its pointer
+     * events come as any window's; its keys come only if a system
+     * gives it the keyboard regardless. */
+    bool no_focus;
 } sk_window_opts;
 
 /* A window, shown unless o->hidden. NULL with *err a malloc'd reason. */
@@ -203,7 +211,7 @@ void sk_window_set_title(sk_window *w, const char *title);
 void sk_window_size(const sk_window *w, int *pw, int *ph);
 double sk_window_scale(const sk_window *w);
 void sk_window_set_cursor(sk_window *w, sk_cursor c);
-/* Raise and give it the keyboard. */
+/* Raise and give it the keyboard; a no_focus window is only raised. */
 void sk_window_focus(sk_window *w);
 /* Where the text cursor is, in points from the content's top left, so
  * that an input method shows its candidates beside it. Linux ignores

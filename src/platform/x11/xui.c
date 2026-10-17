@@ -81,6 +81,7 @@ struct sk_window {
     void *ud;
     int pw, ph; /* pixels */
     bool hidden, mapped, focused;
+    bool no_focus; /* WM_HINTS's input False: the window manager never gives it the keys */
     sk_image frame;
     uint32_t seg; /* the frame's MIT-SHM segment, 0 for none */
     void *shm;
@@ -611,8 +612,10 @@ static void set_properties(sk_window *w, const sk_window_opts *o)
     }
     uint32_t pid = (uint32_t)getpid();
     put_card32(w->id, ui.atoms[A_NET_WM_PID], SK_X11_CARDINAL, &pid, 1);
-    /* WM_HINTS: it takes input, and starts in the normal state. */
-    uint32_t hints[9] = {1 | 2, 1, 1};
+    /* WM_HINTS: it takes input, unless it is never to take the focus
+     * (ICCCM's No Input model, with no WM_TAKE_FOCUS among the
+     * protocols), and starts in the normal state. */
+    uint32_t hints[9] = {1 | 2, o->no_focus ? 0 : 1, 1};
     put_card32(w->id, SK_X11_WM_HINTS, SK_X11_WM_HINTS, hints, SK_LEN(hints));
     uint32_t size[18] = {0};
     if (o->min_w > 0 || o->min_h > 0) {
@@ -634,6 +637,7 @@ sk_window *sk_xui_window_new(const sk_window_opts *o, char **err)
     sk_window *w = sk_xcalloc(1, sizeof *w);
     w->ud = o->ud;
     w->hidden = o->hidden;
+    w->no_focus = o->no_focus;
     w->pw = px(o->w > 0 ? o->w : 800);
     w->ph = px(o->h > 0 ? o->h : 600);
     w->id = sk_x11_id(c);
@@ -757,6 +761,10 @@ void sk_xui_window_focus(sk_window *w)
     sk_x11 *c = ui.c;
     uint32_t above = 0;
     sk_x11_configure_window(c, w->id, 1 << 6 /* stack mode */, &above);
+    if (w->no_focus) {
+        settle();
+        return;
+    }
     if (w->mapped)
         sk_x11_set_input_focus(c, 2 /* to the parent */, w->id, 0);
     /* A window manager raises and focuses on _NET_ACTIVE_WINDOW. */

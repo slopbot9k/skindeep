@@ -44,7 +44,8 @@ struct sk_window {
     CFRunLoopTimerRef pacer;
     void *ud;
     bool hidden;
-    int w, h; /* points */
+    bool no_focus; /* an sk_nokey_window, which never becomes key */
+    int w, h;      /* points */
     double scale, forced_scale;
     bool sized;
     /* In sk_window_new, whose caller reads the size when it returns. */
@@ -440,6 +441,21 @@ static BOOL view_yes(id self, SEL cmd)
 {
     (void)self, (void)cmd;
     return YES;
+}
+
+static BOOL view_no(id self, SEL cmd)
+{
+    (void)self, (void)cmd;
+    return NO;
+}
+
+/* A window that never becomes key takes its first click as a click, as
+ * nothing else would: every other keeps NSView's answer, no. */
+static BOOL view_accepts_first_mouse(id self, SEL cmd, id ev)
+{
+    (void)cmd, (void)ev;
+    sk_window *w = win_of(self);
+    return w && w->no_focus ? YES : NO;
 }
 
 static void view_update_layer(id self, SEL cmd)
@@ -1017,6 +1033,7 @@ static void make_classes(void)
     }
     for (size_t i = 0; i < SK_LEN(moves); i++)
         add(v, moves[i], (IMP)view_mouse_moved, "v@:@");
+    add(v, "acceptsFirstMouse:", (IMP)view_accepts_first_mouse, SK_ENC_BOOL "@:@");
     add(v, "mouseEntered:", (IMP)view_mouse_entered, "v@:@");
     add(v, "mouseExited:", (IMP)view_mouse_exited, "v@:@");
     add(v, "cursorUpdate:", (IMP)view_cursor_update, "v@:@");
@@ -1029,6 +1046,14 @@ static void make_classes(void)
     add(v, "windowDidResignKey:", (IMP)win_resigned_key, "v@:@");
     objc_registerClassPair(v);
     win_ivar = ivar_getOffset(class_getInstanceVariable(v, "sk_win"));
+
+    /* The window of sk_window_opts.no_focus: never key, never main. */
+    Class k = objc_allocateClassPair((Class)sk_cls("NSWindow"), "sk_nokey_window", 0);
+    if (!k)
+        sk_die("cannot make the class sk_nokey_window");
+    add(k, "canBecomeKeyWindow", (IMP)view_no, SK_ENC_BOOL "@:");
+    add(k, "canBecomeMainWindow", (IMP)view_no, SK_ENC_BOOL "@:");
+    objc_registerClassPair(k);
 
     Class d = objc_allocateClassPair((Class)sk_cls("NSObject"), "sk_app_delegate", 0);
     if (!d)
@@ -1260,8 +1285,8 @@ sk_window *sk_window_new(const sk_window_opts *o, char **err)
     unsigned long style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable |
                           NSWindowStyleMaskResizable;
     id nswin = SK_MSG(id (*)(id, SEL, CGRect, unsigned long, unsigned long, BOOL))(
-        sk_msg(sk_cls("NSWindow"), "alloc"), sk_sel("initWithContentRect:styleMask:backing:defer:"), r, style,
-        NSBackingStoreBuffered, NO);
+        sk_msg(sk_cls(o->no_focus ? "sk_nokey_window" : "NSWindow"), "alloc"),
+        sk_sel("initWithContentRect:styleMask:backing:defer:"), r, style, NSBackingStoreBuffered, NO);
     if (!nswin) {
         objc_autoreleasePoolPop(pool);
         *err = sk_xstrdup("cannot make an NSWindow");
@@ -1272,6 +1297,7 @@ sk_window *sk_window_new(const sk_window_opts *o, char **err)
     w->win = nswin;
     w->ud = o->ud;
     w->hidden = o->hidden;
+    w->no_focus = o->no_focus;
     w->creating = true;
     w->cursor = SK_CURSOR_ARROW;
     sk_msg_void_bool(nswin, "setReleasedWhenClosed:", NO);
@@ -1320,8 +1346,14 @@ sk_window *sk_window_new(const sk_window_opts *o, char **err)
     ui.windows = w;
     if (!w->hidden) {
         sk_msg_void(nswin, "center");
-        activate();
-        sk_msg_void_id(nswin, "makeKeyAndOrderFront:", nil);
+        /* A window that takes no focus is shown in front without the
+         * app being brought forward or any window losing the keys. */
+        if (w->no_focus) {
+            sk_msg_void(nswin, "orderFrontRegardless");
+        } else {
+            activate();
+            sk_msg_void_id(nswin, "makeKeyAndOrderFront:", nil);
+        }
     }
     update_size(w, false);
     w->creating = false;
@@ -1385,8 +1417,12 @@ void sk_window_focus(sk_window *w)
     if (w->hidden)
         return;
     void *pool = objc_autoreleasePoolPush();
-    activate();
-    sk_msg_void_id(w->win, "makeKeyAndOrderFront:", nil);
+    if (w->no_focus) {
+        sk_msg_void(w->win, "orderFrontRegardless");
+    } else {
+        activate();
+        sk_msg_void_id(w->win, "makeKeyAndOrderFront:", nil);
+    }
     objc_autoreleasePoolPop(pool);
 }
 
