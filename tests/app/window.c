@@ -77,6 +77,8 @@ static bool start(app *a, const char *const *cmd)
     sk_strv_pushf(&env, "XDG_RUNTIME_DIR=%s/run", tmp);
     sk_strv_pushf(&env, "SKINNED_CONTROL=%s", sock.ptr);
     sk_strv_push(&env, "SKINNED_HIDDEN=1");
+    /* Silent: a skin's sounds would play on the machine's real output. */
+    sk_strv_push(&env, "SKINNED_MUTE=1");
     a->pid = fork();
     if (a->pid == 0) {
         /* Its stderr is kept in the test's folder, for what a sanitizer
