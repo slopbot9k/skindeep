@@ -653,7 +653,7 @@ static void test_phosphor(void)
 
 static void test_all_widgets(void)
 {
-    round_trip("test/fixtures/skins/all-widgets");
+    round_trip("tests/fixtures/skins/all-widgets");
 }
 
 /* ---- The same bytes, and the shipped packs ---- */

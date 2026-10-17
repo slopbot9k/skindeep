@@ -48,12 +48,12 @@ static const sk_json **lines(const char *path, size_t *n)
 static void fixtures(void)
 {
     sk_arena_init(&A, 0);
-    char *text = sk_test_read("test/fixtures/claude/statusline.json", NULL);
+    char *text = sk_test_read("tests/fixtures/claude/statusline.json", NULL);
     CHECK(text != NULL);
     STATUS = json(text ? text : "{}");
     free(text);
-    HOOKS = lines("test/fixtures/claude/hooks.jsonl", &N_HOOKS);
-    TRANSCRIPT = lines("test/fixtures/claude/transcript-read.jsonl", &N_TRANSCRIPT);
+    HOOKS = lines("tests/fixtures/claude/hooks.jsonl", &N_HOOKS);
+    TRANSCRIPT = lines("tests/fixtures/claude/transcript-read.jsonl", &N_TRANSCRIPT);
 }
 
 /* base with key set to the JSON value, in place when present, else

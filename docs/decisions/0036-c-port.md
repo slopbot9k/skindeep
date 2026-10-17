@@ -1,7 +1,8 @@
 # 0036 The C port
 
-Status: accepted 2026-10-16. The port is under way. Until its cutover,
-the JavaScript app of decision 0001 is still the app.
+Status: accepted 2026-10-16. The cutover is done (2026-10-17): the C app
+is the app, and the JavaScript app of decision 0001 is in the
+repository's history.
 
 ## Context
 
@@ -73,7 +74,7 @@ butterchurn supply today.
 
   The C tree lives beside the JavaScript app until then.
 - The test targets:
-  - `make test` runs the C tests, using the fixtures in `test/fixtures/`.
+  - `make test` runs the C tests, using the fixtures in `tests/fixtures/`.
   - `make debug` runs the same tests under AddressSanitizer and UBSan.
   - `make fuzz-run` drives every parser with an in-tree,
     coverage-guided mutator, since Apple's tools ship no libFuzzer.

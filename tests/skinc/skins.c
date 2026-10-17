@@ -1,6 +1,5 @@
 /* The four shipped skins through the front end: each compiles with no
- * message, and what each needs comes out as the browser computes it.
- * And the app's widgets.css as skinc keeps it is the file itself. */
+ * message, and what each needs comes out as the browser computes it. */
 #include "../test.h"
 #include "util.h"
 
@@ -14,16 +13,6 @@ static bool compile(sk_front *f, const char *dir)
         sk_test_fail(__FILE__, __LINE__, "%s", d.items.ptr[i]);
     sk_diags_free(&d);
     return ok;
-}
-
-static void test_widgets_css_is_the_apps(void)
-{
-    size_t n;
-    char *file = sk_test_read("app/renderer/widgets.css", &n);
-    CHECK(file != NULL);
-    if (file)
-        CHECK_STR(sk_widgets_css(), file);
-    free(file);
 }
 
 static void test_deck(void)
@@ -137,5 +126,5 @@ static void test_library(void)
 }
 
 const sk_test sk_suite_skinc_skins[] = {
-    T(test_widgets_css_is_the_apps), T(test_deck), T(test_phosphor), T(test_coffee), T(test_library), {0},
+    T(test_deck), T(test_phosphor), T(test_coffee), T(test_library), {0},
 };

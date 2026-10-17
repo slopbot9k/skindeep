@@ -2,8 +2,8 @@
 # A replay fake named claude (decisions 0019, 0036), in POSIX sh: run as
 # the CLI of a tab, it finds the settings the app injected and plays the
 # recorded fixtures through the real relays, as Claude Code would. The
-# hook events of test/fixtures/claude/hooks.jsonl go through the hooks'
-# command, test/fixtures/claude/statusline.json through the statusLine
+# hook events of tests/fixtures/claude/hooks.jsonl go through the hooks'
+# command, tests/fixtures/claude/statusline.json through the statusLine
 # command, and both name a copy of transcript-read.jsonl, so the
 # transcript tail has a file to follow. It spends no tokens.
 #
@@ -13,7 +13,7 @@
 # FAKE_CLAUDE_LINGER: seconds it stays after the last (default 2).
 
 here=$(cd "$(dirname "$0")/../.." && pwd)
-fixtures=$here/test/fixtures/claude
+fixtures=$here/tests/fixtures/claude
 pause=${FAKE_CLAUDE_PAUSE:-0.3}
 
 settings=

@@ -92,7 +92,7 @@ static void test_a_skin_that_does_not_compile(void)
     char *packs = sk_path_join(cache, "packs");
     sk_skin_pack p;
     sk_buf msg = {0};
-    CHECK(!sk_skin_compile(bin, cache, "test/fixtures/skins/broken-css", &p, &msg));
+    CHECK(!sk_skin_compile(bin, cache, "tests/fixtures/skins/broken-css", &p, &msg));
     CHECK(strstr(sk_buf_cstr(&msg), "skin.css: line 2: @import is not allowed\n") != NULL);
     CHECK(p.bytes == NULL && p.path == NULL);
     CHECK_INT(files_in(packs), 0);

@@ -76,11 +76,11 @@ static void test_a_skin_that_does_not(void)
     if (!b)
         return;
     char *out, *err;
-    const char *args[] = {"test/fixtures/skins/broken-css", NULL};
+    const char *args[] = {"tests/fixtures/skins/broken-css", NULL};
     CHECK_INT(run(b, args, &out, &err), 1);
     CHECK_STR(out, "");
-    CHECK_STR(err, "test/fixtures/skins/broken-css/skin.css: line 2: @import is not allowed\n"
-                   "test/fixtures/skins/broken-css/skin.css: line 3: url(https://example.org/x.png): "
+    CHECK_STR(err, "tests/fixtures/skins/broken-css/skin.css: line 2: @import is not allowed\n"
+                   "tests/fixtures/skins/broken-css/skin.css: line 3: url(https://example.org/x.png): "
                    "\"https://example.org/x.png\": must be a path relative to the skin\n");
     free(out);
     free(err);
@@ -138,7 +138,7 @@ static void test_a_pack(void)
     free(bytes);
     sk_buf_clear(&pack);
     sk_buf_printf(&pack, "%s/broken.pack", sk_test_tmpdir());
-    const char *broken[] = {"test/fixtures/skins/broken-css", "-o", pack.ptr, NULL};
+    const char *broken[] = {"tests/fixtures/skins/broken-css", "-o", pack.ptr, NULL};
     CHECK_INT(run(b, broken, &out, &err), 1);
     CHECK(access(pack.ptr, F_OK) != 0);
     free(out);

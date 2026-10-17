@@ -85,21 +85,21 @@
   },
   {
     "path": "skins/deck/images/slider-context.png",
-    "source": "scripts/art/sprites.sh",
+    "source": "scripts/art/sprites.sh, which the C cutover removed (it is in the repository's history)",
     "author": "claude-skins",
     "license": "project-original",
     "notes": "drawn by the project with ImageMagick"
   },
   {
     "path": "skins/deck/images/slider-cache.png",
-    "source": "scripts/art/sprites.sh",
+    "source": "scripts/art/sprites.sh, which the C cutover removed (it is in the repository's history)",
     "author": "claude-skins",
     "license": "project-original",
     "notes": "drawn by the project with ImageMagick"
   },
   {
     "path": "skins/phosphor/images/radar.png",
-    "source": "scripts/art/sprites.sh",
+    "source": "scripts/art/sprites.sh, which the C cutover removed (it is in the repository's history)",
     "author": "claude-skins",
     "license": "project-original",
     "notes": "drawn by the project with ImageMagick"
@@ -127,70 +127,70 @@
   },
   {
     "path": "docs/screenshot.png",
-    "source": "screen capture of the app under Xvfb by scripts/shots.js, the window and the visualization window set side by side",
+    "source": "screen capture of the JavaScript app under Xvfb by scripts/shots.js, which the C cutover removed (it is in the repository's history), the window and the visualization window set side by side",
     "author": "claude-skins",
     "license": "project-original",
     "notes": "shows the deck skin, whose fonts and textures are listed above, and the terminal output of Claude Code, which belongs to its makers"
   },
   {
     "path": "docs/viz-modes.png",
-    "source": "screen capture of the visualization window under Xvfb by scripts/checks/vizmodes.js, which scripts/shots.js runs",
+    "source": "screen capture of the JavaScript app's visualization window under Xvfb by scripts/checks/vizmodes.js, which scripts/shots.js ran, which the C cutover removed (it is in the repository's history)",
     "author": "claude-skins",
     "license": "project-original",
     "notes": "a row per procedural visualization mode, a column per phase of the replay fake's session"
   },
   {
     "path": "docs/skins/deck.png",
-    "source": "screen capture of the app under Xvfb by scripts/shots.js",
+    "source": "screen capture of the JavaScript app under Xvfb by scripts/shots.js, which the C cutover removed (it is in the repository's history)",
     "author": "claude-skins",
     "license": "project-original",
     "notes": "shows the deck skin, whose fonts, images and sounds are listed in this file, and the terminal output of Claude Code, which belongs to its makers"
   },
   {
     "path": "docs/skins/phosphor.png",
-    "source": "screen capture of the app under Xvfb by scripts/shots.js",
+    "source": "screen capture of the JavaScript app under Xvfb by scripts/shots.js, which the C cutover removed (it is in the repository's history)",
     "author": "claude-skins",
     "license": "project-original",
     "notes": "shows the phosphor skin, whose fonts, images and sounds are listed in this file, and the terminal output of Claude Code, which belongs to its makers"
   },
   {
     "path": "docs/skins/library.png",
-    "source": "screen capture of the app under Xvfb by scripts/shots.js",
+    "source": "screen capture of the JavaScript app under Xvfb by scripts/shots.js, which the C cutover removed (it is in the repository's history)",
     "author": "claude-skins",
     "license": "project-original",
     "notes": "shows the library skin, whose fonts, images and sounds are listed in this file, and the terminal output of Claude Code, which belongs to its makers"
   },
   {
     "path": "docs/skins/coffee.png",
-    "source": "screen capture of the app under Xvfb by scripts/shots.js",
+    "source": "screen capture of the JavaScript app under Xvfb by scripts/shots.js, which the C cutover removed (it is in the repository's history)",
     "author": "claude-skins",
     "license": "project-original",
     "notes": "shows the coffee skin, whose fonts, images and sounds are listed in this file, and the terminal output of Claude Code, which belongs to its makers"
   },
   {
     "path": "skins/library/images/books.png",
-    "source": "scripts/art/library.py",
+    "source": "scripts/art/library.py, which the C cutover removed (it is in the repository's history)",
     "author": "claude-skins",
     "license": "project-original",
     "notes": "drawn by the project with Pillow: a seamless shelf of book spines"
   },
   {
     "path": "skins/library/images/chalkboard.jpg",
-    "source": "scripts/art/library.py",
+    "source": "scripts/art/library.py, which the C cutover removed (it is in the repository's history)",
     "author": "claude-skins",
     "license": "project-original",
     "notes": "drawn by the project with Pillow and numpy: a worn chalkboard"
   },
   {
     "path": "skins/library/images/lamp.png",
-    "source": "scripts/art/library.py",
+    "source": "scripts/art/library.py, which the C cutover removed (it is in the repository's history)",
     "author": "claude-skins",
     "license": "project-original",
     "notes": "drawn by the project with Pillow: a banker's lamp, off and on"
   },
   {
     "path": "skins/library/images/knob.png",
-    "source": "scripts/art/library.py",
+    "source": "scripts/art/library.py, which the C cutover removed (it is in the repository's history)",
     "author": "claude-skins",
     "license": "project-original",
     "notes": "drawn by the project with Pillow: a knurled brass knob"
@@ -246,133 +246,133 @@
   },
   {
     "path": "skins/coffee/images/slate.jpg",
-    "source": "scripts/art/coffee.py",
+    "source": "scripts/art/coffee.py, which the C cutover removed (it is in the repository's history)",
     "author": "claude-skins",
     "license": "project-original",
     "notes": "drawn by the project with Pillow and numpy: a black menu board"
   },
   {
     "path": "skins/coffee/images/doodles.png",
-    "source": "scripts/art/coffee.py",
+    "source": "scripts/art/coffee.py, which the C cutover removed (it is in the repository's history)",
     "author": "claude-skins",
     "license": "project-original",
     "notes": "drawn by the project with Pillow and numpy: chalk doodles beside the board's title"
   },
   {
     "path": "skins/coffee/images/doodle.png",
-    "source": "scripts/art/coffee.py",
+    "source": "scripts/art/coffee.py, which the C cutover removed (it is in the repository's history)",
     "author": "claude-skins",
     "license": "project-original",
     "notes": "drawn by the project with Pillow and numpy: a chalk mug and \"pay what you can\", lettered in Amatic SC (OFL-1.1, shipped in this skin)"
   },
   {
     "path": "skins/coffee/images/lights-off.png",
-    "source": "scripts/art/coffee.py",
+    "source": "scripts/art/coffee.py, which the C cutover removed (it is in the repository's history)",
     "author": "claude-skins",
     "license": "project-original",
     "notes": "drawn by the project with Pillow: a tile of string lights, softly lit"
   },
   {
     "path": "skins/coffee/images/lights-on.png",
-    "source": "scripts/art/coffee.py",
+    "source": "scripts/art/coffee.py, which the C cutover removed (it is in the repository's history)",
     "author": "claude-skins",
     "license": "project-original",
     "notes": "drawn by the project with Pillow: the same tile, the bulbs flaring"
   },
   {
     "path": "skins/coffee/images/cork.png",
-    "source": "scripts/art/coffee.py",
+    "source": "scripts/art/coffee.py, which the C cutover removed (it is in the repository's history)",
     "author": "claude-skins",
     "license": "project-original",
     "notes": "drawn by the project with Pillow and numpy: a corkboard of handbills, lettered in Shrikhand and Cutive Mono (OFL-1.1, shipped in this skin). Wood grain from images/counter.jpg (ambientCG Wood049, CC0)."
   },
   {
     "path": "skins/coffee/images/lava.png",
-    "source": "scripts/art/coffee.py",
+    "source": "scripts/art/coffee.py, which the C cutover removed (it is in the repository's history)",
     "author": "claude-skins",
     "license": "project-original",
     "notes": "drawn by the project with Pillow: a lava lamp's cap, base and glass"
   },
   {
     "path": "skins/coffee/images/deck.png",
-    "source": "scripts/art/coffee.py",
+    "source": "scripts/art/coffee.py, which the C cutover removed (it is in the repository's history)",
     "author": "claude-skins",
     "license": "project-original",
     "notes": "drawn by the project with Pillow and numpy: a turntable's plinth, platter and controls, numbers set in DejaVu Sans Bold. Wood grain from images/counter.jpg (ambientCG Wood049, CC0)."
   },
   {
     "path": "skins/coffee/images/record.png",
-    "source": "scripts/art/coffee.py",
+    "source": "scripts/art/coffee.py, which the C cutover removed (it is in the repository's history)",
     "author": "claude-skins",
     "license": "project-original",
     "notes": "drawn by the project with Pillow and numpy: a record and its label"
   },
   {
     "path": "skins/coffee/images/tonearm.png",
-    "source": "scripts/art/coffee.py",
+    "source": "scripts/art/coffee.py, which the C cutover removed (it is in the repository's history)",
     "author": "claude-skins",
     "license": "project-original",
     "notes": "drawn by the project with Pillow: a tonearm"
   },
   {
     "path": "skins/coffee/images/amp.png",
-    "source": "scripts/art/coffee.py",
+    "source": "scripts/art/coffee.py, which the C cutover removed (it is in the repository's history)",
     "author": "claude-skins",
     "license": "project-original",
     "notes": "drawn by the project with Pillow and numpy: a tube amp's face, lettered in DejaVu Sans Bold. Wood grain from images/counter.jpg (ambientCG Wood049, CC0)."
   },
   {
     "path": "skins/coffee/images/vu.png",
-    "source": "scripts/art/coffee.py",
+    "source": "scripts/art/coffee.py, which the C cutover removed (it is in the repository's history)",
     "author": "claude-skins",
     "license": "project-original",
     "notes": "drawn by the project with Pillow and numpy, numbers set in DejaVu Sans Bold: a VU meter face"
   },
   {
     "path": "skins/coffee/images/knob.png",
-    "source": "scripts/art/coffee.py",
+    "source": "scripts/art/coffee.py, which the C cutover removed (it is in the repository's history)",
     "author": "claude-skins",
     "license": "project-original",
     "notes": "drawn by the project with Pillow: a bakelite knob with a brass cap"
   },
   {
     "path": "skins/coffee/images/lps.png",
-    "source": "scripts/art/coffee.py",
+    "source": "scripts/art/coffee.py, which the C cutover removed (it is in the repository's history)",
     "author": "claude-skins",
     "license": "project-original",
     "notes": "drawn by the project with Pillow and numpy: a cubby of LPs. Wood grain from images/counter.jpg (ambientCG Wood049, CC0)."
   },
   {
     "path": "skins/coffee/images/press.png",
-    "source": "scripts/art/coffee.py",
+    "source": "scripts/art/coffee.py, which the C cutover removed (it is in the repository's history)",
     "author": "claude-skins",
     "license": "project-original",
     "notes": "drawn by the project with Pillow: a French press"
   },
   {
     "path": "skins/coffee/images/jar.png",
-    "source": "scripts/art/coffee.py",
+    "source": "scripts/art/coffee.py, which the C cutover removed (it is in the repository's history)",
     "author": "claude-skins",
     "license": "project-original",
     "notes": "drawn by the project with Pillow: a mason jar"
   },
   {
     "path": "skins/coffee/images/plant.png",
-    "source": "scripts/art/coffee.py",
+    "source": "scripts/art/coffee.py, which the C cutover removed (it is in the repository's history)",
     "author": "claude-skins",
     "license": "project-original",
     "notes": "drawn by the project with Pillow: a pothos in a terracotta pot"
   },
   {
     "path": "skins/coffee/images/typewriter.png",
-    "source": "scripts/art/coffee.py",
+    "source": "scripts/art/coffee.py, which the C cutover removed (it is in the repository's history)",
     "author": "claude-skins",
     "license": "project-original",
     "notes": "drawn by the project with Pillow: a manual typewriter"
   },
   {
     "path": "skins/coffee/images/mugs.png",
-    "source": "scripts/art/coffee.py",
+    "source": "scripts/art/coffee.py, which the C cutover removed (it is in the repository's history)",
     "author": "claude-skins",
     "license": "project-original",
     "notes": "drawn by the project with Pillow and numpy: a plank of none to four mismatched mugs. Wood grain from images/counter.jpg (ambientCG Wood049, CC0)."
@@ -518,46 +518,25 @@
     "notes": "Beatnik applause built from single finger snaps of freesound sounds 50758 (RutgerMuller, Snapping Fingers.wav, preview https://cdn.freesound.org/previews/50/50758_179538-hq.ogg) and 369549 (JohnsonBrandEditing, Finger Snaps, page https://freesound.org/people/JohnsonBrandEditing/sounds/369549/, preview https://cdn.freesound.org/previews/369/369549_3229685-hq.ogg), both fetched by plain GET. Derived by scripts/art/sounds.py: each snap above -22 dB of its file cut out, high-pass 300 Hz, laid out as four listeners snapping for about two seconds, a 0.35 s room tail. Output 44.1 kHz mono Ogg Vorbis q3, peaks at most -6 dBFS. CC0 per both sound pages."
   },
   {
-    "path": "app/viz/avs.js",
-    "source": "https://codeberg.org/exo-cortex/vis_avs/src/commit/1cee1f3d4f783b830538c3e4d2082a2c59521dee/avs/vis_avs",
-    "author": "Nullsoft, Inc. (the AVS source release of 2005), as kept by the vis_avs port's contributors",
-    "license": "BSD-3-Clause",
-    "notes": "Ported to JavaScript and Canvas2D by the project from Advanced Visualization Studio, the visualization plugin of Winamp: the Superscope (e_superscope.cpp) running three examples of its built-in list, Spiral, Rotating Bow Thing and Spiral Graph Fun (e_superscope.h), and the Dot Plane (e_dotplane.cpp, e_dotplane.h, matrix.cpp) with its default colours. The license is LICENSE.TXT at the same commit, the BSD license under which Nullsoft opened the AVS source in May 2005, and the file's header carries it verbatim. The audio is the visualization's synthetic signal."
-  },
-  {
-    "path": "app/viz/classic.js",
-    "source": "this repository",
-    "author": "claude-skins",
-    "license": "project-original",
-    "notes": "Recreates from its look alone the spectrum analyzer in the main window of Winamp 2, in its normal and fire styles: 19 bars on a dotted panel with falling peak caps. No code, image or colour file of Winamp is used."
-  },
-  {
-    "path": "app/viz/presets.js",
-    "source": "this repository",
-    "author": "claude-skins",
-    "license": "project-original",
-    "notes": "Butterchurn presets written by the project. stardust and whirlpool recreate the look of two MilkDrop presets by Ryan Geiss from his screenshots named cosmic dust and vortex on https://geisswerks.com/milkdrop/screenshots.html. The page names no preset. Geiss - Cosmic Dust 2 is in the preset pack MilkDrop 2 shipped with Winamp, and no preset named Vortex is. The presets' own equations were not read: no license from their authors was found, the MilkDrop 2.25c source (BSD-3-Clause) ships no preset, and the MIT license of butterchurn-presets covers its conversion, not the presets. drift, rings and plasma are the project's own."
-  },
-  {
     "path": "src/viz/avs.c",
     "source": "https://codeberg.org/exo-cortex/vis_avs/src/commit/1cee1f3d4f783b830538c3e4d2082a2c59521dee/avs/vis_avs",
     "author": "Nullsoft, Inc. (the AVS source release of 2005), as kept by the vis_avs port's contributors",
     "license": "BSD-3-Clause",
-    "notes": "The C port (decision 0036) of app/viz/avs.js, listed above: the Superscope's three examples and the Dot Plane, as that file ported them from the same AVS source. The file's header carries the BSD license verbatim."
+    "notes": "The C port (decision 0036) of the JavaScript app's app/viz/avs.js, which the cutover removed (it is in the repository's history), and of its provenance: Ported to JavaScript and Canvas2D by the project from Advanced Visualization Studio, the visualization plugin of Winamp: the Superscope (e_superscope.cpp) running three examples of its built-in list, Spiral, Rotating Bow Thing and Spiral Graph Fun (e_superscope.h), and the Dot Plane (e_dotplane.cpp, e_dotplane.h, matrix.cpp) with its default colours. The license is LICENSE.TXT at the same commit, the BSD license under which Nullsoft opened the AVS source in May 2005, and the file's header carries it verbatim. The audio is the visualization's synthetic signal."
   },
   {
     "path": "src/viz/classic.c",
     "source": "this repository",
     "author": "claude-skins",
     "license": "project-original",
-    "notes": "The C port (decision 0036) of app/viz/classic.js, listed above: the classic analyzer recreated from its look alone. No code, image or colour file of Winamp is used."
+    "notes": "The C port (decision 0036) of the JavaScript app's app/viz/classic.js, which the cutover removed (it is in the repository's history), and of its provenance: Recreates from its look alone the spectrum analyzer in the main window of Winamp 2, in its normal and fire styles: 19 bars on a dotted panel with falling peak caps. No code, image or colour file of Winamp is used."
   },
   {
     "path": "src/viz/milkpresets.c",
     "source": "this repository",
     "author": "claude-skins",
     "license": "project-original",
-    "notes": "The C port (decision 0036) of app/viz/presets.js, listed above, with the same provenance: the five presets' equations and shaders translated by hand. What they leave unset takes butterchurn 2.6.7's defaults (MIT, third_party/butterchurn/LICENSE)."
+    "notes": "The C port (decision 0036) of the JavaScript app's app/viz/presets.js, which the cutover removed (it is in the repository's history), and of its provenance: Butterchurn presets written by the project. stardust and whirlpool recreate the look of two MilkDrop presets by Ryan Geiss from his screenshots named cosmic dust and vortex on https://geisswerks.com/milkdrop/screenshots.html. The page names no preset. Geiss - Cosmic Dust 2 is in the preset pack MilkDrop 2 shipped with Winamp, and no preset named Vortex is. The presets' own equations were not read: no license from their authors was found, the MilkDrop 2.25c source (BSD-3-Clause) ships no preset, and the MIT license of butterchurn-presets covers its conversion, not the presets. drift, rings and plasma are the project's own."
   },
   {
     "path": "docs/diary/heroes/01-design.png",

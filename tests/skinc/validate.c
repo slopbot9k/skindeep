@@ -8,7 +8,7 @@
 #include <dirent.h>
 #include <string.h>
 
-#define F "test/fixtures/skins"
+#define F "tests/fixtures/skins"
 
 static sk_diags run(const char *dir, bool *ok)
 {

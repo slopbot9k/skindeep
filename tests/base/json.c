@@ -346,9 +346,9 @@ static bool same(const sk_json *a, const sk_json *b)
 static void test_fixtures_round_trip(void)
 {
     const char *files[] = {
-        "test/fixtures/claude/hooks.jsonl",   "test/fixtures/claude/statusline.json",
-        "test/fixtures/claude/transcript-read.jsonl", "test/fixtures/codex/rollout.jsonl",
-        "test/fixtures/codex/limits.jsonl",
+        "tests/fixtures/claude/hooks.jsonl",   "tests/fixtures/claude/statusline.json",
+        "tests/fixtures/claude/transcript-read.jsonl", "tests/fixtures/codex/rollout.jsonl",
+        "tests/fixtures/codex/limits.jsonl",
     };
     size_t lines = 0;
     for (size_t f = 0; f < SK_LEN(files); f++) {

@@ -715,7 +715,7 @@ static void test_s1_the_relays_fill_the_bus_the_transcript_follows_close_release
         CHECK_STR(r.err, "");
         ran_free(&r);
     }
-    char *fixture = sk_test_read("test/fixtures/claude/statusline.json", NULL);
+    char *fixture = sk_test_read("tests/fixtures/claude/statusline.json", NULL);
     CHECK(fixture != NULL);
     sk_buf_clear(&body);
     /* The fixture with this test's session and transcript, which a
@@ -728,7 +728,7 @@ static void test_s1_the_relays_fill_the_bus_the_transcript_follows_close_release
     CHECK_INT(r.code, 0);
     CHECK_STR(r.out, ""); /* with no chain the statusline relay prints nothing */
     ran_free(&r);
-    char *transcript = sk_test_read("test/fixtures/claude/transcript-read.jsonl", NULL);
+    char *transcript = sk_test_read("tests/fixtures/claude/transcript-read.jsonl", NULL);
     CHECK(transcript != NULL);
     if (transcript)
         append_file(h.file, transcript);

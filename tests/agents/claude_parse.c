@@ -18,7 +18,7 @@ static const sk_json *json(const char *text)
 
 static const sk_json *fixture_status(void)
 {
-    char *text = sk_test_read("test/fixtures/claude/statusline.json", NULL);
+    char *text = sk_test_read("tests/fixtures/claude/statusline.json", NULL);
     CHECK(text != NULL);
     const sk_json *v = json(text ? text : "{}");
     free(text);
@@ -83,7 +83,7 @@ static void test_compact_threshold_follows_the_binary_rule(void)
 static void test_hook_metadata_drops_content_fields(void)
 {
     sk_arena_init(&arena, 0);
-    char *text = sk_test_read("test/fixtures/claude/hooks.jsonl", NULL);
+    char *text = sk_test_read("tests/fixtures/claude/hooks.jsonl", NULL);
     CHECK(text != NULL);
     int lines = 0;
     for (const char *line = text; text && *line;) {

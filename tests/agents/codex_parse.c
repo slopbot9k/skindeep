@@ -99,8 +99,8 @@ static void run_free(run_t *r)
     sk_vec_free(&r->events);
 }
 
-static const char *ROLLOUT = "test/fixtures/codex/rollout.jsonl";
-static const char *LIMITS = "test/fixtures/codex/limits.jsonl";
+static const char *ROLLOUT = "tests/fixtures/codex/rollout.jsonl";
+static const char *LIMITS = "tests/fixtures/codex/limits.jsonl";
 
 static void test_token_counts_follow_the_last_token_count_event(void)
 {
