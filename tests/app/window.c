@@ -1001,8 +1001,12 @@ static void test_an_internal_error_ends_the_clis(void)
     (void)ask(&a, &ar, "{\"op\":\"die\"}");
     sk_arena_free(&ar);
     CHECK_INT(finish(&a, 6000), 125);
-    if (pid > 0)
-        CHECK(kill(-(pid_t)pid, 0) != 0 && errno == ESRCH);
+    /* Its group gone: the grandchildren, killed with it, are reaped by
+     * the system a moment after. */
+    bool gone = pid <= 0;
+    for (uint64_t until = sk_now_ms() + 3000; !gone && sk_now_ms() < until; sk_test_sleep_ms(20))
+        gone = kill(-(pid_t)pid, 0) != 0 && errno == ESRCH;
+    CHECK(gone);
     sk_buf path = {0};
     sk_buf_printf(&path, "%s/skinned.err", sk_test_tmpdir());
     char *err = sk_test_read(path.ptr, NULL);
