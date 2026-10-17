@@ -6,6 +6,7 @@
 #include "../core/command.h"
 #include "../core/loop.h"
 #include "../core/names.h"
+#include "../platform/ask.h"
 #include "../platform/audio.h"
 #include "../platform/picker.h"
 #include "../sessions/files.h"
@@ -4760,6 +4761,35 @@ static char *shipped_dir(const char *self)
     return dir;
 }
 
+/* Windows that recorded different skins within SK_LAST_RACE_MS of the
+ * newest (decision 0022): which one this launch opens, asked as main.js
+ * asks it, each shown with ~ for the home directory, the newest the
+ * default. The live checks open no dialog: the newest is taken. Either
+ * way the records are forgotten, so the next launch is not asked. */
+static const char *raced_choice(gui *g, const sk_strv *choices, const char *home)
+{
+    int k = -1;
+    if (!g->hidden) {
+        sk_strv shown = {0};
+        for (size_t i = 0; i < choices->len; i++) {
+            sk_buf b = {0};
+            sk_identity_tildify(&b, choices->ptr[i], home);
+            sk_strv_push(&shown, b.ptr);
+            sk_buf_free(&b);
+        }
+        k = sk_ask_choice("claude-skins", "Windows chose different skins at nearly the same time.",
+                          "Which skin should this window open?", (const char *const *)shown.ptr, shown.len);
+        sk_strv_free(&shown);
+    }
+    if (k < 0) {
+        sk_log("windows chose different skins at once: %s, the newest, is taken", choices->ptr[0]);
+        k = 0;
+    }
+    if (sk_last_forget(g->last_dir) != 0)
+        sk_log("last skin: %s", strerror(errno));
+    return choices->ptr[k];
+}
+
 int sk_gui_run(const sk_options *o, const sk_envp *env, const char *self)
 {
     sk_launch l;
@@ -4803,9 +4833,9 @@ int sk_gui_run(const sk_options *o, const sk_envp *env, const char *self)
     /* The skin before any window, which takes its size (decisions 0006,
      * 0008, 0022): --skin or SKINNED_SKIN, refused with the app's status;
      * else the newest record of the last skins, a remembered skin that
-     * no longer loads giving way to the default, as a problem. Windows
-     * that chose different skins at once are not asked yet: the newest
-     * record wins. A launch records its skin, a fallback is not. */
+     * no longer loads giving way to the default, as a problem; windows
+     * that chose different skins at once ask which. A launch records its
+     * skin, a fallback is not. */
     char *skinc = sk_skinc_beside(self, sk_envp_get(env, "PATH"));
     char *shipped = shipped_dir(self);
     sk_skins_opts so = {skinc, NULL, shipped, sk_envp_get(env, "HOME")};
@@ -4825,10 +4855,8 @@ int sk_gui_run(const sk_options *o, const sk_envp *env, const char *self)
             sk_last_read(g->last_dir, &records);
             sk_last_prune(g->last_dir, &records, SK_LAST_RACE_MS);
         }
-        if (sk_last_pick(&records, SK_LAST_RACE_MS, &spec, &choices) && !spec && choices.len) {
-            sk_log("windows chose different skins at once: %s, the newest, is taken", choices.ptr[0]);
-            spec = choices.ptr[0];
-        }
+        if (sk_last_pick(&records, SK_LAST_RACE_MS, &spec, &choices) && !spec && choices.len)
+            spec = raced_choice(g, &choices, sk_envp_get(env, "HOME"));
         started = sk_skins_start_remembered(g->skins, spec, &problem_title, &problem_detail, &skin_errs);
         /* A remembered skin refused, for Housekeeping. */
         bool refused = problem_title != NULL;

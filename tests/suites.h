@@ -48,6 +48,7 @@
     X(foreign)                                                               \
     X(newtab)                                                                \
     X(picker)                                                                \
+    X(ask)                                                                   \
     X(chooser)                                                               \
     X(headless)                                                              \
     X(term_recorded)                                                         \

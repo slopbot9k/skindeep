@@ -4,6 +4,7 @@
  * press the app's chords, click and read the probe. They need a display:
  * the window server on macOS, $DISPLAY on Linux (Xvfb in CI); without
  * one they print a skip line. */
+#include "../../src/app/lastskin.h"
 #include "../../src/base/arena.h"
 #include "../../src/base/json.h"
 #include "../../src/base/strv.h"
@@ -19,6 +20,7 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 extern char **environ;
@@ -919,6 +921,43 @@ static void test_the_skin(void)
     CHECK_INT(finish(&a, 5000), 128 + SIGHUP);
 }
 
+/* Windows that recorded different skins within 5 s of each other: a
+ * launch with no dialog to show takes the newest, forgets the records,
+ * and records its own. */
+static void test_raced_skins(void)
+{
+    sk_buf rec = {0};
+    sk_buf_printf(&rec, "%s/state/claude-skins/last-skins", sk_test_tmpdir());
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    double now = (double)ts.tv_sec * 1000 + (double)ts.tv_nsec / 1e6;
+    CHECK_INT(sk_last_write(rec.ptr, 999991, "deck", now - 1500), 0);
+    CHECK_INT(sk_last_write(rec.ptr, 999992, "coffee", now - 500), 0);
+    app a;
+    const char *cmd[] = {"cat", NULL};
+    if (!start(&a, cmd)) {
+        sk_buf_free(&rec);
+        return;
+    }
+    sk_arena ar;
+    sk_arena_init(&ar, 0);
+    sk_str name = {0};
+    sk_json_as_string(sk_json_dig(probe(&a, &ar), "skin", "name", NULL), &name);
+    CHECK_MEM(name, "coffee");
+    sk_last_records r = {0};
+    sk_last_read(rec.ptr, &r);
+    CHECK_INT(r.len, 1);
+    if (r.len) {
+        CHECK_INT(r.ptr[0].pid, a.pid);
+        CHECK_STR(r.ptr[0].spec, "coffee");
+    }
+    sk_last_records_free(&r);
+    sk_arena_free(&ar);
+    sk_buf_free(&rec);
+    ok(&a, "{\"op\":\"hangup\"}");
+    CHECK_INT(finish(&a, 5000), 128 + SIGHUP);
+}
+
 #ifdef __APPLE__
 #define CMD_MODS "[\"super\"]"
 #else
@@ -1013,5 +1052,6 @@ const sk_test sk_suite_window[] = {
     T(test_a_tab_renamed),
     T(test_the_strip_waits_for_a_rename),
     T(test_the_skin),
+    T(test_raced_skins),
     {0},
 };
