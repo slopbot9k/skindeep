@@ -26,6 +26,16 @@ sk_skinpack *sk_skinpack_new(uint8_t *bytes, size_t n, bool own, char *err, size
     p->faces = sk_xcalloc(p->pack.nfonts ? p->pack.nfonts : 1, sizeof *p->faces);
     for (uint32_t i = 0; i < p->pack.nfonts; i++)
         p->faces[i] = sk_font_open(p->pack.fonts[i].data, p->pack.fonts[i].len, 0);
+    /* The layers' checks that need the pack laid out. */
+    if (p->pack.nlayers) {
+        sk_skinview *v = sk_skinview_new(p, 0);
+        bool fit = sk_view_layers_fit(v, err, err_len);
+        sk_skinview_free(v);
+        if (!fit) {
+            sk_skinpack_unref(p);
+            return NULL;
+        }
+    }
     return p;
 }
 

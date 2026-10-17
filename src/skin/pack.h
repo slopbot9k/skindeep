@@ -859,17 +859,22 @@ typedef struct {
 
 /* A pre-rendered layer: an element (and what it holds) painted by
  * skinc at one scale. x and y place its top left corner relative to
- * the element's border box, in CSS pixels; w and h are device pixels.
+ * the element's border box (an SVG shape's or group's: its svg's), in
+ * CSS pixels; w and h are device pixels.
  *
  * STATIC: the element and its subtree as painted in every state.
  * STATE: the same in the states whose table entry is style.
  * SPRITE: the subtree without the transform the runtime applies (a
- * needle's group, a knob, an animated element), turned about the
+ * knob's turning group, an animated element), turned about the
  * origin ox, oy (CSS pixels from x, y).
  * NINE: the element's box shadows and borders as a nine-slice whose
- * fixed edges are slice[] device pixels, for a box that stretches.
+ * fixed edges are slice[] device pixels, for a box that stretches,
+ * painted for a box of ox by oy CSS pixels.
  * MASK: an alpha mask, the clip-path or rounded corners a dynamic
- * child is clipped to. */
+ * child is clipped to. skinc writes none (skinc/layers.c says why);
+ * the runtime passes them over.
+ * The opacity and blend of a layer's element are applied as the
+ * runtime composites it, never painted in. */
 typedef enum { SK_LAYER_STATIC, SK_LAYER_STATE, SK_LAYER_SPRITE, SK_LAYER_NINE, SK_LAYER_MASK } sk_layer_kind;
 typedef struct {
     uint32_t el, style;

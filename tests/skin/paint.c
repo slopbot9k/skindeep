@@ -208,7 +208,7 @@ static void test_box_shadows(void)
 static void paint_parts(sk_tskin *s, sk_paint_cache *cache, int w, int h, sk_image *out)
 {
     sk_image_init(out, w, h);
-    sk_paint_env env = {&s->l, &s->lfonts, &s->images, s->glyphs, cache};
+    sk_paint_env env = {&s->l, &s->lfonts, &s->images, s->glyphs, cache, NULL};
     for (int q = 0; q < 4 && s->ok; q++) {
         sk_rect part = sk_rect_make((q & 1) * w / 2, (q >> 1) * h / 2, w / 2, h / 2);
         sk_image view = sk_image_view(out, part);
@@ -369,7 +369,7 @@ static void test_svg_arcs_and_dashes(void)
     sk_image part;
     sk_image_init(&part, 40, 40);
     if (s.ok) {
-        sk_paint_env env = {&s.l, &s.lfonts, &s.images, s.glyphs, NULL};
+        sk_paint_env env = {&s.l, &s.lfonts, &s.images, s.glyphs, NULL, NULL};
         sk_paint_px(&part, &env, s.t.root, 1, 3, 30);
     }
     for (int y = 0; y < 40; y += 3)

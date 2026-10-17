@@ -904,6 +904,11 @@ bool sk_motion_fades(const sk_motion *m)
     return m && m->nan && m->opacity_only && !m->ntr;
 }
 
+bool sk_motion_easing(const sk_motion *m)
+{
+    return m && m->ntr;
+}
+
 const sk_css_style *sk_motion_style(sk_skinview *v, uint32_t n, bool *moving, double *due)
 {
     sk_vnode *x = &v->nodes[n];

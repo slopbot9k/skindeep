@@ -162,6 +162,34 @@ typedef struct {
     uint8_t tried; /* 1 tried, 2 decoded */
 } sk_vimage;
 
+/* A layer skinc pre-rendered (decision 0037), decoded on first use, as
+ * the painter composites it. */
+typedef struct {
+    sk_player pl;
+    sk_image im;
+    uint8_t tried; /* 1 tried, 2 decoded */
+} sk_vlayer;
+
+/* What a node may draw from its element's layers this frame, or from
+ * the view's own picture of it. */
+enum { SK_VLAYER_SUBTREE = 1, SK_VLAYER_NINE = 2, SK_VLAYER_KEPT = 4 };
+
+/* A subtree the view keeps painted at the size it has now: one whose
+ * paint changes with its size alone (a panel that stretches with the
+ * window or a split), which skinc could not paint ahead. It is painted
+ * when what it paints changes, on a resize above all, and drawn from
+ * the picture until then. */
+typedef struct {
+    uint32_t node;
+    uint32_t *sub;   /* its nodes, the root first */
+    uint32_t nsub;
+    uint64_t key;    /* what the picture was painted for */
+    bool steady;     /* its key was the same at the last run */
+    bool valid;
+    sk_image im;
+    sk_player pl;
+} sk_vkept;
+
 struct sk_skinview {
     sk_skinpack *sp;
     const sk_pack *p;
@@ -203,6 +231,14 @@ struct sk_skinview {
     sk_vimage *decoded;
     sk_glyph_cache *glyphs;
     sk_paint_cache *pcache;
+    sk_players layer_hook; /* the layers below, as the painter asks for them */
+    sk_vlayer *vlayers;    /* per pack layer */
+    uint8_t *layer_ok;     /* per node: SK_VLAYER_* it may draw from now */
+    uint8_t *busy;         /* per node: it or what it holds is easing */
+    sk_vkept *kept;        /* the subtrees kept painted */
+    uint32_t nkept;
+    uint32_t *kept_of;     /* per node: its sk_vkept, or SK_PACK_NONE */
+    size_t kept_bytes;     /* their pictures' pixels, in bytes */
     uint32_t *order;  /* the boxes in the order they paint, for hit tests */
     uint32_t norder;
     sk_vfade fade;
@@ -240,11 +276,25 @@ void sk_view_set_var(sk_skinview *v, uint32_t n, uint8_t var, uint8_t value);
 void sk_view_set_text(sk_skinview *v, uint32_t n, const char *text);
 /* A metric by name, NULL when absent. */
 const sk_val *sk_view_metric(const sk_skinview *v, const char *name);
+/* The checks of a pack's layers that need its layout (decision 0037),
+ * the view laid out at the skin's size with every variable 0: each
+ * layer of an element shown there, in its style there or every style,
+ * covers the box as skinc lays it out and no more than it paints, a
+ * pixel either way; a nine-slice's middle row and column lie inside a
+ * box no larger than the box. False with why in err. */
+bool sk_view_layers_fit(sk_skinview *v, char *err, size_t err_len);
+/* Whether element e shows something only the runtime knows: a value, a
+ * label that falls back, the time to a reset, a row, a meter, a turn,
+ * a mark, a frame, a length the runtime fills in. */
+bool sk_view_shows_value(const sk_skinview *v, uint32_t e);
 /* The stage's rectangle and the skin area's mapping, for the tests. */
 void sk_view_run(sk_skinview *v);
 
 /* The skin painted over r, frame pixels, the stage at st. */
 void sk_view_paint_skin(sk_skinview *v, sk_image *frame, sk_rect st, sk_rect r);
+/* What the painter takes to paint the view's layout: its faces, images,
+ * caches and the pack's layers. */
+sk_paint_env sk_view_env(sk_skinview *v);
 /* Node n's signature, everything its own paint depends on; with
  * opacity false, its opacity left out. */
 uint64_t sk_view_signature(const sk_skinview *v, uint32_t n, bool opacity);
@@ -297,6 +347,8 @@ uint64_t sk_motion_sig(const sk_motion *m);
 uint64_t sk_motion_sig_but_opacity(const sk_motion *m);
 /* Its animations animate opacity alone, and nothing else moves it. */
 bool sk_motion_fades(const sk_motion *m);
+/* A transition of it is under way, as its style last showed. */
+bool sk_motion_easing(const sk_motion *m);
 void sk_motion_free(sk_motion *m);
 
 /* CSS easing: a timing function at progress x in [0, 1]. */
