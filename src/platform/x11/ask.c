@@ -18,6 +18,20 @@ extern char **environ;
 /* What the child may print before it is cut off: an index. */
 #define OUT_CAP 4096
 
+void sk_ask_markup(sk_buf *out, const char *s)
+{
+    for (; *s; s++) {
+        if (*s == '&')
+            sk_buf_append_c(out, "&amp;");
+        else if (*s == '<')
+            sk_buf_append_c(out, "&lt;");
+        else if (*s == '>')
+            sk_buf_append_c(out, "&gt;");
+        else
+            sk_buf_putc(out, *s);
+    }
+}
+
 void sk_ask_argv(sk_picker_prog prog, const char *title, const char *message, const char *detail,
                  const char *const *choices, size_t n, sk_strv *argv)
 {
@@ -41,7 +55,10 @@ void sk_ask_argv(sk_picker_prog prog, const char *title, const char *message, co
     sk_strv_push(argv, "--list");
     sk_strv_push(argv, "--radiolist");
     sk_strv_pushf(argv, "--title=%s", title);
-    sk_strv_pushf(argv, "--text=%s", text.ptr);
+    sk_buf markup = {0};
+    sk_ask_markup(&markup, text.ptr);
+    sk_strv_pushf(argv, "--text=%s", sk_buf_cstr(&markup));
+    sk_buf_free(&markup);
     /* The radio button, the index printed, hidden, and the skin. */
     sk_strv_push(argv, "--column=");
     sk_strv_push(argv, "--column=");
@@ -136,4 +153,96 @@ int sk_ask_run(const char *path, const char *title, const char *message, const c
     while ((w = waitpid(pid, &ws, 0)) < 0 && errno == EINTR)
         ;
     return w == pid ? sk_ask_answer(out, len, ws, n) : -1;
+}
+
+void sk_ask_confirm_argv(sk_picker_prog prog, const sk_ask_question *q, sk_strv *argv)
+{
+    sk_buf text = {0};
+    sk_buf_printf(&text, "%s\n\n%s", q->message, q->detail);
+    if (prog == SK_PICKER_KDIALOG) {
+        sk_strv_push(argv, "kdialog");
+        sk_strv_push(argv, "--title");
+        sk_strv_push(argv, q->title);
+        sk_strv_push(argv, "--yes-label");
+        sk_strv_push(argv, q->ok);
+        sk_strv_push(argv, "--no-label");
+        sk_strv_push(argv, q->cancel);
+        sk_strv_push(argv, "--yesno");
+        sk_strv_push(argv, text.ptr);
+    } else {
+        sk_buf markup = {0};
+        sk_ask_markup(&markup, text.ptr);
+        sk_strv_push(argv, "zenity");
+        sk_strv_push(argv, "--question");
+        sk_strv_pushf(argv, "--title=%s", q->title);
+        sk_strv_pushf(argv, "--text=%s", sk_buf_cstr(&markup));
+        sk_strv_pushf(argv, "--ok-label=%s", q->ok);
+        sk_strv_pushf(argv, "--cancel-label=%s", q->cancel);
+        sk_buf_free(&markup);
+    }
+    sk_buf_free(&text);
+}
+
+bool sk_ask_confirm_answer(int wstatus)
+{
+    return WIFEXITED(wstatus) && WEXITSTATUS(wstatus) == 0;
+}
+
+typedef struct {
+    sk_ask_ran done;
+    void *ud;
+} confirm;
+
+static void confirm_reaped(sk_loop *loop, pid_t pid, int wstatus, void *ud)
+{
+    (void)loop, (void)pid;
+    confirm c = *(confirm *)ud;
+    free(ud);
+    /* -1: reaped elsewhere, its status lost: it went ahead. */
+    c.done(c.ud, wstatus == -1 || sk_ask_confirm_answer(wstatus) ? 1 : 0);
+}
+
+void sk_ask_confirm_run(sk_loop *loop, const char *path, const sk_ask_question *q, sk_ask_ran done, void *ud)
+{
+    char *file = NULL;
+    sk_picker_prog prog = sk_picker_find(path, &file);
+    if (prog == SK_PICKER_NONE) {
+        done(ud, -1);
+        return;
+    }
+    posix_spawn_file_actions_t fa;
+    posix_spawn_file_actions_init(&fa);
+    posix_spawn_file_actions_addopen(&fa, 0, "/dev/null", O_RDONLY, 0);
+    posix_spawn_file_actions_addopen(&fa, 1, "/dev/null", O_WRONLY, 0);
+    /* The core thread blocks the signals its loop takes, and the app
+     * ignores SIGPIPE: the child gets the defaults. */
+    posix_spawnattr_t at;
+    posix_spawnattr_init(&at);
+    sigset_t none, dflt;
+    sigemptyset(&none);
+    sigemptyset(&dflt);
+    sigaddset(&dflt, SIGPIPE);
+    posix_spawnattr_setsigmask(&at, &none);
+    posix_spawnattr_setsigdefault(&at, &dflt);
+    posix_spawnattr_setflags(&at, POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF);
+    sk_strv argv = {0};
+    sk_ask_confirm_argv(prog, q, &argv);
+    pid_t pid;
+    int e = posix_spawnp(&pid, file, &fa, &at, sk_strv_argv(&argv), environ);
+    sk_strv_free(&argv);
+    posix_spawnattr_destroy(&at);
+    posix_spawn_file_actions_destroy(&fa);
+    free(file);
+    if (e) {
+        done(ud, -1);
+        return;
+    }
+    confirm *c = sk_xmalloc(sizeof *c);
+    *c = (confirm){done, ud};
+    /* With no SIGCHLD to take, the loop cannot reap it: nobody waits
+     * for the answer, and the user's close goes ahead. */
+    if (sk_loop_child(loop, pid, confirm_reaped, c) != 0) {
+        free(c);
+        done(ud, -1);
+    }
 }

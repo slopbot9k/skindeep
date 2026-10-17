@@ -29,6 +29,32 @@ void sk_macos_force_scale(sk_window *w, double scale);
  * NULL goes back to interpretKeyEvents:. */
 void sk_macos_set_input_method(void (*im)(id view, id ev));
 
+/* A completion handler AppKit takes, of the type void (^)(NSInteger).
+ * C has no blocks, so one is laid out as clang lays one out (the Blocks
+ * ABI): a global block, which AppKit's copy and release leave as it is.
+ * SK_MACOS_BLOCK(name, fn) defines one that calls fn(self, response). */
+typedef struct {
+    unsigned long reserved, size;
+    const char *signature;
+} sk_block_descriptor;
+
+typedef struct {
+    void *isa;
+    int flags, reserved;
+    void (*invoke)(void *self, long response);
+    const sk_block_descriptor *descriptor;
+} sk_block;
+
+/* libSystem's class of global blocks. */
+extern void *_NSConcreteGlobalBlock[32];
+
+enum { SK_BLOCK_IS_GLOBAL = 1 << 28, SK_BLOCK_HAS_SIGNATURE = 1 << 30 };
+
+#define SK_MACOS_BLOCK(name, fn)                                                                                 \
+    static const sk_block_descriptor name##_descriptor = {0, sizeof(sk_block), "v16@?0q8"};                   \
+    static sk_block name = {_NSConcreteGlobalBlock, SK_BLOCK_IS_GLOBAL | SK_BLOCK_HAS_SIGNATURE, 0, fn,          \
+                            &name##_descriptor}
+
 /* picker.c: the NSOpenPanel sk_picker_folder begins, made for o and not
  * shown, autoreleased. For tests too. */
 id sk_macos_folder_panel(const sk_picker_opts *o);

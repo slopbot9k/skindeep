@@ -213,6 +213,7 @@ typedef struct {
     bool strips;   /* the strips alone are to be drawn again */
     bool term_all; /* the strips and the terminal drawn whole */
     bool term_press; /* a press the terminal took, held until its release */
+    bool asking;     /* Close N tabs? is open */
     /* The skin in the stage (decision 0037), the timer of its next step,
      * the least size it gave the window, the pointer's shape. */
     sk_skinview *skin;
@@ -248,6 +249,7 @@ struct gui {
     SK_VEC(ctab) ctabs;
     SK_VEC(cwin) cwins;
     char *strip_key; /* the strips last posted, to post a change alone */
+    uint64_t names_key; /* the tabs' names last posted: a hash */
     int status;
     sk_env paths;
     sk_foreign *foreign;
@@ -908,10 +910,30 @@ static void ui_metrics(void *ud);
 
 /* main.js's 'metrics' ten times a second: each window's active tab's
  * bus, copied for its skin. */
+/* A tab's name can follow its CLI's own title, as a /rename in Claude
+ * Code sets it (decision 0032): checked with the metrics, every 100 ms,
+ * as app/main.js sent the tabs then, and posted when one changed. */
+static void check_names(gui *g)
+{
+    uint64_t h = 1469598103934665603ull;
+    for (size_t i = 0; i < sk_tabs_count(g->tabs); i++) {
+        const sk_tab *t = sk_tabs_at(g->tabs, i);
+        const char *name = sk_tab_name(t);
+        for (const char *p = name ? name : ""; *p; p++)
+            h = (h ^ (uint8_t)*p) * 1099511628211ull;
+        h = (h ^ 0x1e ^ (uint64_t)(unsigned)t->id << 8) * 1099511628211ull;
+    }
+    if (h != g->names_key) {
+        g->names_key = h;
+        post_snapshot(g);
+    }
+}
+
 static void on_metrics(sk_loop *loop, void *ud)
 {
     (void)loop;
     gui *g = ud;
+    check_names(g);
     int ids[64];
     size_t nw = SK_MIN(sk_tabs_wins(g->tabs, ids, SK_LEN(ids)), SK_LEN(ids));
     for (size_t k = 0; k < nw; k++) {
@@ -2227,6 +2249,42 @@ static void ui_dials(void *ud)
         skin_frame(w);
     }
     drop_dials(pair);
+}
+
+typedef struct {
+    gui *g;
+    int win;
+} close_ask;
+
+/* The answer to Close N tabs?, for the window it was asked of, if it is
+ * still there. */
+static void close_answered(void *ud, bool yes)
+{
+    close_ask c = *(close_ask *)ud;
+    free(ud);
+    gwin *w = gwin_of(c.g, c.win);
+    if (!w)
+        return;
+    w->asking = false;
+    if (yes)
+        post_tab(c.g, do_close_win, 0, c.win);
+}
+
+/* A window of several tabs asks before it hangs them up (decision 0023),
+ * as main.js asks with a dialog on the window; a second close while it
+ * asks changes nothing. */
+static void ask_close(gwin *w)
+{
+    if (w->asking)
+        return;
+    w->asking = true;
+    sk_buf msg = {0};
+    sk_buf_printf(&msg, "Close %zu tabs?", w->snap.n);
+    sk_ask_question q = {"claude-skins", msg.ptr, "Each tab's CLI is hung up.", "Close tabs", "Cancel"};
+    close_ask *c = sk_xmalloc(sizeof *c);
+    *c = (close_ask){w->g, w->snap.id};
+    sk_ask_confirm(w->win, w->g->loop, &q, close_answered, c);
+    sk_buf_free(&msg);
 }
 
 static gwin *gwin_new(gui *g, int id)
@@ -4205,8 +4263,11 @@ static void on_event(void *ud, const sk_event *ev)
     switch (ev->type) {
     case SK_EV_CLOSE:
         /* As closing a window does (decision 0016): its tabs hang up,
-         * and the app ends with the last tab. */
-        post_tab(g, do_close_win, 0, w->snap.id);
+         * and the app ends with the last tab. Several ask first. */
+        if (w->snap.n >= 2 && !g->hidden)
+            ask_close(w);
+        else
+            post_tab(g, do_close_win, 0, w->snap.id);
         break;
     case SK_EV_RESIZE: {
         double s = sk_window_scale(w->win);
