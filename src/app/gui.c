@@ -16,11 +16,13 @@
 #include "dashview.h"
 #include "foreign.h"
 #include "identity.h"
+#include "js.h"
 #include "lastskin.h"
 #include "launch.h"
 #include "chooser.h"
 #include "menu.h"
 #include "newtab.h"
+#include "rename.h"
 #include "monitor.h"
 #include "runtime.h"
 
@@ -184,6 +186,8 @@ typedef struct {
     int sessions_timer;
     /* New tab... (decision 0025), above everything while it is open. */
     sk_chooser *chooser;
+    /* A tab's drop-down and its name edited in place (decision 0032). */
+    sk_rename *rename;
 } gwin;
 
 /* A problem of this launch, for Housekeeping (decision 0022). */
@@ -736,6 +740,21 @@ static void do_move(void *ud)
 {
     tab_msg *m = ud;
     sk_tabs_move(m->g->tabs, m->id, m->win);
+    free(m);
+}
+
+typedef struct {
+    gui *g;
+    int id;
+    char name[];
+} rename_msg;
+
+/* tab:rename (decision 0032): the name kept, and written into the CLI's
+ * record where it keeps one. */
+static void do_rename(void *ud)
+{
+    rename_msg *m = ud;
+    sk_tabs_rename(m->g->tabs, m->id, m->name);
     free(m);
 }
 
@@ -1379,6 +1398,7 @@ static gwin *gwin_new(gui *g, int id)
     w->view = sk_termview_new(&w->style);
     sk_term_mouse_init(&w->mouse);
     w->menu = sk_menu_new();
+    w->rename = sk_rename_new();
     sk_vec_push(&g->wins, w);
     return w;
 }
@@ -1393,6 +1413,7 @@ static void gwin_free(gwin *w)
         sk_ui_cancel(w->sessions_timer);
     sk_menu_free(w->menu);
     sk_chooser_free(w->chooser);
+    sk_rename_free(w->rename);
     free_snap_win(&w->snap);
     free(w->link_uri);
     free(w->preedit);
@@ -1402,6 +1423,7 @@ static void gwin_free(gwin *w)
 }
 
 static void drop_dviews(gui *g);
+static snap_tab *snap_tab_of(gwin *w, int id);
 
 /* Each window as the snapshot has it: new windows open, windows with no
  * tabs left close. */
@@ -1445,6 +1467,9 @@ static void ui_snapshot(void *ud)
         sk_window_set_title(w->win, w->snap.title);
         if (strip || fresh)
             fit(w);
+        /* A name edited or a drop-down of a tab that left ends. */
+        if (sk_rename_editing(w->rename) && !snap_tab_of(w, sk_rename_tab(w->rename)))
+            sk_rename_end(w->rename);
         if (switched) {
             sk_term_mouse_reset(&w->mouse);
             w->selecting = false;
@@ -1761,6 +1786,132 @@ static bool chooser_event(gwin *w, const sk_event *ev)
     }
 }
 
+/* ---- A tab's drop-down and rename (decision 0032) ---- */
+
+static snap_tab *snap_tab_of(gwin *w, int id)
+{
+    for (size_t i = 0; i < w->snap.n; i++)
+        if (w->snap.tabs[i].id == id)
+            return &w->snap.tabs[i];
+    return NULL;
+}
+
+/* The edit ends: committed, the name trimmed as String.trim trims it
+ * goes to the core when it is not empty and not the tab's name. */
+static void rename_finish(gwin *w, bool commit)
+{
+    if (!sk_rename_editing(w->rename))
+        return;
+    int id = sk_rename_tab(w->rename);
+    const char *s = sk_rename_text(w->rename);
+    size_t lo = 0, hi = strlen(s);
+    while (lo < hi) {
+        uint32_t cp;
+        size_t k = sk_utf8_decode(s + lo, hi - lo, &cp, NULL);
+        if (!k || !sk_js_space(cp))
+            break;
+        lo += k;
+    }
+    while (hi > lo) {
+        size_t at = hi - 1;
+        while (at > lo && ((unsigned char)s[at] & 0xC0) == 0x80)
+            at--;
+        uint32_t cp;
+        sk_utf8_decode(s + at, hi - at, &cp, NULL);
+        if (!sk_js_space(cp))
+            break;
+        hi = at;
+    }
+    snap_tab *t = snap_tab_of(w, id);
+    if (commit && t && hi > lo && (strlen(t->name) != hi - lo || memcmp(t->name, s + lo, hi - lo))) {
+        rename_msg *m = sk_xmalloc(sizeof *m + hi - lo + 1);
+        m->g = w->g;
+        m->id = id;
+        memcpy(m->name, s + lo, hi - lo);
+        m->name[hi - lo] = 0;
+        sk_loop_post(w->g->loop, do_rename, m);
+    }
+    sk_rename_end(w->rename);
+    w->ime_x = w->ime_y = -1;
+    focus_term(w);
+    redraw(w);
+}
+
+static void on_rename_paste(void *ud, const char *utf8)
+{
+    gwin *w = ud;
+    if (!sk_rename_editing(w->rename) || !utf8 || !*utf8)
+        return;
+    sk_field_insert(sk_rename_field(w->rename), utf8);
+    redraw(w);
+}
+
+/* A key's clipboard part, as the page's input had it. */
+static void rename_clip(gwin *w, sk_field_key_result *r)
+{
+    if (r->copy)
+        sk_clipboard_set(r->copy);
+    free(r->copy);
+    r->copy = NULL;
+    if (r->paste)
+        sk_clipboard_get(false, on_rename_paste, w);
+    if (r->selected) {
+        char *s = sk_field_selection(sk_rename_field(w->rename));
+        sk_primary_set(s);
+        free(s);
+    }
+}
+
+/* The pointer while the drop-down or the field is up. True when the
+ * event was theirs; false when it goes on to what is under it. */
+static bool rename_mouse(gwin *w, const sk_event *ev)
+{
+    if (sk_rename_popup_open(w->rename)) {
+        if (ev->type == SK_EV_MOUSE_MOVE && sk_rename_popup_hover(w->rename, ev->mouse.x, ev->mouse.y))
+            redraw(w);
+        if (ev->type == SK_EV_MOUSE_DOWN) {
+            bool rename;
+            int id;
+            bool on = sk_rename_popup_press(w->rename, ev->mouse.x, ev->mouse.y, ev->mouse.button, &rename, &id);
+            redraw(w);
+            snap_tab *t = rename ? snap_tab_of(w, id) : NULL;
+            if (t) {
+                sk_rename_edit(w->rename, id, t->name);
+                sk_term *term = active_term(w);
+                if (term)
+                    sk_term_set_focus(term, false);
+            }
+            if (on)
+                return true;
+        }
+    }
+    if (!sk_rename_editing(w->rename))
+        return false;
+    sk_menu_style st = menu_style(w);
+    bool selected = false;
+    bool in_strip = tabs_shown(w) && ev->mouse.y >= IDENTITY_H && ev->mouse.y < IDENTITY_H + TABS_H;
+    /* A press on the strip keeps the focus in the field, as the page's
+     * preventDefault kept it, and does nothing else while it edits. */
+    if (ev->type == SK_EV_MOUSE_DOWN && in_strip) {
+        sk_rename_mouse(w->rename, ev, &st, &selected);
+        if (selected)
+            rename_clip(w, &(sk_field_key_result){true, NULL, false, true});
+        redraw(w);
+        return true;
+    }
+    size_t caret = sk_rename_field(w->rename)->caret;
+    sk_rename_how how = sk_rename_mouse(w->rename, ev, &st, &selected);
+    if (how == SK_RENAME_COMMIT) {
+        rename_finish(w, true);
+        return false;
+    }
+    if (selected)
+        rename_clip(w, &(sk_field_key_result){true, NULL, false, true});
+    if (ev->type != SK_EV_MOUSE_MOVE || selected || caret != sk_rename_field(w->rename)->caret)
+        redraw(w);
+    return ev->type != SK_EV_MOUSE_MOVE || in_strip;
+}
+
 /* ---- The dashboard's pane ---- */
 
 static sk_dashview *dview_of(gui *g, int id, bool make)
@@ -1907,6 +2058,11 @@ static void tab_layout(gwin *w, int width, sk_rect *rects, sk_rect *close)
         double pts = tab_fixed() + sk_measure_text(g->mono, 0, size, t->name, strlen(t->name)) / s;
         if (t->folder)
             pts += 6 + sk_measure_text(g->mono, 0, size, t->folder, strlen(t->folder)) / s;
+        /* A name being edited is an input in place of the name and the
+         * folder: Chromium's size 20, in the strip's 12-point mono, its
+         * padding and border. */
+        if (sk_rename_tab(w->rename) == t->id)
+            pts = tab_fixed() + 20 * sk_measure_text(g->mono, 0, size, "0", 1) / s + 2 * 3 + 2;
         want[i] = SK_MIN(SK_MAX(pts, (double)TAB_MIN_W), (double)TAB_MAX_W) * s;
         sum += want[i];
     }
@@ -1989,12 +2145,19 @@ static void draw_chrome(gwin *w, sk_image *f)
                         SK_RGB(0x6f, 0xa8, 0xdc));
         tx += (float)((MARK_W + 6) * s);
         float room = (float)(c.x - px(w, 6)) - tx;
-        float fw = t->folder ? sk_measure_text(g->mono, 0, size, t->folder, strlen(t->folder)) : 0;
-        float name_w = draw_fit(g, f, 0, size, tx, tbase,
-                                t->folder ? SK_MAX(room - fw - (float)(6 * s), 0) : room, t->name, text);
-        if (t->folder)
-            draw_fit(g, f, 0, size, tx + name_w + (float)(6 * s), tbase, room - name_w - (float)(6 * s), t->folder,
-                     SK_RGB(0x77, 0x77, 0x77));
+        if (sk_rename_tab(w->rename) == t->id) {
+            /* The input, 18 points high in the strip's line box. */
+            sk_menu_style ms = menu_style(w);
+            sk_rename_place(w->rename, tx / s, IDENTITY_H + (TABS_H - 1 - 18) / 2.0, SK_MAX(40.0, room / s), 18);
+            sk_rename_draw(w->rename, f, &ms);
+        } else {
+            float fw = t->folder ? sk_measure_text(g->mono, 0, size, t->folder, strlen(t->folder)) : 0;
+            float name_w = draw_fit(g, f, 0, size, tx, tbase,
+                                    t->folder ? SK_MAX(room - fw - (float)(6 * s), 0) : room, t->name, text);
+            if (t->folder)
+                draw_fit(g, f, 0, size, tx + name_w + (float)(6 * s), tbase, room - name_w - (float)(6 * s),
+                         t->folder, SK_RGB(0x77, 0x77, 0x77));
+        }
         bool on_close = hover && w->hover_close;
         if (on_close)
             sk_fill_rect(f, c, SK_RGB(0x3a, 0x3a, 0x3a), SK_BLEND_SRC, NULL);
@@ -2052,8 +2215,9 @@ static void draw(gwin *w)
     size_t nd = 0;
     /* The drop-down and its shadow lie over what is below: while it is
      * open, each frame is drawn whole and it goes on top. */
-    bool menu = sk_menu_open(w->menu), chooser = chooser_up(w);
-    if (menu || chooser)
+    bool menu = sk_menu_open(w->menu), chooser = chooser_up(w), popup = sk_rename_popup_open(w->rename);
+    bool editing = sk_rename_editing(w->rename);
+    if (menu || chooser || popup)
         w->all = true;
     if (w->all) {
         draw_chrome(w, f);
@@ -2093,8 +2257,10 @@ static void draw(gwin *w)
                 sk_term_palette_of(t, &p);
                 sk_fill_rect(&area, sk_image_bounds(&area), (sk_color)(0xff000000u | p.bg), SK_BLEND_SRC, NULL);
             }
+            /* The terminal has the focus when its window has it and no
+             * field of the app's does. */
             sk_termview_state st = {
-                .focused = w->focused,
+                .focused = w->focused && !editing && !chooser,
                 .cursor_on = w->cursor_on,
                 .link = w->hover_link,
                 .link_row0 = w->link_r0,
@@ -2130,7 +2296,7 @@ static void draw(gwin *w)
         /* The candidate window goes beside the cursor. */
         double s = sk_window_scale(w->win);
         int ix = (int)lround(cx / s), iy = (int)lround((cy + a.y) / s);
-        if (!chooser && (ix != w->ime_x || iy != w->ime_y)) {
+        if (!chooser && !editing && (ix != w->ime_x || iy != w->ime_y)) {
             w->ime_x = ix;
             w->ime_y = iy;
             sk_window_set_ime_rect(w->win, ix, iy, (int)lround(cw / s), (int)lround(ch / s));
@@ -2153,6 +2319,20 @@ static void draw(gwin *w)
         sk_chooser_style st = {g->sans, g->mono, g->cache, sk_window_scale(w->win)};
         int top = px(w, IDENTITY_H);
         sk_chooser_draw(w->chooser, f, sk_rect_make(0, top, f->w, SK_MAX(0, f->h - top)), &st);
+    }
+    /* The tab's drop-down is above everything, and a name being edited
+     * has the input method's candidates. */
+    if (popup || editing) {
+        sk_menu_style ms = menu_style(w);
+        if (popup)
+            sk_rename_popup_draw(w->rename, f, &ms);
+        int ix, iy, iw, ih;
+        sk_rename_caret(w->rename, &ms, &ix, &iy, &iw, &ih);
+        if (editing && (ix != w->ime_x || iy != w->ime_y)) {
+            w->ime_x = ix;
+            w->ime_y = iy;
+            sk_window_set_ime_rect(w->win, ix, iy, iw, ih);
+        }
     }
     if (w->all)
         sk_window_present(w->win, NULL, 0);
@@ -2260,6 +2440,17 @@ static void on_key(gwin *w, const sk_key_event *k)
         if (show >= 0)
             menu_ask(w, show);
         menu_changed(w);
+        return;
+    }
+    /* A name being edited takes the keys; the chords wait. */
+    if (sk_rename_editing(w->rename)) {
+        sk_field_key_result clip;
+        sk_rename_how how = sk_rename_key(w->rename, k, &clip);
+        rename_clip(w, &clip);
+        if (how != SK_RENAME_GOES_ON)
+            rename_finish(w, how == SK_RENAME_COMMIT);
+        else
+            redraw(w);
         return;
     }
     if (chord(w, k))
@@ -2482,6 +2673,14 @@ static bool strip_mouse(gwin *w, const sk_event *ev)
         if ((size_t)i == w->snap.n) {
             if (ev->mouse.button == 1)
                 chooser_ask(w);
+        } else if (ev->mouse.button == 3) {
+            /* The tab's drop-down at the pointer (decision 0032). */
+            if (!sk_rename_editing(w->rename)) {
+                int ww, wh;
+                sk_window_size(w->win, &ww, &wh);
+                sk_rename_popup(w->rename, w->snap.tabs[i].id, ev->mouse.x, ev->mouse.y, ww);
+                redraw(w);
+            }
         } else if (ev->mouse.button == 2 || (on_close && ev->mouse.button == 1)) {
             post_tab(g, do_close, w->snap.tabs[i].id, win);
         } else if (ev->mouse.button == 1) {
@@ -2552,6 +2751,8 @@ static void on_mouse(gwin *w, const sk_event *ev)
             menu_changed(w);
         }
     }
+    if (rename_mouse(w, ev))
+        return;
     sk_term *t = active_term(w);
     double gx, gy;
     grid_point(w, ev->mouse.x, ev->mouse.y, &gx, &gy);
@@ -2759,6 +2960,13 @@ static void on_event(void *ud, const sk_event *ev)
         snap_tab *at = active_tab(w);
         if (sk_menu_open(w->menu))
             break;
+        if (sk_rename_editing(w->rename)) {
+            if (ev->text && *ev->text) {
+                sk_field_insert(sk_rename_field(w->rename), ev->text);
+                redraw(w);
+            }
+            break;
+        }
         if (at && ev->text && *ev->text) {
             sk_term_scroll_to_bottom(at->st->term);
             sk_term_select_clear(at->st->term);
@@ -2935,6 +3143,20 @@ static void probe(gui *g, gwin *w, ctl_msg *m)
         sk_menu_state(w->menu, &jw);
     else
         sk_jw_null(&jw);
+    /* A tab's drop-down and the name being edited (decision 0032). */
+    sk_jw_key(&jw, SK_STR("rename"));
+    if (w) {
+        sk_jw_object(&jw);
+        sk_jw_key(&jw, SK_STR("popup"));
+        sk_jw_bool(&jw, sk_rename_popup_open(w->rename));
+        sk_jw_key(&jw, SK_STR("editing"));
+        sk_jw_int(&jw, sk_rename_tab(w->rename));
+        sk_jw_key(&jw, SK_STR("text"));
+        sk_jw_string(&jw, sk_str_c(sk_rename_text(w->rename)));
+        sk_jw_object_end(&jw);
+    } else {
+        sk_jw_null(&jw);
+    }
     /* New tab..., and where its controls are. */
     sk_jw_key(&jw, SK_STR("chooser"));
     if (w && w->chooser) {

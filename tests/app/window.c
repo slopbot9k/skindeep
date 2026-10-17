@@ -700,6 +700,86 @@ static void test_the_sessions_dashboard(void)
     CHECK_INT(finish(&a, 5000), 128 + SIGHUP);
 }
 
+/* The name of the probe's tab id, into out. */
+static bool tab_name(const sk_json *p, double id, sk_str *out)
+{
+    const sk_json *tabs = sk_json_get(p, "tabs");
+    for (size_t i = 0; i < len_of(tabs); i++)
+        if (num(sk_json_at(tabs, i), "id") == id)
+            return sk_json_as_string(sk_json_get(sk_json_at(tabs, i), "name"), out);
+    return false;
+}
+
+/* Rename from tab one's drop-down: the name typed over the selected
+ * one, ended as how says ("Enter", "Escape" or a press in the
+ * terminal), and the name the probe then shows. */
+static bool renamed(app *a, sk_arena *ar, double id, double x, const char *text, const char *how, const char *want)
+{
+    char req[160];
+    snprintf(req, sizeof req, "{\"op\":\"mouse\",\"kind\":\"down\",\"button\":3,\"x\":%g,\"y\":34}", x);
+    ok(a, req);
+    const sk_json *p = probe(a, ar);
+    bool popup = false;
+    sk_json_as_bool(sk_json_dig(p, "rename", "popup", NULL), &popup);
+    CHECK(popup);
+    /* Rename, the drop-down's one item, 1 + 4 points below its top. */
+    snprintf(req, sizeof req, "{\"op\":\"mouse\",\"kind\":\"down\",\"x\":%g,\"y\":%g}", x + 20, 34.0 + 1 + 4 + 12);
+    ok(a, req);
+    p = probe(a, ar);
+    CHECK_INT(num(sk_json_get(p, "rename"), "editing"), id);
+    snprintf(req, sizeof req, "{\"op\":\"type\",\"text\":\"%s\"}", text);
+    ok(a, req);
+    if (!strcmp(how, "press")) {
+        ok(a, "{\"op\":\"mouse\",\"kind\":\"down\",\"x\":400,\"y\":300}");
+        ok(a, "{\"op\":\"mouse\",\"kind\":\"up\",\"x\":400,\"y\":300}");
+    } else {
+        snprintf(req, sizeof req, "{\"op\":\"key\",\"key\":\"%s\"}", how);
+        ok(a, req);
+    }
+    sk_str name = {0};
+    for (uint64_t until = sk_now_ms() + 3000; sk_now_ms() < until; sk_test_sleep_ms(50)) {
+        p = probe(a, ar);
+        if (tab_name(p, id, &name) && sk_str_eq_c(name, want))
+            return num(sk_json_get(p, "rename"), "editing") == 0;
+    }
+    sk_test_fail(__FILE__, __LINE__, "the name is \"%.*s\", not \"%s\"", (int)name.len, name.ptr ? name.ptr : "",
+                 want);
+    return false;
+}
+
+/* Decision 0032: a right click on a tab opens its drop-down, Rename
+ * edits its name in place, Enter or a press elsewhere commits, Escape
+ * cancels. */
+static void test_a_tab_renamed(void)
+{
+    app a;
+    const char *cmd[] = {"cat", NULL};
+    if (!start(&a, cmd))
+        return;
+    sk_arena ar;
+    sk_arena_init(&ar, 0);
+    ok(&a, "{\"op\":\"key\",\"key\":\"t\",\"mods\":" APP_MODS "}");
+    const sk_json *p = NULL;
+    for (uint64_t until = sk_now_ms() + 5000; sk_now_ms() < until; sk_test_sleep_ms(50)) {
+        p = probe(&a, &ar);
+        if (len_of(sk_json_dig(p, "window", "tabs", NULL)) == 2)
+            break;
+    }
+    double id = -1, x0 = 0, w0 = 0;
+    sk_json_as_number(sk_json_at(sk_json_dig(p, "window", "tabs", NULL), 0), &id);
+    const sk_json *r = sk_json_dig(p, "window", "tab_rects", NULL);
+    sk_json_as_number(sk_json_at(sk_json_at(r, 0), 0), &x0);
+    sk_json_as_number(sk_json_at(sk_json_at(r, 0), 1), &w0);
+    CHECK(id > 0 && w0 > 0);
+    double x = x0 + w0 / 2;
+    CHECK(renamed(&a, &ar, id, x, "work", "Enter", "work"));
+    CHECK(renamed(&a, &ar, id, x, "zzz", "Escape", "work"));
+    CHECK(renamed(&a, &ar, id, x, "elsewhere", "press", "elsewhere"));
+    sk_arena_free(&ar);
+    ok(&a, "{\"op\":\"hangup\"}");
+    CHECK_INT(finish(&a, 5000), 128 + SIGHUP);
+}
+
 #ifdef __APPLE__
 #define CMD_MODS "[\"super\"]"
 #else
@@ -788,5 +868,6 @@ const sk_test sk_suite_window[] = {
     T(test_the_menus),
     T(test_the_sessions_dashboard),
     T(test_the_new_tab_chooser),
+    T(test_a_tab_renamed),
     {0},
 };
