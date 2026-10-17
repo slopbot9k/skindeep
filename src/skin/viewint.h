@@ -123,6 +123,13 @@ typedef struct {
     uint64_t sig;
 } sk_vnode;
 
+/* What a node painted: whether, where, and its signature. */
+typedef struct {
+    bool drawn;
+    sk_frect ink;
+    uint64_t sig;
+} sk_vrecord;
+
 /* A list widget's rows. */
 typedef struct {
     uint32_t widget;
@@ -132,6 +139,22 @@ typedef struct {
     uint32_t base;       /* the node of its second row's first element */
     uint16_t rows;       /* rows shown now */
 } sk_vlist;
+
+/* A group whose animation changes its opacity alone and that paints
+ * above all it covers, as phosphor's scanlines flicker over its screen:
+ * the view keeps what lies below it and the group's own paint, so a
+ * change of its opacity is a blend of the two, not a paint of all it
+ * covers. */
+typedef struct {
+    uint32_t node;      /* the group, or SK_PACK_NONE */
+    sk_rect r;          /* what it covers, stage pixels */
+    sk_image below;     /* the stage without it, over r */
+    sk_image layer;     /* its own paint at opacity 1, over r */
+    bool valid;         /* below and layer hold what is now */
+    bool recompose;     /* its opacity changed since the last draw */
+    uint64_t sig;       /* its signature but its opacity, as kept */
+    uint32_t alpha;     /* its opacity as blended, 0 to 255 */
+} sk_vfade;
 
 /* An image decoded from the pack, on first use. */
 typedef struct {
@@ -182,6 +205,7 @@ struct sk_skinview {
     sk_paint_cache *pcache;
     uint32_t *order;  /* the boxes in the order they paint, for hit tests */
     uint32_t norder;
+    sk_vfade fade;
     /* What changed. */
     bool dirty;       /* a step must run the passes */
     bool all;         /* the next draw paints the whole stage */
@@ -219,6 +243,32 @@ const sk_val *sk_view_metric(const sk_skinview *v, const char *name);
 /* The stage's rectangle and the skin area's mapping, for the tests. */
 void sk_view_run(sk_skinview *v);
 
+/* The skin painted over r, frame pixels, the stage at st. */
+void sk_view_paint_skin(sk_skinview *v, sk_image *frame, sk_rect st, sk_rect r);
+/* Node n's signature, everything its own paint depends on; with
+ * opacity false, its opacity left out. */
+uint64_t sk_view_signature(const sk_skinview *v, uint32_t n, bool opacity);
+
+/* ---- fade.c ---- */
+
+/* After a layout: the group sk_vfade keeps, if any, and what it covers;
+ * what it keeps is dropped when either changed. */
+void sk_fade_pick(sk_skinview *v);
+/* Whether node n's change this frame (from was_drawn at was_ink) is the
+ * kept group's opacity alone, which the next draw blends instead of
+ * painting; what is kept is dropped when it is more. */
+bool sk_fade_absorbs(sk_skinview *v, uint32_t n, bool was_drawn, sk_frect was_ink, bool drawn, sk_frect ink);
+/* At a draw: the group's own paint made again when it is not kept.
+ * True when below must then be painted whole. */
+bool sk_fade_prepare(sk_skinview *v);
+/* r (frame pixels) painted: outside the group's cover as ever, inside
+ * it below's part painted and blended with the group's. */
+void sk_fade_paint(sk_skinview *v, sk_image *frame, sk_rect st, sk_rect r);
+/* The blend of the whole cover, after an opacity change, into frame
+ * outside the terminal; the rectangles blended go to out. */
+size_t sk_fade_recompose(sk_skinview *v, sk_image *frame, sk_rect st, sk_rect term, sk_rect *out, size_t cap);
+void sk_fade_free(sk_vfade *f);
+
 /* ---- widgets.c ---- */
 
 void sk_widgets_init(sk_skinview *v);
@@ -241,8 +291,12 @@ void sk_motion_restyle(sk_skinview *v, uint32_t n, const sk_css_style *old_shown
  * transitions and animations applied. moving: something of it moves
  * every frame; *due: the clock when a held value next changes. */
 const sk_css_style *sk_motion_style(sk_skinview *v, uint32_t n, bool *moving, double *due);
-/* A hash of what its motion changed of the style. */
+/* A hash of what its motion changed of the style; the same with its
+ * opacity left out. */
 uint64_t sk_motion_sig(const sk_motion *m);
+uint64_t sk_motion_sig_but_opacity(const sk_motion *m);
+/* Its animations animate opacity alone, and nothing else moves it. */
+bool sk_motion_fades(const sk_motion *m);
 void sk_motion_free(sk_motion *m);
 
 /* CSS easing: a timing function at progress x in [0, 1]. */

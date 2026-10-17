@@ -292,6 +292,7 @@ sk_skinview *sk_skinview_new(sk_skinpack *sp, double now)
     v->glyphs = sk_glyph_cache_new(16u << 20);
     v->pcache = sk_paint_cache_new(32u << 20);
     v->hover = v->pressed = NONE;
+    v->fade.node = NONE;
     v->handle_hover = v->drag_split = -1;
     v->next_due = -1;
     sk_widgets_init(v);
@@ -342,6 +343,7 @@ void sk_skinview_free(sk_skinview *v)
     free(v->decoded);
     sk_glyph_cache_free(v->glyphs);
     sk_paint_cache_free(v->pcache);
+    sk_fade_free(&v->fade);
     free(v->order);
     sk_vec_free(&v->damage);
     sk_vec_free(&v->hovered);
@@ -367,6 +369,7 @@ void sk_skinview_set_stage(sk_skinview *v, double x, double y, double w, double 
     v->sh = fmax(0, h);
     v->scale = scale;
     stage_geometry(v);
+    sk_fade_free(&v->fade);
     v->dirty = v->all = true;
 }
 
@@ -646,15 +649,14 @@ static uint64_t fnv_rect(uint64_t h, sk_frect r)
     return fnv(h, f, sizeof f);
 }
 
-/* Everything node n's own paint depends on. */
-static uint64_t signature(const sk_skinview *v, uint32_t n)
+uint64_t sk_view_signature(const sk_skinview *v, uint32_t n, bool opacity)
 {
     const sk_vnode *x = &v->nodes[n];
     const sk_lnode *l = &v->lnodes[n];
     const sk_lbox *b = &v->layout.boxes[n];
     uint64_t h = 1469598103934665603ull;
     h = fnv(h, &x->base, sizeof x->base);
-    uint64_t ms = sk_motion_sig(x->mo);
+    uint64_t ms = opacity ? sk_motion_sig(x->mo) : sk_motion_sig_but_opacity(x->mo);
     h = fnv(h, &ms, sizeof ms);
     if (l->text)
         h = fnv(h, l->text, strlen(l->text) + 1);
@@ -889,23 +891,30 @@ void sk_view_run(sk_skinview *v)
     v->laid = true;
     if (had)
         sk_layout_free(&old);
+    /* What each node paints now, what it painted kept aside. */
+    sk_vrecord *was = sk_xreallocarray(NULL, v->nnodes ? v->nnodes : 1, sizeof *was);
     for (uint32_t n = 0; n < v->nnodes; n++) {
         sk_vnode *x = &v->nodes[n];
         const sk_lbox *b = &v->layout.boxes[n];
-        bool drawn = b->generated;
-        sk_frect ink = drawn ? reach_of(v, n, sk_frect_map(&b->xform, b->ink)) : (sk_frect){0, 0, 0, 0};
-        uint64_t sig = drawn ? signature(v, n) : 0;
-        if (!v->all && (drawn != x->drawn || sig != x->sig)) {
-            if (x->drawn)
-                damage_ink(v, x->ink);
-            if (drawn)
-                damage_ink(v, ink);
-        }
-        x->drawn = drawn;
-        x->ink = ink;
-        x->sig = sig;
+        was[n] = (sk_vrecord){x->drawn, x->ink, x->sig};
+        x->drawn = b->generated;
+        x->ink = x->drawn ? reach_of(v, n, sk_frect_map(&b->xform, b->ink)) : (sk_frect){0, 0, 0, 0};
+        x->sig = x->drawn ? sk_view_signature(v, n, true) : 0;
     }
     paint_order(v);
+    sk_fade_pick(v);
+    for (uint32_t n = 0; n < v->nnodes; n++) {
+        const sk_vnode *x = &v->nodes[n];
+        if (v->all || (x->drawn == was[n].drawn && x->sig == was[n].sig))
+            continue;
+        if (sk_fade_absorbs(v, n, was[n].drawn, was[n].ink, x->drawn, x->ink))
+            continue;
+        if (was[n].drawn)
+            damage_ink(v, was[n].ink);
+        if (x->drawn)
+            damage_ink(v, x->ink);
+    }
+    free(was);
     rehover(v);
 }
 
@@ -1116,7 +1125,7 @@ static sk_rect menu_reach(const sk_skinview *v)
     return sk_rect_make(r.x - s, r.y - s, r.w + 2 * s, r.h + 2 * s);
 }
 
-static void paint_piece(sk_skinview *v, sk_image *frame, sk_rect st, sk_rect r)
+void sk_view_paint_skin(sk_skinview *v, sk_image *frame, sk_rect st, sk_rect r)
 {
     sk_image view = sk_image_view(frame, r);
     sk_fill_rect(&view, sk_image_bounds(&view), SK_RGB(0, 0, 0), SK_BLEND_SRC, NULL);
@@ -1124,10 +1133,21 @@ static void paint_piece(sk_skinview *v, sk_image *frame, sk_rect st, sk_rect r)
         sk_paint_env env = {&v->layout, &v->lfonts, &v->images, v->glyphs, v->pcache};
         sk_paint_px(&view, &env, v->stage, (float)(v->k * v->scale), r.x - st.x, r.y - st.y);
     }
+}
+
+/* What the app draws over the skin, over r. */
+static void overlays(sk_skinview *v, sk_image *frame, sk_rect st, sk_rect r)
+{
     for (uint32_t i = 0; i < SK_MIN(v->p->nsplits, SK_VIEW_MAX_SPLITS); i++)
         draw_handle(v, frame, st, i, &r);
     if (v->p->meta.menu_image != NONE)
         draw_menu(v, frame, st, &r);
+}
+
+static void paint_piece(sk_skinview *v, sk_image *frame, sk_rect st, sk_rect r)
+{
+    sk_fade_paint(v, frame, st, r);
+    overlays(v, frame, st, r);
 }
 
 size_t sk_skinview_draw(sk_skinview *v, sk_image *frame, bool all, sk_rect *out, size_t cap)
@@ -1138,6 +1158,9 @@ size_t sk_skinview_draw(sk_skinview *v, sk_image *frame, bool all, sk_rect *out,
         damage_px(v, sk_rect_make(0, 0, st.w, st.h));
         v->all = false;
     }
+    /* A fading group kept anew: what lies below it painted whole. */
+    if (sk_fade_prepare(v))
+        damage_px(v, v->fade.r);
     sk_rect term = sk_skinview_terminal_px(v);
     size_t n = 0;
     for (size_t i = 0; i < v->damage.len; i++) {
@@ -1170,6 +1193,16 @@ size_t sk_skinview_draw(sk_skinview *v, sk_image *frame, bool all, sk_rect *out,
         }
     }
     v->damage.len = 0;
+    /* The fading group at its new opacity over what is kept below. */
+    sk_rect blended[4];
+    size_t nb = sk_fade_recompose(v, frame, st, term, blended, 4);
+    for (size_t i = 0; i < nb; i++) {
+        overlays(v, frame, st, blended[i]);
+        if (n < cap)
+            out[n++] = blended[i];
+        else if (cap)
+            out[cap - 1] = sk_rect_union(out[cap - 1], blended[i]);
+    }
     for (uint32_t i = 0; i < SK_MIN(v->p->nsplits, SK_VIEW_MAX_SPLITS); i++)
         v->handle_px[i] = handle_rect(v, i, &v->handle_shown[i]);
     v->menu_px = menu_reach(v);

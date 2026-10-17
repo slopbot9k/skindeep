@@ -1094,6 +1094,70 @@ static void test_damage_under_filter(void)
     sk_skinview_free(v);
 }
 
+/* A group whose opacity alone flickers above what it covers keeps that
+ * below it, and its flicker blends; one with anything above it does
+ * not. Either way the frame is the one a whole paint gives. */
+static void fade_case(const char *css, bool kept)
+{
+    sk_skinview *v = view_of(pack_of(
+        "[{\"class\": \"bg\", \"rect\": {\"left\": 0, \"right\": 0, \"top\": 0, \"bottom\": 0}},"
+        " {\"class\": \"veil\", \"rect\": {\"left\": 50, \"top\": 50, \"width\": 300, \"height\": 200}}]",
+        "[{\"id\": \"r\", \"type\": \"readout\", \"bind\": \"tools.total\", \"rect\": {\"left\": 100, \"top\": 100, "
+        "\"width\": 80, \"height\": 30}}]",
+        css));
+    if (!v)
+        return;
+    sk_image f;
+    sk_image_init(&f, 1000, 700);
+    sk_rect out[16];
+    metrics t = {0};
+    num(&t, "tools.total", 1);
+    for (int i = 1; i <= 90; i++) {
+        if (i % 20 == 0) {
+            t.m[0].value.num = i;
+            sk_skinview_set_metrics(v, t.m, t.n);
+        }
+        sk_skinview_step(v, i * 1000.0 / 60);
+        sk_skinview_draw(v, &f, i == 1, out, 16);
+    }
+    uint32_t veil = panel(v, 1);
+    CHECK_INT(v->fade.node == veil && v->fade.valid, kept);
+    sk_image whole;
+    sk_image_init(&whole, 1000, 700);
+    sk_skinview_draw(v, &whole, true, out, 16);
+    int worst = 0;
+    for (int y = 0; y < 300; y++)
+        for (int x = 0; x < 400; x++) {
+            sk_px a = sk_image_row(&f, y)[x], b = sk_image_row(&whole, y)[x];
+            for (int sh = 0; sh < 32; sh += 8)
+                worst = SK_MAX(worst, abs((int)((a >> sh) & 255) - (int)((b >> sh) & 255)));
+        }
+    CHECK(worst <= 2);
+    sk_image_free(&whole);
+    sk_image_free(&f);
+    sk_skinview_free(v);
+}
+
+static void test_fade(void)
+{
+    static const char *const base = ".bg { background: #123 }\n.r { z-index: 1 }\n"
+                                    ".veil { z-index: 5; background: repeating-linear-gradient(#000 0 2px, "
+                                    "rgba(0, 0, 0, 0) 2px 4px); animation: flicker 1s steps(10) infinite }\n"
+                                    "@keyframes flicker { 0% { opacity: 0.2 } 50% { opacity: 0.9 } }\n";
+    fade_case(base, true);
+    /* Something painted above the veil where it paints: no keeping. */
+    sk_buf b = {0};
+    sk_buf_printf(&b, "%s.w-readout { z-index: 9 }\n", base);
+    fade_case(sk_buf_cstr(&b), false);
+    sk_buf_clear(&b);
+    /* A veil that also turns: painted as ever. */
+    sk_buf_printf(&b, "%s@keyframes spin { to { transform: rotate(1deg) } }\n"
+                      ".veil { animation: flicker 1s steps(10) infinite, spin 1s infinite }\n",
+                  base);
+    fade_case(sk_buf_cstr(&b), false);
+    sk_buf_free(&b);
+}
+
 /* ---- What the window takes ---- */
 
 static void test_pack_terminal(void)
@@ -1180,6 +1244,7 @@ const sk_test sk_suite_skin_view[] = {
     T(test_scale),
     T(test_damage),
     T(test_damage_under_filter),
+    T(test_fade),
     T(test_pack_terminal),
     T(test_metrics_of_bus),
     {0},

@@ -65,7 +65,8 @@ struct sk_motion {
     sk_css_xf xf[MAX_LIST];
     sk_css_shadow tsh[MAX_LIST], bsh[MAX_LIST];
     sk_css_filter fx[MAX_LIST];
-    uint64_t sig;
+    uint64_t sig, sig_but_opacity;
+    bool opacity_only; /* its animations animate opacity alone */
 };
 
 /* ---- Easing ---- */
@@ -893,6 +894,16 @@ uint64_t sk_motion_sig(const sk_motion *m)
     return m ? m->sig : 0;
 }
 
+uint64_t sk_motion_sig_but_opacity(const sk_motion *m)
+{
+    return m ? m->sig_but_opacity : 0;
+}
+
+bool sk_motion_fades(const sk_motion *m)
+{
+    return m && m->nan && m->opacity_only && !m->ntr;
+}
+
 const sk_css_style *sk_motion_style(sk_skinview *v, uint32_t n, bool *moving, double *due)
 {
     sk_vnode *x = &v->nodes[n];
@@ -903,6 +914,7 @@ const sk_css_style *sk_motion_style(sk_skinview *v, uint32_t n, bool *moving, do
     double dt = fmax(0, (v->now - m->at) / 1000.0);
     m->at = v->now;
     pval *val = sk_xmalloc(sizeof *val);
+    m->opacity_only = true;
     for (size_t i = 0; i < m->nan; i++) {
         anim *an = &m->an[i];
         if (an->slot >= x->base->nanim_name)
@@ -915,14 +927,16 @@ const sk_css_style *sk_motion_style(sk_skinview *v, uint32_t n, bool *moving, do
         bool on = progress(&a, an->clock, &p, &done);
         if (!a.paused && !done)
             *moving = true;
-        if (!on)
-            continue;
         const sk_pack_keyframes *kf = &v->p->keyframes[an->keyframes];
         bool has_xf = false, has_op = false;
         for (uint16_t k = 0; k < kf->nkeys; k++) {
             has_xf |= kf->keys[k].has_transform;
             has_op |= kf->keys[k].has_opacity;
         }
+        if (has_xf)
+            m->opacity_only = false;
+        if (!on)
+            continue;
         if (has_xf) {
             track(kf, &a, SK_PROP_TRANSFORM, x->base, p, val);
             put(m, SK_PROP_TRANSFORM, val);
@@ -952,5 +966,9 @@ const sk_css_style *sk_motion_style(sk_skinview *v, uint32_t n, bool *moving, do
     }
     free(val);
     m->sig = sig_of(&m->shown);
+    float o = m->shown.opacity;
+    m->shown.opacity = 1;
+    m->sig_but_opacity = sig_of(&m->shown);
+    m->shown.opacity = o;
     return &m->shown;
 }

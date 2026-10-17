@@ -186,6 +186,9 @@ static void incremental(const char *name, double scale)
         sk_skinview_step(v, t);
         sk_skinview_draw(v, &frame, i == 1, r, 32);
     }
+    /* phosphor's scanlines flicker over its screen: blended, not painted. */
+    if (!strcmp(name, "phosphor"))
+        CHECK(v->fade.node != SK_PACK_NONE && v->fade.valid);
     sk_image whole;
     sk_image_init(&whole, frame.w, frame.h);
     sk_skinview_draw(v, &whole, true, r, 32);
@@ -225,6 +228,7 @@ static void test_incremental(void)
     incremental("library", 1);
     incremental("phosphor", 1);
     incremental("deck", 2);
+    incremental("phosphor", 2);
 }
 
 const sk_test sk_suite_skin_live[] = {
