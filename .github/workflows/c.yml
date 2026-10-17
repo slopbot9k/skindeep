@@ -45,6 +45,16 @@ jobs:
       # A failing step's last lines go out as an annotation as well: the
       # API serves annotations of a public repository to anyone, the log
       # only to a signed-in user.
+      # Everything compiled before anything runs, on past a file that
+      # fails, so one run names every error, each in the annotation.
+      - name: Build
+        shell: bash
+        run: |
+          set -o pipefail
+          if ! make -k -j4 all CC=${{ matrix.cc }} 2>&1 | tee out.log; then
+            echo "::error title=build::$(tr -d '\r' < out.log | grep -E 'error:' | sort -u | head -n 40 | cut -c1-240 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"
+            exit 1
+          fi
       - name: Tests
         shell: bash
         run: |
