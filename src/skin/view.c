@@ -715,17 +715,32 @@ static void damage_px(sk_skinview *v, sk_rect r)
     sk_vec_push(&v->damage, r);
 }
 
-/* A rectangle of the skin area, grown by the reach of the filters of
- * node n's ancestors, to paint again. */
-static void damage_ink(sk_skinview *v, uint32_t n, sk_frect r)
+/* A rectangle of the skin area under node n grown by the reach of its
+ * ancestors' filters: a blur or a drop shadow of a group spreads what
+ * changes inside it. Each reach in the ancestor's own units, scaled as
+ * it is drawn. */
+static sk_frect reach_of(const sk_skinview *v, uint32_t n, sk_frect r)
+{
+    if (sk_frect_empty(r))
+        return r;
+    for (uint32_t a = v->lnodes[n].parent; a != NONE && a < v->nnodes; a = v->lnodes[a].parent) {
+        const sk_css_style *s = v->lnodes[a].style;
+        if (!s || !s->nfilter)
+            continue;
+        sk_frect u = sk_layout_filter_reach(s, (sk_frect){0, 0, 1, 1});
+        const sk_xform *m = &v->layout.boxes[a].xform;
+        float d = -u.x * sqrtf(fabsf(m->a * m->d - m->b * m->c));
+        if (d > 0)
+            r = (sk_frect){r.x - d, r.y - d, r.w + 2 * d, r.h + 2 * d};
+    }
+    return r;
+}
+
+/* A rectangle of the skin area to paint again. */
+static void damage_ink(sk_skinview *v, sk_frect r)
 {
     if (sk_frect_empty(r))
         return;
-    for (uint32_t a = v->lnodes[n].parent; a != NONE && a < v->nnodes; a = v->lnodes[a].parent) {
-        const sk_css_style *s = v->lnodes[a].style;
-        if (s && s->nfilter)
-            r = sk_layout_filter_reach(s, r);
-    }
     double f = v->k * v->scale;
     long x0 = (long)floor(r.x * f) - 2, y0 = (long)floor(r.y * f) - 2;
     long x1 = (long)ceil((r.x + r.w) * f) + 2, y1 = (long)ceil((r.y + r.h) * f) + 2;
@@ -876,13 +891,13 @@ void sk_view_run(sk_skinview *v)
         sk_vnode *x = &v->nodes[n];
         const sk_lbox *b = &v->layout.boxes[n];
         bool drawn = b->generated;
-        sk_frect ink = drawn ? sk_frect_map(&b->xform, b->ink) : (sk_frect){0, 0, 0, 0};
+        sk_frect ink = drawn ? reach_of(v, n, sk_frect_map(&b->xform, b->ink)) : (sk_frect){0, 0, 0, 0};
         uint64_t sig = drawn ? signature(v, n) : 0;
         if (!v->all && (drawn != x->drawn || sig != x->sig)) {
             if (x->drawn)
-                damage_ink(v, n, x->ink);
+                damage_ink(v, x->ink);
             if (drawn)
-                damage_ink(v, n, ink);
+                damage_ink(v, ink);
         }
         x->drawn = drawn;
         x->ink = ink;

@@ -123,10 +123,115 @@ static void test_phosphor(void)
     live("phosphor", sk_rect_make(40, 100, 640, 760));
 }
 
+/* ---- Painting what changed ---- */
+
+/* Three seconds of a session that moves every kind of widget, drawn
+ * frame by frame as the window draws, only what changed each time:
+ * the frame at the end must be the frame drawn whole. */
+static void incremental(const char *name, double scale)
+{
+    const sk_embedded_file *e = sk_shipped_pack(name);
+    char err[300];
+    sk_skinpack *p = e ? sk_skinpack_new((uint8_t *)e->data, e->size, false, err, sizeof err) : NULL;
+    CHECK(p != NULL);
+    if (!p)
+        return;
+    sk_skin_window w;
+    sk_skinpack_window(p, &w);
+    sk_skinview *v = sk_skinview_new(p, 0);
+    sk_skinpack_unref(p);
+    v->wall_fn = fixed_wall;
+    sk_skinview_set_stage(v, 0, SK_VIEW_STRIP, w.width, w.height - SK_VIEW_STRIP, scale);
+    sk_image frame;
+    sk_image_init(&frame, (int)(w.width * scale), (int)(w.height * scale));
+    sk_skin_metric m[SK_LEN(METRICS)];
+    memcpy(m, METRICS, sizeof m);
+    static const char *const lists[] = {
+        "[{\"text\":\"one\",\"state\":\"doing\"}]",
+        "[{\"text\":\"one\",\"state\":\"done\"},{\"text\":\"two\",\"state\":\"doing\"}]",
+        "[]",
+    };
+    static const char *const limits[] = {
+        "[{\"key\":\"a\",\"label\":\"5h\",\"window\":\"5h\",\"pct\":20}]",
+        ("[{\"key\":\"a\",\"label\":\"5h\",\"window\":\"5h\",\"pct\":70},{\"key\":\"b\",\"label\":\"7d\",\"window\":"
+         "\"7d\",\"pct\":10},{\"key\":\"c\",\"label\":\"Spark 7d\",\"window\":\"7d\",\"model\":\"spark\",\"pct\":40}]"),
+        "null",
+    };
+    sk_rect r[32];
+    for (int i = 1; i <= 180; i++) {
+        double t = i * 1000.0 / 60;
+        if (i % 6 == 0) {
+            int k = i / 6;
+            m[0].value.num = 10 + (k * 7) % 80;   /* context */
+            m[4].value.num = 0.5 + k * 0.37;      /* cost */
+            m[5].value.num = k;                   /* tools */
+            m[8].value.num = (k * 13) % 150;      /* tokens/s */
+            m[11].value.num = (k / 5) % 2;        /* busy */
+            m[12].value.num = (k % 3) ? 400 : 0;  /* output */
+            m[13].value.num = (k * 11) % 100;     /* cpu */
+            m[15].value.num = (k % 10) / 10.0;    /* cache */
+            m[16].value.num = k % 4;              /* agents */
+            m[17].value.num = 3 + k / 2;          /* tool events */
+            m[20].value.type = (k / 8) % 3 == 2 ? SK_VAL_NULL : SK_VAL_LIST;
+            m[20].value.text = (char *)limits[(k / 8) % 3];
+            m[21].value.text = (char *)lists[(k / 9) % 3];
+            sk_skinview_set_metrics(v, m, SK_LEN(m));
+        }
+        if (i == 90)
+            sk_skinview_set_list_off(v, true);
+        if (i == 120) {
+            sk_skinview_set_dials(v, NULL, 0);
+            sk_skinview_mouse(v, SK_SKIN_MOUSE_MOVE, 100, 120, 0);
+        }
+        sk_skinview_step(v, t);
+        sk_skinview_draw(v, &frame, i == 1, r, 32);
+    }
+    sk_image whole;
+    sk_image_init(&whole, frame.w, frame.h);
+    sk_skinview_draw(v, &whole, true, r, 32);
+    /* A part painted alone may round a blur or a turned layer's samples
+     * a level or two apart from the whole; a pixel left from an earlier
+     * frame differs by far more. */
+    sk_rect term = sk_skinview_terminal_px(v);
+    long stale = 0;
+    int first_x = -1, first_y = -1, worst = 0;
+    for (int y = 0; y < frame.h; y++)
+        for (int x = 0; x < frame.w; x++) {
+            if (x >= term.x && x < term.x + term.w && y >= term.y && y < term.y + term.h)
+                continue;
+            sk_px a = sk_image_row(&frame, y)[x], b = sk_image_row(&whole, y)[x];
+            int d = 0;
+            for (int sh = 0; sh < 32; sh += 8)
+                d = SK_MAX(d, abs((int)((a >> sh) & 255) - (int)((b >> sh) & 255)));
+            worst = SK_MAX(worst, d);
+            if (d > 6 && !stale++) {
+                first_x = x;
+                first_y = y;
+            }
+        }
+    if (stale)
+        sk_test_fail(__FILE__, __LINE__, "%s at %gx: %ld pixels differ from a whole paint, the first at %d, %d", name,
+                     scale, stale, first_x, first_y);
+    CHECK(worst <= 6);
+    sk_image_free(&whole);
+    sk_image_free(&frame);
+    sk_skinview_free(v);
+}
+
+static void test_incremental(void)
+{
+    incremental("coffee", 1);
+    incremental("deck", 1);
+    incremental("library", 1);
+    incremental("phosphor", 1);
+    incremental("deck", 2);
+}
+
 const sk_test sk_suite_skin_live[] = {
     T(test_coffee),
     T(test_deck),
     T(test_library),
     T(test_phosphor),
+    T(test_incremental),
     {0},
 };

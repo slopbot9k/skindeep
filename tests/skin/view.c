@@ -1064,6 +1064,36 @@ static void test_damage(void)
     sk_skinview_free(v);
 }
 
+/* A change under a group's drop shadow paints the shadow's reach too. */
+static void test_damage_under_filter(void)
+{
+    sk_skinview *v = view_of(pack_of(
+        NULL,
+        "[{\"id\": \"r\", \"type\": \"readout\", \"bind\": \"tools.total\", \"rect\": {\"left\": 100, \"top\": 100, "
+        "\"width\": 80, \"height\": 30}}]",
+        ".w-readout { filter: drop-shadow(40px 0 0 #f00) }\n"));
+    if (!v)
+        return;
+    metrics t = {0};
+    num(&t, "tools.total", 1);
+    give(v, &t, 16);
+    sk_image f;
+    sk_image_init(&f, 1000, 700);
+    sk_rect out[16];
+    sk_skinview_draw(v, &f, false, out, 16);
+    t.m[0].value.num = 22;
+    give(v, &t, 16);
+    for (int i = 0; i < 200; i++)
+        sk_skinview_step(v, v->now + 16);
+    size_t n = sk_skinview_draw(v, &f, false, out, 16);
+    CHECK_INT(n, 1);
+    /* The text's ink, and 40 px right of it its shadow's. */
+    if (n)
+        CHECK(out[0].x + out[0].w >= 100 + 40 + 20);
+    sk_image_free(&f);
+    sk_skinview_free(v);
+}
+
 /* ---- What the window takes ---- */
 
 static void test_pack_terminal(void)
@@ -1149,6 +1179,7 @@ const sk_test sk_suite_skin_view[] = {
     T(test_splits),
     T(test_scale),
     T(test_damage),
+    T(test_damage_under_filter),
     T(test_pack_terminal),
     T(test_metrics_of_bus),
     {0},
