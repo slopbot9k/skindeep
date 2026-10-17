@@ -127,8 +127,28 @@ static void test_open_by_path(void)
     CHECK_STR(sk_skins_spec(r), real);
     /* A start by its folder selects it again. */
     CHECK(sk_skins_start(r, "deck", &err));
+    CHECK_INT(sk_skins_poll(r, &err), SK_SKINS_SAME);
     CHECK(sk_skins_start(r, real, &err));
     CHECK_STR(sk_skins_current_id(r), "mine");
+    /* The watch: unchanged, the same; a file changed, compiled again; a
+     * change that does not compile said once, the skin kept. */
+    CHECK_INT(sk_skins_poll(r, &err), SK_SKINS_SAME);
+    sk_skinpack *was = sk_skins_current(r);
+    sk_test_write(mine, "skin.css", ".skin { background: #203040; color: #fff }\n");
+    CHECK_INT(sk_skins_poll(r, &err), SK_SKINS_RELOADED);
+    CHECK(sk_skins_current(r) != was);
+    CHECK_STR(sk_skins_current_id(r), "mine");
+    CHECK_INT(sk_skins_poll(r, &err), SK_SKINS_SAME);
+    was = sk_skins_current(r);
+    sk_test_write(mine, "skin.css", ".skin { colour: red }\n");
+    CHECK_INT(sk_skins_poll(r, &err), SK_SKINS_REFUSED);
+    CHECK(strstr(sk_buf_cstr(&err), "skin.css") != NULL);
+    CHECK(sk_skins_current(r) == was);
+    sk_buf_clear(&err);
+    CHECK_INT(sk_skins_poll(r, &err), SK_SKINS_SAME);
+    sk_test_write(mine, "skin.css", ".skin { background: #102030 }\n");
+    CHECK_INT(sk_skins_poll(r, &err), SK_SKINS_RELOADED);
+    CHECK_STR(sk_buf_cstr(&err), "");
     /* A skin named as a shipped one replaces it for the run. */
     char *copy = skin_named("coffee", "my-coffee");
     char *copy_real = realpath(copy, NULL);

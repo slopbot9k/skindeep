@@ -75,6 +75,18 @@ bool sk_skins_select(sk_skins *r, const char *id, sk_buf *errors);
  * its name. */
 bool sk_skins_open(sk_skins *r, const char *dir, sk_buf *errors);
 
+/* Decision 0037's watch, once a second while a skin opened by path is
+ * current: the size and modification time of each of its files. */
+typedef enum {
+    SK_SKINS_SAME,     /* nothing changed, or no skin opened by path */
+    SK_SKINS_RELOADED, /* it changed and compiled: the current pack is new */
+    SK_SKINS_REFUSED,  /* it changed and does not compile: messages in
+                        * errors, for the menu; the current pack stays,
+                        * and the same files are not compiled again */
+} sk_skins_change;
+
+sk_skins_change sk_skins_poll(sk_skins *r, sk_buf *errors);
+
 /* The current skin's pack, NULL before a start; the registry's
  * reference, which a window refs to keep. */
 sk_skinpack *sk_skins_current(const sk_skins *r);

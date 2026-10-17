@@ -1,13 +1,16 @@
 #include "skins.h"
 
 #include "../base/paths.h"
+#include "../platform/file.h"
 #include "../skin/compile.h"
 #include "../skin/shipped.h"
 #include "lastskin.h"
 
+#include <dirent.h>
 #include <errno.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/stat.h>
 
 typedef struct {
     char *id;
@@ -21,7 +24,58 @@ struct sk_skins {
     char *cur_id;
     char *cur_dir; /* the realpath of a current skin opened by path */
     sk_skinpack *cur;
+    /* The watch: the current folder's files as compiled, and as last
+     * refused. */
+    uint64_t stamp, refused;
 };
+
+/* ---- The watch ---- */
+
+#define STAMP_DEPTH 32
+
+static uint64_t fnv(uint64_t h, const void *p, size_t n)
+{
+    const uint8_t *b = p;
+    for (size_t i = 0; i < n; i++)
+        h = (h ^ b[i]) * 1099511628211ull;
+    return h;
+}
+
+/* A sum over the files under dir of a hash of each one's path, size
+ * and modification time, so the order a folder lists them in does not
+ * count. A link to a file counts as the file, a link to a folder as
+ * nothing, as the cache key has them. */
+static uint64_t stamp_of(const char *dir, const char *rel, int depth)
+{
+    uint64_t sum = 0;
+    DIR *d = depth < STAMP_DEPTH ? opendir(dir) : NULL;
+    struct dirent *e;
+    while (d && (e = readdir(d))) {
+        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, ".."))
+            continue;
+        char *full = sk_path_join(dir, e->d_name);
+        char *name = *rel ? sk_path_join(rel, e->d_name) : sk_xstrdup(e->d_name);
+        struct stat st;
+        bool link = lstat(full, &st) == 0 && S_ISLNK(st.st_mode);
+        if (stat(full, &st) == 0) {
+            if (S_ISDIR(st.st_mode) && !link) {
+                sum += stamp_of(full, name, depth + 1);
+            } else if (S_ISREG(st.st_mode)) {
+                uint64_t h = fnv(1469598103934665603ull, name, strlen(name) + 1);
+                uint64_t size = (uint64_t)st.st_size;
+                double ms = sk_stat_mtime_ms(&st);
+                h = fnv(h, &size, sizeof size);
+                h = fnv(h, &ms, sizeof ms);
+                sum += h;
+            }
+        }
+        free(full);
+        free(name);
+    }
+    if (d)
+        closedir(d);
+    return sum;
+}
 
 static char *dup_or_null(const char *s)
 {
@@ -117,6 +171,8 @@ static void make_current(sk_skins *r, const char *id, const char *dir, sk_skinpa
     free(r->cur_dir);
     r->cur_id = nid;
     r->cur_dir = ndir;
+    r->stamp = ndir ? stamp_of(ndir, "", 0) : 0;
+    r->refused = r->stamp;
 }
 
 /* A shipped skin's pack, through the loader. */
@@ -348,4 +404,20 @@ int sk_skins_remember(const sk_skins *r, const char *last_dir, pid_t pid, double
         return -1;
     }
     return sk_last_write(last_dir, pid, spec, now_ms);
+}
+
+sk_skins_change sk_skins_poll(sk_skins *r, sk_buf *errors)
+{
+    if (!r->cur_dir)
+        return SK_SKINS_SAME;
+    uint64_t s = stamp_of(r->cur_dir, "", 0);
+    if (s == r->stamp || s == r->refused)
+        return SK_SKINS_SAME;
+    sk_skinpack *p = compile_dir(r, r->cur_dir, errors);
+    if (!p) {
+        r->refused = s;
+        return SK_SKINS_REFUSED;
+    }
+    make_current(r, r->cur_id, r->cur_dir, p);
+    return SK_SKINS_RELOADED;
 }
