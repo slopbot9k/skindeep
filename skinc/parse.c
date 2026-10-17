@@ -350,8 +350,10 @@ static void keyframes(parser *p, const sk_cv *pre, size_t npre, const sk_cv *blo
             start = i + 1;
         }
     }
+    /* An empty block has no kids to point into. */
     size_t rest = block->n - start;
-    trim(block->kids + start, &rest);
+    if (rest)
+        trim(block->kids + start, &rest);
     if (rest)
         sk_diag_line(p->d, p->sheet->file, block->kids[start].tok.line, "a keyframe has no { block }");
     k.nframes = frames.len;

@@ -444,7 +444,7 @@ static void backdrop(fern *f)
     float *sh = sk_xcalloc((size_t)bw * (size_t)bh, sizeof *sh);
     double px = 0, py = 0;
     for (int k = 0; k < 22; k++) {
-        const double(*maps)[7] = f->unit[k % 4];
+        double(*maps)[7] = f->unit[k % 4];
         double acc = 0, cum[4];
         for (int j = 0; j < 4; j++)
             cum[j] = (acc += maps[j][6]);
