@@ -191,6 +191,7 @@ struct sk_skinview {
     bool pointer_in;
     double px, py;    /* window points */
     uint32_t hover;   /* the node under it, or SK_PACK_NONE */
+    SK_VEC(uint32_t) hovered; /* it and its ancestors, whose hover is 1 */
     uint32_t pressed; /* the node a press went down on, or SK_PACK_NONE */
     int press_kind;   /* what the press holds: 0 none, 1 a node, 2 the menu, 3 a split */
     int drag_split;

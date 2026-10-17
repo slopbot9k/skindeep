@@ -342,6 +342,7 @@ void sk_skinview_free(sk_skinview *v)
     sk_glyph_cache_free(v->glyphs);
     free(v->order);
     sk_vec_free(&v->damage);
+    sk_vec_free(&v->hovered);
     sk_buf_free(&v->event_text);
     sk_skinpack_unref(v->sp);
     free(v);
@@ -857,6 +858,8 @@ static void paint_order(sk_skinview *v)
         order_context(v, v->stage);
 }
 
+static void rehover(sk_skinview *v);
+
 /* The passes of a step. */
 void sk_view_run(sk_skinview *v)
 {
@@ -886,6 +889,7 @@ void sk_view_run(sk_skinview *v)
         x->sig = sig;
     }
     paint_order(v);
+    rehover(v);
 }
 
 double sk_skinview_step(sk_skinview *v, double now)
@@ -907,9 +911,10 @@ double sk_skinview_step(sk_skinview *v, double now)
         sk_widgets_update(v);
     }
     sk_widgets_frame(v, dt);
-    sk_view_run(v);
     v->dirty = false;
-    if (v->moving)
+    sk_view_run(v);
+    /* A hover the new layout moved restyles at the next frame. */
+    if (v->moving || v->dirty)
         return 0;
     return v->next_due < 0 ? -1 : fmax(0, v->next_due - now);
 }
@@ -1200,15 +1205,36 @@ static uint32_t hit(const sk_skinview *v, float x, float y)
     return NONE;
 }
 
+/* The pointer over node n: it and its ancestors hovered, those of the
+ * last node no longer. */
 static void set_hover(sk_skinview *v, uint32_t n)
 {
     if (n == v->hover)
         return;
-    for (uint32_t a = v->hover; a != NONE && a < v->nnodes; a = v->lnodes[a].parent)
-        sk_view_set_var(v, a, SK_VAR_HOVER, 0);
+    for (size_t i = 0; i < v->hovered.len; i++)
+        sk_view_set_var(v, v->hovered.ptr[i], SK_VAR_HOVER, 0);
+    v->hovered.len = 0;
     v->hover = n;
-    for (uint32_t a = n; a != NONE && a < v->nnodes; a = v->lnodes[a].parent)
+    for (uint32_t a = n; a != NONE && a < v->nnodes && v->hovered.len <= v->nnodes; a = v->lnodes[a].parent) {
         sk_view_set_var(v, a, SK_VAR_HOVER, 1);
+        sk_vec_push(&v->hovered, a);
+    }
+}
+
+/* What lies under a pointer that stays still while the skin moves:
+ * hover follows the boxes, as a browser's does after a layout. The
+ * next step restyles what it changed. */
+static void rehover(sk_skinview *v)
+{
+    if (!v->pointer_in || v->press_kind == 3 || v->handle_hover >= 0 || v->menu_hover)
+        return;
+    uint32_t n = NONE;
+    if (sk_skinview_covers(v, v->px, v->py)) {
+        float sx, sy;
+        to_skin(v, v->px, v->py, &sx, &sy);
+        n = hit(v, sx, sy);
+    }
+    set_hover(v, n);
 }
 
 bool sk_skinview_covers(const sk_skinview *v, double x, double y)

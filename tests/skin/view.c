@@ -870,6 +870,33 @@ static void test_hover_and_clicks(void)
     sk_skinview_free(v);
 }
 
+/* A pointer that stays still while what is under it goes: hover
+ * follows the layout. */
+static void test_hover_follows_layout(void)
+{
+    sk_skinview *v = view_of(pack_of(NULL, LIST_WIDGETS,
+                                     ".w-readout { top: 200px !important }\n"
+                                     ".skin.checklist .w-readout { display: none }\n"));
+    if (!v)
+        return;
+    metrics t = {0};
+    num(&t, "tools.total", 3);
+    give(v, &t, 16);
+    uint32_t r = part(v, "r", SK_ROLE_WIDGET, 0);
+    sk_skinview_mouse(v, SK_SKIN_MOUSE_MOVE, 10, 22 + 210, 0);
+    sk_skinview_step(v, v->now + 16);
+    CHECK_INT(var(v, r, SK_VAR_HOVER), 1);
+    list(&t, "checklist.items", "[{\"text\": \"one\", \"state\": \"todo\"}]");
+    give(v, &t, 16);
+    CHECK(!v->layout.boxes[r].generated);
+    CHECK_INT(var(v, r, SK_VAR_HOVER), 0);
+    CHECK_INT(var(v, v->stage, SK_VAR_HOVER), 1);
+    /* The next step restyles what hover moved; then the view rests. */
+    sk_skinview_step(v, v->now + 16);
+    CHECK(sk_skinview_step(v, v->now + 16) < 0);
+    sk_skinview_free(v);
+}
+
 /* A skin with a split on the terminal's right edge, and a panel that
  * stretches with it. */
 static sk_skinpack *split_pack(void)
@@ -1118,6 +1145,7 @@ const sk_test sk_suite_skin_view[] = {
     T(test_transition),
     T(test_animation),
     T(test_hover_and_clicks),
+    T(test_hover_follows_layout),
     T(test_splits),
     T(test_scale),
     T(test_damage),
