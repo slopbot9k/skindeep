@@ -44,7 +44,7 @@ struct sk_window {
     CFRunLoopTimerRef pacer;
     void *ud;
     bool hidden;
-    bool no_focus; /* an sk_nokey_window, which never becomes key */
+    bool inactive; /* shown without taking the keyboard */
     int w, h;      /* points */
     double scale, forced_scale;
     bool sized;
@@ -443,19 +443,13 @@ static BOOL view_yes(id self, SEL cmd)
     return YES;
 }
 
-static BOOL view_no(id self, SEL cmd)
-{
-    (void)self, (void)cmd;
-    return NO;
-}
-
-/* A window that never becomes key takes its first click as a click, as
- * nothing else would: every other keeps NSView's answer, no. */
+/* An inactive window takes its first click as a click, as the click
+ * that gives it the keyboard: every other keeps NSView's answer, no. */
 static BOOL view_accepts_first_mouse(id self, SEL cmd, id ev)
 {
     (void)cmd, (void)ev;
     sk_window *w = win_of(self);
-    return w && w->no_focus ? YES : NO;
+    return w && w->inactive ? YES : NO;
 }
 
 static void view_update_layer(id self, SEL cmd)
@@ -1047,14 +1041,6 @@ static void make_classes(void)
     objc_registerClassPair(v);
     win_ivar = ivar_getOffset(class_getInstanceVariable(v, "sk_win"));
 
-    /* The window of sk_window_opts.no_focus: never key, never main. */
-    Class k = objc_allocateClassPair((Class)sk_cls("NSWindow"), "sk_nokey_window", 0);
-    if (!k)
-        sk_die("cannot make the class sk_nokey_window");
-    add(k, "canBecomeKeyWindow", (IMP)view_no, SK_ENC_BOOL "@:");
-    add(k, "canBecomeMainWindow", (IMP)view_no, SK_ENC_BOOL "@:");
-    objc_registerClassPair(k);
-
     Class d = objc_allocateClassPair((Class)sk_cls("NSObject"), "sk_app_delegate", 0);
     if (!d)
         sk_die("cannot make the class sk_app_delegate");
@@ -1341,7 +1327,7 @@ sk_window *sk_window_new(const sk_window_opts *o, char **err)
     unsigned long style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable |
                           NSWindowStyleMaskResizable;
     id nswin = SK_MSG(id (*)(id, SEL, CGRect, unsigned long, unsigned long, BOOL))(
-        sk_msg(sk_cls(o->no_focus ? "sk_nokey_window" : "NSWindow"), "alloc"),
+        sk_msg(sk_cls("NSWindow"), "alloc"),
         sk_sel("initWithContentRect:styleMask:backing:defer:"), r, style, NSBackingStoreBuffered, NO);
     if (!nswin) {
         objc_autoreleasePoolPop(pool);
@@ -1353,7 +1339,7 @@ sk_window *sk_window_new(const sk_window_opts *o, char **err)
     w->win = nswin;
     w->ud = o->ud;
     w->hidden = o->hidden;
-    w->no_focus = o->no_focus;
+    w->inactive = o->inactive;
     w->creating = true;
     w->cursor = SK_CURSOR_ARROW;
     sk_msg_void_bool(nswin, "setReleasedWhenClosed:", NO);
@@ -1402,9 +1388,9 @@ sk_window *sk_window_new(const sk_window_opts *o, char **err)
     ui.windows = w;
     if (!w->hidden) {
         sk_msg_void(nswin, "center");
-        /* A window that takes no focus is shown in front without the
-         * app being brought forward or any window losing the keys. */
-        if (w->no_focus) {
+        /* An inactive window is shown in front without the app being
+         * brought forward or any window losing the keys. */
+        if (w->inactive) {
             sk_msg_void(nswin, "orderFrontRegardless");
         } else {
             activate();
@@ -1494,7 +1480,7 @@ void sk_window_focus(sk_window *w)
     if (w->hidden)
         return;
     void *pool = objc_autoreleasePoolPush();
-    if (w->no_focus) {
+    if (w->inactive) {
         sk_msg_void(w->win, "orderFrontRegardless");
     } else {
         activate();

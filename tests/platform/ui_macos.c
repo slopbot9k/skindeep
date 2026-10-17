@@ -1050,15 +1050,15 @@ static void test_focus_follows_the_key_window(void)
     close_ui();
 }
 
-/* The visualization's window (decision 0015): it can never become the
- * key window, so the keyboard stays with the terminal, and its first
- * click is a click. */
-static void test_a_window_that_takes_no_focus(void)
+/* The visualization's window (decision 0015): it opens without taking
+ * the keyboard and a focus asked of it only raises it, but a click may
+ * give it the keys as any window's, and that first click is a click. */
+static void test_an_inactive_window(void)
 {
     if (!open_ui())
         return;
     char *err = NULL;
-    sk_window_opts o = {.title = "viz", .w = 80, .h = 60, .hidden = true, .no_focus = true};
+    sk_window_opts o = {.title = "viz", .w = 80, .h = 60, .hidden = true, .inactive = true};
     sk_window *v = sk_window_new(&o, &err);
     sk_window *w = hidden_window(80, 60);
     CHECK(v != NULL);
@@ -1068,13 +1068,11 @@ static void test_a_window_that_takes_no_focus(void)
         return;
     }
     id nv = sk_macos_nswindow(v), nw = sk_macos_nswindow(w);
-    CHECK(!sk_msg_bool(nv, "canBecomeKeyWindow"));
-    CHECK(!sk_msg_bool(nv, "canBecomeMainWindow"));
+    CHECK(sk_msg_bool(nv, "canBecomeKeyWindow"));
     CHECK(sk_msg_bool(nw, "canBecomeKeyWindow"));
     CHECK(SK_MSG(BOOL (*)(id, SEL, id))(view_of(v), sk_sel("acceptsFirstMouse:"), nil));
     CHECK(!SK_MSG(BOOL (*)(id, SEL, id))(view_of(w), sk_sel("acceptsFirstMouse:"), nil));
     n_events = 0;
-    sk_msg_void(nv, "makeKeyWindow");
     sk_window_focus(v);
     run_for(5);
     CHECK(!sk_msg_bool(nv, "isKeyWindow"));
@@ -1420,7 +1418,7 @@ const sk_test sk_suite_ui_macos[] = {
     T(test_scrolling_in_lines_and_points),
     T(test_close_asks_and_the_app_decides),
     T(test_focus_follows_the_key_window),
-    T(test_a_window_that_takes_no_focus),
+    T(test_an_inactive_window),
     T(test_frames_come_once_per_request_at_the_refresh),
     T(test_posted_tasks_run_in_order_on_the_main_thread),
     T(test_timers_fire_repeat_and_cancel),

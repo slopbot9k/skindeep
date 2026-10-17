@@ -174,7 +174,7 @@ static void test_open_and_a_window_s_properties(void)
     CHECK_INT(sk_xfake_count(f, 130, -1), 1);
     CHECK_INT(sk_xfake_count(f, 101, -1), 1);
     CHECK_INT(sk_xfake_count(f, 119, -1), 1);
-    CHECK_INT(sk_xfake_count(f, 16, -1), 12);
+    CHECK_INT(sk_xfake_count(f, 16, -1), 13);
     sk_window_opts wo = {"h\xc3\xa9llo", 40, 30, 20, 10, &rec, true, false};
     char *err = NULL;
     sk_window *w = sk_xui_window_new(&wo, &err);
@@ -585,10 +585,10 @@ static int input_hint(sk_xfake *f, uint32_t id)
     return input;
 }
 
-/* The visualization's window (decision 0015): its WM_HINTS say it takes
- * no input, so a window manager never gives it the keys, and a focus
- * asked of it only raises it. */
-static void test_a_window_that_takes_no_focus(void)
+/* The visualization's window (decision 0015): it takes input as any
+ * window does, but maps with _NET_WM_USER_TIME 0, so a window manager
+ * gives it no keys then, and a focus asked of it only raises it. */
+static void test_an_inactive_window(void)
 {
     sk_xfake *f = start(NULL);
     if (!f)
@@ -605,13 +605,15 @@ static void test_a_window_that_takes_no_focus(void)
     }
     CHECK(sk_xui_sync());
     CHECK_INT(input_hint(f, sk_xui_window_id(a)), 1);
-    CHECK_INT(input_hint(f, sk_xui_window_id(b)), 0);
-    /* WM_TAKE_FOCUS, which would hand it the keys after all, is not
-     * among its protocols. */
+    CHECK_INT(input_hint(f, sk_xui_window_id(b)), 1);
     size_t len;
     uint32_t type;
-    uint8_t *p = sk_xfake_property(f, sk_xui_window_id(b), sk_xfake_atom(f, "WM_PROTOCOLS"), &len, &type);
-    CHECK(p && len == 8);
+    uint32_t user_time = sk_xfake_atom(f, "_NET_WM_USER_TIME");
+    uint8_t *p = sk_xfake_property(f, sk_xui_window_id(b), user_time, &len, &type);
+    CHECK(p && len == 4 && sk_x11_get32(p) == 0);
+    free(p);
+    p = sk_xfake_property(f, sk_xui_window_id(a), user_time, &len, &type);
+    CHECK(p == NULL);
     free(p);
     CHECK(wait_request(f, 72, 2)); /* both mapped and exposed */
     run_ms(20);
@@ -964,7 +966,7 @@ const sk_test sk_suite_x11_ui[] = {
     T(test_keys_and_autorepeat),
     T(test_mouse_clicks_and_the_wheel),
     T(test_close_ping_and_focus),
-    T(test_a_window_that_takes_no_focus),
+    T(test_an_inactive_window),
     T(test_cursors),
     T(test_the_clipboard_answers_another_client),
     T(test_the_clipboard_goes_by_incr_to_another_client),

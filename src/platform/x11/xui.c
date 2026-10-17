@@ -43,6 +43,7 @@ enum {
     A_NET_WM_NAME,
     A_NET_WM_PID,
     A_NET_ACTIVE_WINDOW,
+    A_NET_WM_USER_TIME,
     A_UTF8_STRING,
     A_CLIPBOARD,
     A_TARGETS,
@@ -54,7 +55,7 @@ enum {
 
 static const char *const ATOM_NAMES[N_ATOMS] = {
     "WM_PROTOCOLS", "WM_DELETE_WINDOW", "_NET_WM_PING", "_NET_WM_NAME", "_NET_WM_PID",
-    "_NET_ACTIVE_WINDOW", "UTF8_STRING", "CLIPBOARD", "TARGETS", "INCR", "TEXT",
+    "_NET_ACTIVE_WINDOW", "_NET_WM_USER_TIME", "UTF8_STRING", "CLIPBOARD", "TARGETS", "INCR", "TEXT",
     "SKINNED_SELECTION",
 };
 
@@ -81,7 +82,7 @@ struct sk_window {
     void *ud;
     int pw, ph; /* pixels */
     bool hidden, mapped, focused;
-    bool no_focus; /* WM_HINTS's input False: the window manager never gives it the keys */
+    bool inactive; /* mapped with _NET_WM_USER_TIME 0: the window manager gives it no keys then */
     sk_image frame;
     uint32_t seg; /* the frame's MIT-SHM segment, 0 for none */
     void *shm;
@@ -621,11 +622,15 @@ static void set_properties(sk_window *w, const sk_window_opts *o)
     }
     uint32_t pid = (uint32_t)getpid();
     put_card32(w->id, ui.atoms[A_NET_WM_PID], SK_X11_CARDINAL, &pid, 1);
-    /* WM_HINTS: it takes input, unless it is never to take the focus
-     * (ICCCM's No Input model, with no WM_TAKE_FOCUS among the
-     * protocols), and starts in the normal state. */
-    uint32_t hints[9] = {1 | 2, o->no_focus ? 0 : 1, 1};
+    /* WM_HINTS: it takes input and starts in the normal state. An
+     * inactive window's user time is 0, which EWMH asks a window manager
+     * not to focus on its map: a click gives it the keys later. */
+    uint32_t hints[9] = {1 | 2, 1, 1};
     put_card32(w->id, SK_X11_WM_HINTS, SK_X11_WM_HINTS, hints, SK_LEN(hints));
+    if (o->inactive) {
+        uint32_t never = 0;
+        put_card32(w->id, ui.atoms[A_NET_WM_USER_TIME], SK_X11_CARDINAL, &never, 1);
+    }
     uint32_t size[18] = {0};
     if (o->min_w > 0 || o->min_h > 0) {
         size[0] = 1 << 4; /* PMinSize */
@@ -646,7 +651,7 @@ sk_window *sk_xui_window_new(const sk_window_opts *o, char **err)
     sk_window *w = sk_xcalloc(1, sizeof *w);
     w->ud = o->ud;
     w->hidden = o->hidden;
-    w->no_focus = o->no_focus;
+    w->inactive = o->inactive;
     w->pw = px(o->w > 0 ? o->w : 800);
     w->ph = px(o->h > 0 ? o->h : 600);
     w->id = sk_x11_id(c);
@@ -787,7 +792,7 @@ void sk_xui_window_focus(sk_window *w)
     sk_x11 *c = ui.c;
     uint32_t above = 0;
     sk_x11_configure_window(c, w->id, 1 << 6 /* stack mode */, &above);
-    if (w->no_focus) {
+    if (w->inactive) {
         settle();
         return;
     }
