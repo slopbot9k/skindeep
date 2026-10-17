@@ -1238,13 +1238,13 @@ void sk_xfake_own_target(sk_xfake *f, uint32_t selection, uint32_t target, const
     flush_out(f, &out);
 }
 
-void sk_xfake_set_property(sk_xfake *f, uint32_t win, uint32_t atom, uint32_t type,
-                           uint8_t format, const void *data, size_t len)
+void sk_xfake_set_property(sk_xfake *f, uint32_t win, uint32_t a, uint32_t type, uint8_t format,
+                           const void *data, size_t len)
 {
     sk_buf out = {0};
     pthread_mutex_lock(&f->lock);
     pthread_mutex_lock(&f->wlock);
-    set_prop(f, &out, 0, win, atom, type, format, data, len);
+    set_prop(f, &out, 0, win, a, type, format, data, len);
     pthread_mutex_unlock(&f->wlock);
     pthread_mutex_unlock(&f->lock);
     flush_out(f, &out);
