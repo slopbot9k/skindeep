@@ -7,6 +7,7 @@ same day by the maintainer's ruling to read three fields of Claude
 Code's per-pid record.
 Revised 2026-10-13 for the menu list's height and stable rows. Revised
 2026-10-14: the known profiles include those the home scan finds.
+Revised 2026-10-17 for the C port (decision 0036).
 
 ## Context
 
@@ -16,13 +17,14 @@ them all and shows any of them on the meters.
 
 ## Decision
 
-- The File menu has a section **Agent sessions**: every live Claude
-  Code and Codex session of this user on the machine, this window's
-  tabs first, each with its label, folder, state and running time, and
-  `tab` or `monitor` when this window shows it. The list refreshes every
-  2 s while the menu is open, so sessions that start appear and
-  sessions that end show as ended. A session is started from here by
-  New tab... (decision 0025), in the window's skin.
+- The Agents menu (decision 0022) has a section **Agent sessions**:
+  every live Claude Code and Codex session of this user on the machine,
+  this window's tabs first, each with its label, folder, state and
+  running time, and `tab` or `monitor` when this window shows it. The
+  list refreshes every 2 s while the menu is open, so sessions that
+  start appear and sessions that end show as ended. A session is
+  started from here by New tab... (decision 0025), in the window's
+  skin.
 - The list moves nothing: a refresh redraws a running session in
   its row, adds a new one last, and marks one that ended, which stays
   until the menu closes. The list keeps the height it opened with, so
@@ -31,14 +33,18 @@ them all and shows any of them on the meters.
   leaves the rest of the menu, at least two rows, and scrolls inside,
   so every entry of the menu is in reach in a window at the skin's
   minimum size, however many sessions run.
-- Discovery reads `/proc` alone: every process of this user named
-  `claude` or `codex`, or a `node` running a script of that name as an
-  npm install does, but Codex's `app-server` and `mcp-server` daemons,
-  with its folder, its start time and its command line. A process whose
-  parent is a session of its own agent, such as the native `codex` an npm
-  `codex` runs, is that session. A session inside a tab's own session,
-  such as a `claude -p` its agent runs, is left out. A process's
-  environment is never read: it can hold a key.
+- Discovery reads the process table alone, `/proc` on Linux and
+  libproc and sysctl on macOS (`src/platform/<os>/procinfo.c`): every
+  process of this user named `claude` or `codex`, or a `node` running a
+  script of that name as an npm install does, but Codex's `app-server`
+  and `mcp-server` daemons, with its folder, its start time and its
+  command line. A process whose parent is a session of its own agent,
+  such as the native `codex` an npm `codex` runs, is that session. A
+  session inside a tab's own session, such as a `claude -p` its agent
+  runs, is left out. A process's environment is never read: it can hold
+  a key. On macOS the kernel returns it after the argv
+  (`KERN_PROCARGS2`): the app parses none of it and clears the buffer
+  before freeing it.
 - A session's channel is found among the known profiles: the default,
   the window's, the open tabs', those New tab... recorded, and those
   the home scan of decision 0025 finds. The scan is the chooser's,
@@ -54,8 +60,10 @@ them all and shows any of them on the meters.
   `procStart`, drops every other field at once (among them a socket
   path and `bridgeSessionId`), and never opens the `.key` file beside it
   (maintainer, 2026-10-12). The record counts only when its pid is the
-  session's, its `procStart` equals the start in `/proc/<pid>/stat`,
-  and its id is a plain name. The transcript is then
+  session's, its `procStart` names the process's start, and its id is
+  a plain name. The start is the clock ticks of `/proc/<pid>/stat` on
+  Linux, and on macOS the time `ps -o lstart` prints, in UTC (measured
+  with 2.1.301, 2026-10-16). The transcript is then
   `<profile>/projects/<folder>/<id>.jsonl`, followed once Claude Code
   writes it, and the profile is the one whose `sessions` folder holds
   the record, or, among profiles that share that folder, the one that
@@ -77,7 +85,7 @@ them all and shows any of them on the meters.
   window gives its own: working while `state.busy` is 1.
 - Choosing a session in a tab makes the tab active. Choosing any other
   opens a **monitor tab**: a read-only tab with no pty and no child of
-  the app's (`app/monitor.js`). Its meters come from the session's own
+  the app's (`src/app/monitor.c`). Its meters come from the session's own
   side channels, Claude's transcript as when nothing is injected
   (decision 0009), followed again every 5 s so a `/clear` is followed,
   or Codex's rollout, beside Generic on the session's pid (decision
@@ -85,7 +93,7 @@ them all and shows any of them on the meters.
   command line and folder with `read-only monitor`. Keys typed into it go
   nowhere.
 - A monitor tab never types into the session and never signals it: its
-  pid is null, so the kill policy of decision 0016 has no target, and
+  pid is 0, so the kill policy of decision 0016 has no target, and
   closing the tab ends the monitor, not the session. It closes when the
   session ends (the pid gone, or reused by a process started later).
   Reopen closed tab does not record it, and Duplicate tab is disabled
@@ -97,10 +105,10 @@ them all and shows any of them on the meters.
 
 ## Why
 
-`/proc` names every session, of any terminal, and reading a process's
-name, folder, start and command line is what `ps` shows. The side
-channels are those the app already reads for its own sessions, so a
-monitor shows nothing the app could not show of a session it started.
+The process table names every session, of any terminal, and reading a
+process's name, folder, start and command line is what `ps` shows. The
+side channels are those the app already reads for its own sessions, so
+a monitor shows nothing the app could not show of a session it started.
 A monitor with no pid cannot reach the session by any path the app's
 children are ended by.
 

@@ -1,18 +1,17 @@
 # 0037 Skin packs: CSS compiled once, per state
 
 Status: accepted 2026-10-16. Phase 5 of decision 0036 builds `skinc`;
-phase 6 builds the runtime that loads what it writes. skinc's front end
-(below, through the states) is built; the layout, the paint, the pack
-writer and the decoders are phase 5's next steps.
+phase 6 builds the runtime that loads what it writes. Revised
+2026-10-17 for the C port (decision 0036): both are built.
 
 ## Context
 
 Decision 0036 keeps skins as `skin.json` and `skin.css` and moves the
 CSS out of the running app: `skinc` compiles a skin into a pack ahead
-of time, and `skinned` reads packs only. The JavaScript app builds a
+of time, and `skinned` reads packs only. The JavaScript app built a
 skin as DOM (`app/renderer/skin.js`, `widgets.js`) styled by
 `app/renderer/widgets.css` and the skin's sheet in a shadow root, and a
-browser restyles it as widgets toggle classes. A pack must hold
+browser restyled it as widgets toggled classes. A pack must hold
 everything that restyle and the paint need, in a form the runtime can
 use without a CSS engine, and the runtime must be able to check every
 byte of it, since a user's pack sits in a cache directory like any
@@ -30,8 +29,8 @@ is fixed, much of it at a fixed size.
 
 ### The compiler and where packs live
 
-- `skinc DIR` checks a skin as `app/skins/validate.js` does, every
-  message as it writes it and in its order, then refuses what it
+- `skinc DIR` checks a skin as `app/skins/validate.js` did, every
+  message as it wrote it and in its order, then refuses what it
   cannot compile, giving the file and the field, or `line N` in the
   stylesheet: `skins/x/skin.css: line 12: "cursor": "wait" is not a
   valid value: cursor takes auto, default, pointer or text`. Its own

@@ -1,7 +1,8 @@
 # 0017 Assets, fonts and their licenses
 
 Status: accepted 2026-10-11, revised 2026-10-13 for the app's own fonts,
-and 2026-10-16 for vendored C code and the C port's fonts (decision 0036).
+2026-10-16 for vendored C code and the C port's fonts (decision 0036),
+and revised 2026-10-17 for the C port (decision 0036).
 
 ## Context
 
@@ -10,9 +11,9 @@ with credit may ship, and fonts may also be SIL OFL, kept beside their
 license. Every asset goes in one manifest.
 
 The app's own text, the strip, the menu, the widgets' defaults and every
-terminal, names DejaVu Sans Mono and DejaVu Sans. A machine without them
-draws whatever its fallback font is, with other cell sizes in the
-terminal.
+terminal, names DejaVu Sans Mono and DejaVu Sans. In the JavaScript app,
+a machine without them drew whatever its fallback font was, with other
+cell sizes in the terminal.
 
 ## Decision
 
@@ -28,13 +29,14 @@ terminal.
   beside its library's licence, copied verbatim. Each is listed in
   `ASSETS.json` like an asset, with the same licence list and the
   commit it was copied from.
-- DejaVu Sans Mono and DejaVu Sans come from the system, as a
-  prerequisite: `install.sh` looks for both with `fc-list` and, when
-  either is missing, names the distribution's package and stops.
-- The C port embeds DejaVu Sans Mono and DejaVu Sans (decision 0036)
-  from `third_party/dejavu/`, the 2.37 release unchanged, beside its
-  licence. The Bitstream Vera license (`Bitstream-Vera`) is allowed for
-  those files alone.
+- `skinned` embeds DejaVu Sans Mono, in its four styles, and DejaVu
+  Sans and DejaVu Sans Bold (decision 0036), from `third_party/dejavu/`,
+  the 2.37 release unchanged, beside its licence. The Bitstream Vera
+  license (`Bitstream-Vera`) is allowed for those files alone. The
+  system's fonts are read only for characters DejaVu lacks
+  (`src/text/discover.c`), and `install.sh` asks for no font. The
+  JavaScript app took both fonts from the system, as a prerequisite
+  that `install.sh` checked with `fc-list`.
 - A test walks `skins/` and fails for any file that is neither the
   manifest, the CSS, nor listed in `ASSETS.json` with an allowed license,
   and for any listed file that does not exist.

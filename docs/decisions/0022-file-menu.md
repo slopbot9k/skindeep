@@ -5,7 +5,7 @@ the tab entries and shortcuts of decision 0023 and for the
 visualization's modes (decision 0015). Revised 2026-10-14 (maintainer):
 several launches share one skin at once. Revised 2026-10-15 (#152,
 owner): the one File menu splits into four, File, Agents, Skins and
-Visualization.
+Visualization. Revised 2026-10-17 for the C port (decision 0036).
 
 ## Context
 
@@ -17,16 +17,18 @@ otherwise.
 ## Decision
 
 - The button. Every skin places it: the manifest's top-level `menu`
-  field is required, `{ rect, image, hover?, pressed? }`. The app draws
-  it in the page, outside the skin's shadow root, above every panel and
-  widget, so skin CSS cannot reach, hide or cover it. A state without
-  its own image gets the app's effect: brighter with an outline on
-  hover, one pixel down and darker while pressed or open. The validator
+  field is required, `{ rect, image, hover?, pressed? }`. The runtime
+  draws it after every panel and widget (`src/skin/view.c`), and it is
+  no element of the skin's tree, so skin CSS cannot reach, hide or cover
+  it. A state without its own image gets the app's effect: brighter
+  with an outline on hover, one pixel down and darker while pressed or
+  open. The validator
   refuses a skin without the field, an image that is missing, and a
   rect smaller than 16 x 16, outside the skin area or over the terminal,
-  each at the minimum and the initial window size.
-- The drop-down, drawn by the app the same in every skin, with a bar
-  of four menus at its top (2026-10-15, below):
+  each at the minimum and the initial window size (`skinc/manifest.c`).
+- The drop-down, drawn by the app the same in every skin
+  (`src/app/menu.c`), with a bar of four menus at its top (2026-10-15,
+  below):
   - File: the tab entries of decisions 0023 and 0026, New tab, New
     tab..., Close tab, Reopen closed tab, Duplicate tab, Next tab and
     Previous tab, then Settings, then Housekeeping: this launch's
@@ -42,19 +44,26 @@ otherwise.
 
   A problem not yet seen puts a dot on the button. The right-click menu
   is gone.
-- Settings: one list in `app/settings.js`, the same in every skin.
-  A skin cannot add, remove or rename a setting. Each overrides one
+- Settings: one list in `src/app/appsettings.c`, the same in every
+  skin. A skin cannot add, remove or rename a setting. Each overrides one
   manifest value, offers the skin's own value first as Skin default,
   applies at once to every tab, survives a skin switch, and is kept in
-  `$XDG_STATE_HOME/claude-skins/settings.json`. The first and only one
-  is the terminal font size, 8 to 32 px. It sizes the terminal alone:
+  `<state>/settings.json`. `<state>` is the state directory of decisions
+  0016 and 0036: `$XDG_STATE_HOME/claude-skins`, by default
+  `~/.local/state/claude-skins` on Linux and
+  `~/Library/Application Support/claude-skins` on macOS. The first and
+  only one is the terminal font size, 8 to 32 px. It sizes the terminal alone:
   the menu, the chooser and the dashboard keep their own sizes. Another
   launch reads the file at its start, so two windows open at once each
   keep their own until relaunched. The window's minimum width stays
   that of the skin's own font (decision 0006).
-- Keys. No native menu bar and no accelerators. The app takes only the
-  copy and paste keys of decision 0002 and the tab shortcuts of decision
-  0023, none of which sends the CLI a byte it would otherwise get, so
+- Keys. No native menu bar and no accelerators on Linux. On macOS the
+  app menu holds only Quit, on Cmd+Q, which asks every window to close,
+  so every other Cmd chord reaches the window
+  (`src/platform/macos/ui.c`). The app takes only the copy and paste
+  keys of decision 0002 and the tab shortcuts of decision 0023 (Cmd
+  chords on macOS, Ctrl+Shift on Linux, Ctrl+Tab on both), none of
+  which sends the CLI a byte it would otherwise get, so
   Alt+F, Alt+B and every other key reach the CLI, and no key opens the
   menus. While the drop-down is open it takes the keyboard: Left and
   Right step through the four menus, wrapping, Escape closes it and
@@ -62,23 +71,27 @@ otherwise.
   interrupts the agent. Closing returns focus to the terminal.
 - The last skin used. Each window records its skin at launch and at
   each switch, `--skin` and `SKINNED_SKIN` included, in a file of its
-  own, `$XDG_STATE_HOME/claude-skins/last-skins/<pid>`, by write and
-  rename, so no two windows write one file. A bare launch opens the
+  own, `<state>/last-skins/<pid>`, by write and rename, so no two
+  windows write one file (`src/app/lastskin.c`). A bare launch opens the
   newest record. When windows recorded different skins within 5 s of
-  the newest, a native dialog asks before the window opens: one button
-  per skin, the newest first and default. The answer deletes every
-  record and the launch records its choice. Records older than 5 s
-  before the newest are pruned at each launch.
+  the newest, a dialog of the system's asks before the window opens
+  (`src/platform/<os>/ask.c`): on macOS an alert with one button per
+  skin, on Linux a radio list of zenity, else kdialog, the newest first
+  and default in both. With neither program the newest is taken. The
+  answer deletes every record and the launch records its choice.
+  Records older than 5 s before the newest are pruned at each launch.
 - Several launches share one skin at once (maintainer): each launch is
   its own process with its own window, runtime dir and record, nothing
   locks a skin, and no launch takes another's skin away. Two launches
   given one skin, and two bare launches beside their records, each
   open on it, with no refusal and no dialog, and a bare launch beside a
   live launch of one skin opens that skin. The windows of one launch
-  stay on one skin (decision 0023). `scripts/checks/twoskins.js` shows
-  it, with one state home for every launch. Measured 2026-10-14 under
-  Xvfb, through the driver and through `bin/skinned`: nothing failed,
-  so no code changed.
+  stay on one skin (decision 0023). The JavaScript app's check
+  `twoskins.js` showed it, with one state home for every launch.
+  Measured 2026-10-14 under Xvfb, through the driver and through
+  `bin/skinned`: nothing failed, so no code changed. In C,
+  `tests/app/lastskin.c` checks the records and `tests/app/window.c`
+  a launch beside raced records.
 - A remembered skin that no longer loads gives way to the default skin.
   The fallback is not recorded, so a skin fixed on disk comes back on
   the next launch. The problem shows under Housekeeping. A given skin

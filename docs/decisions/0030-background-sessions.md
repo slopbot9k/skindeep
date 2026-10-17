@@ -1,7 +1,8 @@
 # 0030 Background sessions, subcommands and the last screen
 
 Status: accepted 2026-10-12, from the maintainer's report of a crash on
-`--resume` in a skinned window.
+`--resume` in a skinned window. Revised 2026-10-17 for the C port
+(decision 0036).
 
 ## Context
 
@@ -40,20 +41,25 @@ it. Measured 2026-10-12 on the maintainer's report:
   every other field of that file dropped at once. The others run on
   Generic alone.
 - Hooks and statusline by ancestry: the injected hooks are command hooks,
-  `python3 -I -S app/relay/hook.py ROOT`, and the statusline relay takes
-  `ROOT CHAIN`, CHAIN the profile's own statusline command in base64url
-  or `-`. Each relay walks its process's ancestors and posts to the first
-  one with a link `ROOT/pids/<pid>`, which a tab makes to its own Unix
-  socket once its CLI has a pid. A session the window did not start,
-  such as one in the background, finds none: the hook prints nothing and
-  exits 0, and the statusline relay still runs the profile's statusline.
+  `skinned-relay hook ROOT`, and the statusline relay is
+  `skinned-relay statusline ROOT CHAIN`, CHAIN the profile's own
+  statusline command in base64url or `-`. Each relay walks its
+  process's ancestors, read from `/proc` on Linux and sysctl on macOS,
+  and posts to the first one with a link `ROOT/pids/<pid>`, which a tab
+  makes to its own Unix socket once its CLI has a pid. A session the
+  window did not start, such as one in the background, finds none: the
+  hook prints nothing and exits 0, and the statusline relay still runs
+  the profile's statusline.
   ROOT is the runtime root of decision 0016.
 - The settings text so names no port, token or tab, and the file is kept:
-  `<state>/claude-skins/settings/<hash>.json`, named for the hash of its
-  text, written once, never removed. A background session started from a
-  closed window starts again from it.
-- The last screen: a tab whose CLI exits by itself asks the renderer for
-  its last screen (the bottom rows, blank ones at either end dropped),
+  `settings/<hash>.json` in the state directory of decision 0036, named
+  for the hash of its text, written once, never removed. A background
+  session started from a closed window starts again from it. The
+  JavaScript app's kept files ran python3 and node: at launch, once
+  those relays are gone, the C app rewrites each such command to
+  `skinned-relay` in the same file (`src/agents/claude/migrate.c`).
+- The last screen: a tab whose CLI exits by itself has its last screen
+  read (the bottom rows, blank ones at either end dropped),
   after the CLI's last bytes are drawn, at most 1 s. When that exit ends
   the window and the app's stdout is a terminal, the app writes that
   screen there, as the CLI would have left it without the app.

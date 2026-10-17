@@ -2,7 +2,8 @@
 
 Status: accepted 2026-10-11, the usage limits' resets and spend limit
 added 2026-10-13, the checklist family added 2026-10-14 (decision
-0034), the list of every usage limit added 2026-10-15.
+0034), the list of every usage limit added 2026-10-15, and revised
+2026-10-17 for the C port (decision 0036).
 
 ## Context
 
@@ -80,27 +81,28 @@ knows no figure yet.
 ### Writing
 
 The bus has one write path, its writer: an adapter writes through a
-source, `bus.source({ defaults, rates })`. The Claude and Codex adapters
-and Generic do, and the bus exports no other write.
+source, `sk_bus_source(bus, spec)`, the spec naming its defaults and
+rates (`src/core/bus.h`). The Claude and Codex adapters and Generic do,
+and the bus exports no other write.
 
 - A defaulted name is present only while its channel is live. A source
-  seeds its defaults at `begin()` and at `reset()`, never at
-  construction. Claude begins at its first hook or statusline payload,
+  seeds its defaults at `sk_source_begin` and at `sk_source_reset`,
+  never when it is made. Claude begins at its first hook or statusline payload,
   with `tools.total`, `agents.active` and `state.busy` at 0. Before that
   they read null, so a run with no live channel shows `--`, not 0.
 - Rates: one table in the writer, value = sum of the samples in the
   window times the unit over the window. `tokens.out_rate` 10 s per
   second, `tools.rate` 60 s per minute, `pty.out_bps` and `pty.in_kps`
   1 s per second. A rate reads null until its source begins, then 0 with
-  no samples. `bus.tick(now)` recomputes them, every 250 ms.
+  no samples. `sk_bus_tick(bus, now)` recomputes them, every 250 ms.
 - History: a sample or event marked as history (replayed transcript
   lines) is dropped. Counters apply.
 - Reset, a new session: every name under `context.`, `tokens.`,
   `cost.`, `lines.`, `tools.`, `agents.`, `cache.`, `state.`,
-  `checklist.` and `session.compactions` is forgotten, and in the same call the source
-  reseeds its defaults and writes 0 to its rates. `event.*`,
-  `model.name` and `limits.*` survive.
-- A write to a name outside the vocabulary (`app/metrics/names.js`) is
+  `checklist.` and `session.compactions` is forgotten, and in the same
+  call the source reseeds its defaults and writes 0 to its rates.
+  `event.*`, `model.name` and `limits.*` survive.
+- A write to a name outside the vocabulary (`src/core/names.c`) is
   dropped and logged once per name.
 
 ## Why

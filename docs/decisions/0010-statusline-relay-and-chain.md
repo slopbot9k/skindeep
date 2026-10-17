@@ -1,7 +1,8 @@
 # 0010 Statusline relay and chaining
 
 Status: accepted 2026-10-11, managed settings read 2026-10-12, the
-relay's arguments revised 2026-10-12 (decision 0030).
+relay's arguments revised 2026-10-12 (decision 0030), and revised
+2026-10-17 for the C port (decision 0036).
 
 ## Context
 
@@ -11,18 +12,19 @@ line must stay what the profile makes it.
 
 ## Decision
 
-- The injected command is `<node> <repo>/app/relay/statusline.js ROOT
-  CHAIN`. `<node>` is the absolute path of the system node, else the
-  Electron binary with `ELECTRON_RUN_AS_NODE=1`. ROOT is the runtime
-  root, CHAIN the chained command in base64url, or `-` for none.
+- The injected command is `<relay> statusline ROOT CHAIN`. `<relay>` is
+  the absolute path of `skinned-relay`, found beside the `skinned`
+  program, or `SKINNED_RELAY` when set. ROOT is the runtime root, CHAIN
+  the chained command in base64url, or `-` for none.
 - The relay reads stdin, then at once starts the chained command (if
-  any) with the same stdin and cwd, and in parallel POSTs the JSON to the
-  tab it finds by ancestry (decision 0030) with a 200 ms connect timeout,
-  ignoring every failure. It prints the chain's stdout as soon as the
-  chain ends, forwards SIGTERM to it, and exits with its code when both
-  are done or the POST timed out. With no chain it prints nothing and
-  exits 0. It never prints text of its own. With no window, as in a
-  session sent to the background, the chain still runs.
+  any) through `/bin/sh -c` with the same stdin and cwd, and in parallel
+  POSTs the JSON to the tab it finds by ancestry (decision 0030), the
+  whole POST limited to 500 ms, ignoring every failure. The chain writes
+  to the relay's stdout itself. The relay passes SIGTERM on to it, and
+  exits with the chain's code once the chain has ended and the POST is
+  done or timed out. With no chain it prints nothing and exits 0. It
+  never prints text of its own. With no window, as in a session sent to
+  the background, the chain still runs.
 - The chain is resolved at launch from user
   (`$CLAUDE_CONFIG_DIR/settings.json`), project
   (`<project>/.claude/settings.json`) and local
@@ -34,8 +36,9 @@ line must stay what the profile makes it.
 - The injected entry copies `padding`, `refreshInterval` and
   `hideVimModeIndicator` from the effective one.
 - Managed settings, the highest source: the writer reads
-  `/etc/claude-code/managed-settings.json` and then
-  `/etc/claude-code/managed-settings.d/*.json` in name order, through
+  `managed-settings.json` and then `managed-settings.d/*.json` in name
+  order, in `/etc/claude-code/` on Linux and in
+  `/Library/Application Support/ClaudeCode/` on macOS, through
   the same filter as the other files plus the keys `disableAllHooks`
   and `allowManagedHooksOnly`. A managed statusLine means ours never
   runs, and the meters fall back to the transcript. Either hook key

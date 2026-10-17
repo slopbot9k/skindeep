@@ -2,40 +2,48 @@
 
 Status: accepted 2026-10-11, revised 2026-10-12 for portable commands,
 for the Session's exit status, for tabs (decision 0023), for `--mute`
-(decision 0024), and for the one exec route through `exec-clean.py`.
+(decision 0024), and for the one exec route through `exec-clean.py`,
+and revised 2026-10-17 for the C port (decision 0036).
 
 ## Context
 
 A user types `claude-skins` or `codex-skins` where they would type
 `claude` or `codex`. Arguments pass through, cwd is the caller's, the app
-exits with the CLI's status. Electron and Chromium write warnings to
-stderr, which would land in the user's shell.
+exits with the CLI's status. The app's own log lines must not land in
+the user's shell.
 
 ## Decision
 
 - `bin/skinned [--skin NAME|PATH] [--statusline=always|chain-only]
   [--no-viz] [--mute] -- CMD [ARGS]`, a POSIX sh script. It resolves the
-  repository, keeps the caller's stderr on fd 3 (`exec 3>&2`), sends
-  Electron's own stderr to a per-launch log, and execs
-  `electron --no-sandbox <repo> ...`.
-- User-facing errors (bad skin, missing command) go to fd 3.
+  repository, past any link to itself, and execs
+  `build/release/skinned` with every argument. `skinned` checks its own
+  options (`src/app/options.c`): an unknown option of its own, or no
+  command after `--`, prints the usage and exits 125.
+- User-facing errors (bad skin, missing command) go to the caller's
+  stderr, each line starting `skinned: `. The app's own lines go to its
+  log, `<state>/skinned-<pid>.log` (decision 0016). When the caller
+  leaves its stderr open on fd 3, as the JavaScript app's launcher did,
+  `skinned` writes the user's errors there instead, and no child
+  inherits it.
 - Exit status: the child's status, of the tab that ends last when the
   window has several (decision 0023). 128+n when the child dies by
-  signal n. 127 when CMD is not found on PATH, checked before any window opens.
-  125 when the app itself fails (bad skin at launch, Electron error).
-  An internal error ends the child first, by the kill policy of 0016,
-  then exits 125. 125 too when the pty cannot be spawned, with
-  `cannot start CMD: <reason>` on fd 3.
+  signal n. 127 when CMD is not found on PATH, checked before any window
+  opens. 125 when the app itself fails (bad skin at launch, a window
+  that cannot open, a directory it cannot make). An internal error ends
+  the child first, by the kill policy of 0016, then exits 125. 125 too
+  when the pty cannot be spawned, with `cannot start CMD: <reason>` on
+  stderr.
 - 127 or 126 when CMD resolved but its exec fails, as bash gives: 127
   when the file or the interpreter it names is missing, else 126. The
-  reason goes to fd 3 as `cannot start CMD: <reason>`, and to the
+  reason goes to stderr as `cannot start CMD: <reason>`, and to the
   problem a tab's end shows when other tabs remain.
-- Every CLI is exec'd through `app/exec-clean.py`, so it holds only fds
-  0 to 2 and a failed exec ends as above. With no `python3` on the
-  tab's PATH nothing spawns: 125, with `cannot start CMD: python3 not
-  found on PATH, the app needs it to start a command` on fd 3. node-pty
-  can exec the CLI itself, but it ends every failed exec with status 1
-  and its own message, and the child keeps Electron's fds.
+- `skinned` forks and execs every CLI itself (`src/core/session.c`), as
+  `app/exec-clean.py` did for the JavaScript app. The child resets its
+  signals, takes the pty as its controlling terminal, keeps only fds 0
+  to 2 and execs. A failure before the exec, or at it, comes back as an
+  errno over a close-on-exec socket pair, so the spawn is over, exec'd
+  or failed, before the app goes on. No interpreter is needed.
 - 129 when the window is closed, or the app is signalled, before the CLI
   started: the status a hung-up child usually reports, so the caller
   sees the same status for a close before the start as after it.
@@ -52,16 +60,20 @@ stderr, which would land in the user's shell.
 
 ## Why
 
-fd 3 keeps the user's terminal clean of Chromium noise while errors
-meant for the user still reach it. The 125/127/128+n convention is
-env(1)'s and the shell's, so it cannot collide with a CLI's own status in
-the ordinary range.
+A log of the app's own keeps the user's terminal clean while errors
+meant for the user still reach it. In the JavaScript app, fd 3 did the
+same against Chromium's noise. The 125/127/128+n convention is env(1)'s
+and the shell's, so it cannot collide with a CLI's own status in the
+ordinary range. Exec'ing the child itself gives each failed exec bash's
+status and wording, where node-pty ended every one with status 1 and its
+own message, and its child kept Electron's fds.
 
 ## Rejected
 
 - A `--label` option: free text in the identity strip could lie
   (decision 0004).
-- Printing app errors on stderr: they would vanish into the log.
+- Printing the app's log lines on stderr: they would mix with the
+  user's shell.
 - Exit 2 for a bad skin: collides with CLI statuses.
 - Generated wrappers per profile directory: they assume one machine's
   layout of config dirs, where the environment variable each CLI already

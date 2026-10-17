@@ -1,7 +1,8 @@
 # 0013 Codex side channel
 
 Status: accepted 2026-10-11, discovery amended 2026-10-12, and for
-`fork` (decision 0026), limits by `limit_id` 2026-10-15.
+`fork` (decision 0026), limits by `limit_id` 2026-10-15, and revised
+2026-10-17 for the C port (decision 0036).
 
 ## Context
 
@@ -18,8 +19,10 @@ that holds the rollout open, so the child tree rarely holds it.
   no window:
   1. A thread id in the child's argv (`resume <id>`): the rollout named
      `rollout-*-<id>.jsonl`.
-  2. `/proc/<pid>/fd` of the child tree: a link to a top-level
-     `rollout-*.jsonl` under the realpath of `$CODEX_HOME/sessions/`.
+  2. The files the child tree holds open, the links of `/proc/<pid>/fd`
+     on Linux and libproc's descriptor paths on macOS
+     (`src/platform/<os>/procfds.c`): a top-level `rollout-*.jsonl`
+     under the realpath of `$CODEX_HOME/sessions/`.
   3. A top-level rollout whose `session_meta.cwd` equals the session's
      cwd, the child's cwd or its `-C`/`--cd` directory, split by what
      argv implies, by the thread's creation stamp

@@ -3,7 +3,7 @@
 Status: accepted 2026-10-11. A numeric readout takes a click since
 decision 0033, an eighth type, `list`, shows the agent's task list
 since decision 0034, and a ninth, `limits`, every usage limit since
-2026-10-15.
+2026-10-15. Revised 2026-10-17 for the C port (decision 0036).
 
 ## Context
 
@@ -39,10 +39,13 @@ out three meters unlike two, and hides while the list is empty.
 
 Values move toward their targets with a critically damped spring at the
 display's frame rate. Needles get a slight overshoot setting
-(`damping` below 1) for the analog feel. The metrics bus updates
-renderers at 10 Hz. Widgets draw with DOM and inline SVG, styled by the
-skin through `class` and CSS custom properties (`--fill`, `--track`,
-`--needle`, `--glow`).
+(`damping` below 1) for the analog feel. The app sends the active tab's
+metrics to the skin at 10 Hz (`src/app/gui.c`). skinc builds each
+widget's elements, its SVG parts among them, as the JavaScript app's
+`widgets.js` did, and compiles the skin's CSS onto them: `class` and the
+custom properties (`--fill`, `--track`, `--needle`, `--glow`) style
+them. The runtime moves the values (`src/skin/widgets.c`) and paints
+them from their computed styles (decision 0037).
 
 ## Why
 
