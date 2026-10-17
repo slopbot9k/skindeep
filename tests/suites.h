@@ -130,4 +130,5 @@
     X(viz_modes)                                                             \
     X(skin_pack)                                                             \
     X(skin_compile)                                                          \
-    X(skin_view)
+    X(skin_view)                                                             \
+    X(skins)
