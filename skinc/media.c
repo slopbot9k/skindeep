@@ -351,7 +351,10 @@ static bool shape_ok(const NSVGshape *sh, size_t *points)
         if (p->type != NSVG_PAINT_LINEAR_GRADIENT && p->type != NSVG_PAINT_RADIAL_GRADIENT)
             continue;
         const NSVGgradient *g = p->gradient;
-        if (!g || !bounded(g->xform, 6, MAX_XFORM) || !isfinite(g->fx) || !isfinite(g->fy) || g->nstops < 0)
+        /* nanosvg sets the focus of a radial gradient alone: a linear
+         * one's fx and fy are left as malloc gave them. */
+        if (!g || !bounded(g->xform, 6, MAX_XFORM) || g->nstops < 0 ||
+            (p->type == NSVG_PAINT_RADIAL_GRADIENT && (!isfinite(g->fx) || !isfinite(g->fy))))
             return false;
         for (int i = 0; i < g->nstops; i++)
             if (!isfinite(g->stops[i].offset))
