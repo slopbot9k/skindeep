@@ -1,4 +1,14 @@
 #!/bin/sh
-# codex-skins: Codex in a claude-skins window. Every argument goes to
+# codex-skins: Codex in a skindeep window. Every argument goes to
 # codex. SKINNED_SKIN picks the skin.
-exec "$(dirname "$(readlink -f "$0")")/skinned" -- codex "$@"
+
+# This file itself, past any link to it.
+self=$0
+while [ -L "$self" ]; do
+  link=$(readlink "$self") || exit 125
+  case "$link" in
+    /*) self=$link ;;
+    *) self=$(dirname "$self")/$link ;;
+  esac
+done
+exec "$(dirname "$self")/skinned" -- codex "$@"

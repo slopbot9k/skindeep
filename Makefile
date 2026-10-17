@@ -4,6 +4,8 @@
 #
 #   make              build the library, the tests, skinned, skinned-relay,
 #                     skinc and hookdump, and the shipped skins' packs
+#   make programs     build skinned, skinned-relay and skinc alone, as
+#                     install.sh does, with WERROR empty
 #   make test         run the tests (T=json runs the json suite)
 #   make debug        run the tests under AddressSanitizer and UBSan
 #   make fuzz         build the fuzz targets
@@ -20,8 +22,11 @@ MODE ?= release
 BUILD := build/$(MODE)
 
 CSTD := -std=c17
+# install.sh builds with WERROR empty: a warning a newer compiler adds must
+# not stop an install. The tests and CI keep -Werror.
+WERROR ?= -Werror
 WARN := -Wall -Wextra -Wpedantic -Wshadow -Wstrict-prototypes \
-        -Wmissing-prototypes -Wvla -Wformat=2 -Wundef -Wpointer-arith -Werror
+        -Wmissing-prototypes -Wvla -Wformat=2 -Wundef -Wpointer-arith $(WERROR)
 DEFS := -D_XOPEN_SOURCE=700
 # Apple's headers hide parts of POSIX.1-2008, such as mkdtemp, unless
 # this is set. Linux keeps the strict view, so CI there still catches
@@ -110,10 +115,12 @@ FUZZ_BINS := $(FUZZ_TARGETS:%=$(BUILD)/fuzz-%)
 FUZZ_DRIVER := $(BUILD)/tests/fuzz/driver.o
 FUZZ_SECONDS ?= 30
 
-.PHONY: all test debug fuzz fuzz-run clean macdemo windemo milkshot skinshot skinrun vizshot vizwin
+.PHONY: all programs test debug fuzz fuzz-run clean macdemo windemo milkshot skinshot skinrun vizshot vizwin
 .SECONDARY:
 
 all: $(LIB) $(TEST_BIN) $(RELAY) $(HOOKDUMP) $(SKINNED) $(SKINC) $(BUILD)/qoi2png $(BUILD)/windemo
+
+programs: $(RELAY) $(SKINNED) $(SKINC)
 
 $(BUILD)/%.o: %.c
 	@mkdir -p $(dir $@)

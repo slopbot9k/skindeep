@@ -1,10 +1,8 @@
 #!/bin/sh
-# Install claude-skins: build the dependencies of this checkout, then
-# write three commands into BINDIR (default ~/.local/bin): claude-skins,
-# codex-skins and skinned. Outside this checkout it writes only those,
-# plus the download caches of npm (~/.npm) and Electron
-# (~/.cache/electron). Run again after a pull or a move. ./uninstall.sh
-# removes the commands.
+# Install skindeep: build this checkout's programs with make, then write
+# three commands into BINDIR (default ~/.local/bin): claude-skins,
+# codex-skins and skinned. Outside the checkout it writes only those.
+# Run again after a pull or a move. ./uninstall.sh removes the commands.
 set -eu
 
 repo=$(cd "$(dirname "$0")" && pwd -P)
@@ -16,75 +14,58 @@ fail() {
   exit 1
 }
 
-[ "$(uname -s)" = Linux ] || fail "claude-skins runs on Linux only"
+os=$(uname -s)
+case "$os" in
+  Linux|Darwin) ;;
+  *) fail "skindeep runs on Linux and macOS only" ;;
+esac
 
-# Prerequisites, all reported at once. Node.js runs only this install
-# (npm, and Electron's downloader, which needs 22.12 or newer). node-pty
-# ships no Linux binary, so npm compiles it with python3, make and g++.
+# Prerequisites, all reported at once: a C compiler and GNU make, which
+# macOS has in Apple's Command Line Tools.
 missing=
-build=
 have() { command -v "$1" >/dev/null 2>&1; }
-if ! have node || ! have npm; then
-  missing="$missing
-  - Node.js 22.12 or newer, with npm (none on PATH)"
-elif ! node -e 'const [a, b] = process.versions.node.split(".").map(Number); process.exit(a > 22 || (a === 22 && b >= 12) ? 0 : 1)'; then
-  missing="$missing
-  - Node.js 22.12 or newer, with npm (found $(node --version))"
-fi
-for t in python3 make g++; do
-  if ! have "$t"; then
-    build=1
+cc=${CC:-cc}
+make=${MAKE:-make}
+if [ "$os" = Darwin ]; then
+  if ! xcode-select -p >/dev/null 2>&1; then
     missing="$missing
-  - $t, to compile node-pty"
+  - Apple's Command Line Tools, for cc and make: xcode-select --install"
   fi
-done
-# The app draws its own text in DejaVu Sans Mono and DejaVu Sans, from the
-# system's fonts. fc-list is fontconfig's.
-fonts=
-if ! have fc-list; then
-  fonts=1
-  missing="$missing
-  - fc-list (fontconfig), to look for the DejaVu fonts"
-elif ! fc-list -q 'DejaVu Sans Mono' || ! fc-list -q 'DejaVu Sans'; then
-  fonts=1
-  missing="$missing
-  - the fonts DejaVu Sans Mono and DejaVu Sans"
+else
+  have "$cc" || missing="$missing
+  - a C compiler ($cc is not on PATH)"
+  if ! "$make" --version 2>/dev/null | grep -q 'GNU Make'; then
+    if have gmake; then
+      make=gmake
+    else
+      missing="$missing
+  - GNU make"
+    fi
+  fi
 fi
 if [ -n "$missing" ]; then
   echo "install: missing prerequisites:$missing" >&2
-  if [ -n "$build$fonts" ]; then
+  if [ "$os" = Linux ]; then
     ids=$( (. /etc/os-release 2>/dev/null && echo "${ID:-} ${ID_LIKE:-}") || true)
     case " $ids " in
-      *" debian "*|*" ubuntu "*) pm="sudo apt-get install -y" b="build-essential python3" f="fontconfig fonts-dejavu-core" ;;
-      *" fedora "*|*" rhel "*) pm="sudo dnf install -y" b="gcc-c++ make python3" f="fontconfig dejavu-sans-mono-fonts dejavu-sans-fonts" ;;
-      *" arch "*) pm="sudo pacman -S --needed" b="base-devel python" f="fontconfig ttf-dejavu" ;;
-      *" suse "*|*" opensuse "*) pm="sudo zypper install -y" b="gcc-c++ make python3" f="fontconfig dejavu-fonts" ;;
-      *) pm= b="g++, make and python3" f="fontconfig and the DejaVu fonts" ;;
+      *" debian "*|*" ubuntu "*) hint="sudo apt-get install -y build-essential" ;;
+      *" fedora "*|*" rhel "*) hint="sudo dnf install -y gcc make" ;;
+      *" arch "*) hint="sudo pacman -S --needed base-devel" ;;
+      *" suse "*|*" opensuse "*) hint="sudo zypper install -y gcc make" ;;
+      *) hint="install a C compiler and GNU make with the system's package manager" ;;
     esac
-    say() {
-      if [ -n "$pm" ]; then echo "install: $1: $pm $2" >&2
-      else echo "install: $1: install $2 with the system's package manager" >&2; fi
-    }
-    [ -z "$build" ] || say "compiler and python3" "$b"
-    [ -z "$fonts" ] || say "fonts" "$f"
+    echo "install: $hint" >&2
   fi
-  case "$missing" in
-    *Node.js*) echo "install: Node.js 22 LTS: https://nodejs.org/en/download gives commands for nvm, fnm or the prebuilt binaries, none of which needs root. Many distributions package an older Node.js." >&2 ;;
-  esac
   fail "then run $repo/install.sh again"
 fi
 
-# npm ci only when package-lock.json differs from the one last installed.
-stamp="$repo/node_modules/.claude-skins-lock"
-if ! cmp -s "$repo/package-lock.json" "$stamp"; then
-  (cd "$repo" && npm ci)
-  cp "$repo/package-lock.json" "$stamp"
-fi
-# Electron fetches its binary on first use, not at npm install. Its own
-# installer does nothing when the binary is already there.
-(cd "$repo" && node node_modules/electron/install.js) || fail "the Electron download failed"
-"$repo/node_modules/electron/dist/electron" --no-sandbox --version >/dev/null ||
-  fail "Electron does not start, see the error above (a missing system library such as libnss3 or libgtk-3)"
+# make builds only what changed since the last install. WERROR is left
+# empty: a warning a newer compiler adds must not stop an install.
+jobs=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)
+"$make" -C "$repo" -s -j"$jobs" WERROR= programs || fail "the build failed, see the errors above"
+for p in skinned skinned-relay skinc; do
+  [ -x "$repo/build/release/$p" ] || fail "the build made no $repo/build/release/$p"
+done
 
 mkdir -p "$bin"
 
@@ -92,12 +73,13 @@ mkdir -p "$bin"
 # a file this installer did not write.
 write() {
   target="$bin/$1"
-  if [ -e "$target" ] && [ "$(sed -n '2{p;q}' "$target")" != "$marker" ]; then
+  if [ -e "$target" ] && [ "$(sed -n '2{p;q;}' "$target")" != "$marker" ]; then
     echo "install: $target exists and was not written by this installer, left alone" >&2
     return 0
   fi
+  quoted=$(printf '%s' "$repo/bin/$1" | sed "s/'/'\\\\''/g")
   tmp="$target.tmp.$$"
-  printf '#!/bin/sh\n%s\nexec %s "$@"\n' "$marker" "'$repo/bin/$1'" > "$tmp"
+  printf '#!/bin/sh\n%s\nexec %s "$@"\n' "$marker" "'$quoted'" > "$tmp"
   chmod 755 "$tmp"
   mv "$tmp" "$target"
   echo "install: $target"
@@ -109,3 +91,14 @@ case ":$PATH:" in
   *":$bin:"*) ;;
   *) echo "install: $bin is not on PATH, add it to run the commands by name" >&2 ;;
 esac
+
+# What some parts use when it is there; none is needed to start.
+note() { echo "install: optional: $*" >&2; }
+have claude || have codex || note "neither claude nor codex is on PATH; skinned runs any command"
+have gh || note "gh, for the issue boards of GitHub repositories"
+if [ "$os" = Linux ]; then
+  have curl || note "curl, for the issue boards of Gitea repositories"
+  have zenity || have kdialog || note "zenity or kdialog, for New tab...'s folder picker (else the folder is typed)"
+  have pw-play || have paplay || have aplay || note "pw-play, paplay or aplay, for skin sounds"
+  have pw-record || have parec || note "pw-record or parec, to draw the visualizer from your speakers"
+fi
