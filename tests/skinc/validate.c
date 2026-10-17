@@ -210,6 +210,9 @@ static void test_top_level_rules(void)
     expect("{\"name\": \"x\", \"window\": {\"width\": 900, \"height\": 700, \"minWidth\": 800, \"minHeight\": 150}, "
            BASE_MENU ", " BASE_TERM "}",
            NULL, "skin.json: window.minHeight: must be a number of pixels, at least 200");
+    expect("{\"name\": \"x\", \"window\": {\"width\": 20000, \"height\": 700, \"minWidth\": 800, \"minHeight\": 600}, "
+           BASE_MENU ", " BASE_TERM "}",
+           NULL, "skin.json: window.width: must be at most 16384 pixels");
     expect("{\"name\": \"x\", " BASE_WINDOW ", " BASE_MENU "}", NULL, "skin.json: terminal: missing");
 }
 

@@ -569,6 +569,14 @@ static bool meta(loader *L)
     if (!index_ok(L, m.terminal_font, count(L, S_FONT), true, "the terminal's font", "fonts") ||
         !finite_at(L, p + 116, "the terminal's font size", &m.terminal_font_size))
         return false;
+    /* skinc's window sizes: a hostile pack's would reach past any
+     * integer once scaled, where the view rounds the stage to pixels. */
+    const float sizes[4] = {m.width, m.height, m.min_width, m.min_height};
+    static const char *const size_names[4] = {"width", "height", "min width", "min height"};
+    for (int i = 0; i < 4; i++)
+        if (!(sizes[i] >= 0 && sizes[i] <= SK_PACK_MAX_SIDE))
+            return sk_packfmt_fail(&L->f, "a %s of %g: at most %u pixels", size_names[i], (double)sizes[i],
+                                   SK_PACK_MAX_SIDE);
     if (!(m.terminal_font_size > 0 && m.terminal_font_size <= SK_PACK_MAX_FLOAT))
         return sk_packfmt_fail(&L->f, "a terminal font size of %g", (double)m.terminal_font_size);
     for (int i = 0; i < 23; i++)

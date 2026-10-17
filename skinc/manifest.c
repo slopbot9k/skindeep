@@ -880,6 +880,11 @@ static void check_window(checker *k, const sk_json *win)
             char *f = field_of("window.%s", W[i]);
             err(k, f, "must be a number of pixels, at least 200");
             free(f);
+        } else if (num_of(v) > SK_PACK_MAX_SIDE) {
+            /* The loader's bound (pack.h). */
+            char *f = field_of("window.%s", W[i]);
+            err(k, f, "must be at most 16384 pixels");
+            free(f);
         }
     }
     const sk_json *mw = get(win, "minWidth"), *w = get(win, "width"), *mh = get(win, "minHeight"),

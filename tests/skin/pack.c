@@ -1100,6 +1100,9 @@ static void test_section_checks(void)
     EDIT(ep_get(&e, "STRS")->b.ptr[desc + 3] = (char)0xff, "STRS: not valid UTF-8");
     EDIT(ep_get(&e, "STRS")->count++, "STRS: ");
     EDIT(put32_at(ep_rec(&e, "META", 0), SK_PACK_NONE), "META 0: the name is none");
+    /* A stage that would reach past any integer once scaled. */
+    EDIT(putf32_at(ep_rec(&e, "META", 0) + 20, 1e30f), "META 0: a width of 1e+30: at most 16384 pixels");
+    EDIT(putf32_at(ep_rec(&e, "META", 0) + 32, -1), "META 0: a min height of -1: at most 16384 pixels");
     snprintf(want, sizeof want, "META 0: the name at %u, past STRS's %u bytes", nstrs, nstrs);
     EDIT(put32_at(ep_rec(&e, "META", 0), nstrs), want);
     snprintf(want, sizeof want, "META 0: the version at %u starts inside a character", desc + 4);

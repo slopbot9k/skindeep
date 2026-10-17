@@ -768,16 +768,31 @@ sk_skinpack *sk_skinview_pack(const sk_skinview *v)
     return v->sp;
 }
 
+/* Where a stage may lie, in CSS pixels, and its scale: bounded, so
+ * that rounding any of its edges to pixels stays far from overflow. A
+ * window gives far less, and the loader bounds a pack's own size. */
+#define STAGE_MAX 1e6
+#define SCALE_MAX 64.0
+
+static double clamp_stage(double v, double lo)
+{
+    return isfinite(v) ? fmin(STAGE_MAX, fmax(lo, v)) : 0;
+}
+
 void sk_skinview_set_stage(sk_skinview *v, double x, double y, double w, double h, double scale)
 {
-    if (!(scale > 0))
+    if (!(scale > 0 && scale <= SCALE_MAX))
         scale = 1;
+    x = clamp_stage(x, -STAGE_MAX);
+    y = clamp_stage(y, -STAGE_MAX);
+    w = clamp_stage(w, 0);
+    h = clamp_stage(h, 0);
     if (x == v->sx && y == v->sy && w == v->sw && h == v->sh && scale == v->scale)
         return;
     v->sx = x;
     v->sy = y;
-    v->sw = fmax(0, w);
-    v->sh = fmax(0, h);
+    v->sw = w;
+    v->sh = h;
     v->scale = scale;
     stage_geometry(v);
     sk_fade_free(&v->fade);
