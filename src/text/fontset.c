@@ -76,10 +76,16 @@ static void push(sk_fontset *s, int style, const sk_font *f, int limit)
 
 sk_fontset *sk_fontset_new(sk_fonts *fs, const char *const *families, bool mono)
 {
+    return sk_fontset_new_face(fs, NULL, families, mono);
+}
+
+sk_fontset *sk_fontset_new_face(sk_fonts *fs, const sk_font *face, const char *const *families, bool mono)
+{
     sk_fontset *s = sk_xcalloc(1, sizeof *s);
     s->fs = fs;
     s->mono = mono;
     for (int style = 0; style < 4; style++) {
+        push(s, style, face, CHAIN_MAX - 1);
         for (const char *const *name = families; name && *name; name++) {
             if (!**name)
                 continue;

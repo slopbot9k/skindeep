@@ -131,8 +131,35 @@ static void test_many_lookups(void)
     sk_fontset_free(set);
 }
 
+/* A skin's own face leads every style, its bold and italic faked;
+ * what it lacks comes from the families, then the embedded face. */
+static void test_leading_face(void)
+{
+    sk_font *vt = sk_font_open_file("skins/phosphor/fonts/VT323/VT323-Regular.ttf", 0);
+    CHECK(vt != NULL);
+    if (!vt)
+        return;
+    sk_fontset *set = sk_fontset_new_face(NULL, vt, NULL, true);
+    check_ref(sk_fontset_lookup(set, 'A', SK_STYLE_REGULAR), vt, true, 0);
+    check_ref(sk_fontset_lookup(set, 'A', SK_STYLE_BOLD), vt, true, SK_STYLE_BOLD);
+    CHECK(sk_fontset_primary(set, SK_STYLE_ITALIC) == vt);
+    uint32_t cp = 0;
+    for (uint32_t c = 0x2500; c < 0x2600 && !cp; c++)
+        if (!sk_font_glyph(vt, c) && sk_font_glyph(emb(SK_FONT_MONO), c))
+            cp = c;
+    if (cp)
+        check_ref(sk_fontset_lookup(set, cp, SK_STYLE_REGULAR), emb(SK_FONT_MONO), true, 0);
+    sk_fontset_free(set);
+    /* No face: sk_fontset_new's stack. */
+    set = sk_fontset_new_face(NULL, NULL, NULL, true);
+    CHECK(sk_fontset_primary(set, SK_STYLE_REGULAR) == emb(SK_FONT_MONO));
+    sk_fontset_free(set);
+    sk_font_close(vt);
+}
+
 const sk_test sk_suite_fontset[] = {
     T(test_embedded_only),
+    T(test_leading_face),
     T(test_other_style_of_the_stack),
     T(test_families),
     T(test_fallback),
