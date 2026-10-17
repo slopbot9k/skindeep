@@ -132,4 +132,5 @@
     X(skin_compile)                                                          \
     X(skin_view)                                                             \
     X(skin_live)                                                             \
-    X(skins)
+    X(skins)                                                                 \
+    X(skinterm)
