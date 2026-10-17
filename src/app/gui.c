@@ -23,6 +23,10 @@
 #include "menu.h"
 #include "newtab.h"
 #include "rename.h"
+#include "tabviz.h"
+#include "vizfeed.h"
+#include "vizwin.h"
+#include "../viz/viz.h"
 #include "monitor.h"
 #include "runtime.h"
 
@@ -35,6 +39,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 extern char **environ;
 
@@ -145,6 +150,7 @@ typedef struct {
 typedef struct {
     snap_win *wins;
     size_t n;
+    int current; /* the current window, whose title the visualization takes */
 } snapshot;
 
 /* A window on the UI thread: the tabs' window win, as the snapshot
@@ -188,6 +194,7 @@ typedef struct {
     sk_chooser *chooser;
     /* A tab's drop-down and its name edited in place (decision 0032). */
     sk_rename *rename;
+    bool strips; /* the strips alone are to be drawn again */
 } gwin;
 
 /* A problem of this launch, for Housekeeping (decision 0022). */
@@ -214,6 +221,7 @@ struct gui {
     sk_dashboard_config dash;
     sk_boards *boards;
     sk_newtab_config newtab;
+    sk_vizfeed *viz; /* the visualization's feed (decision 0015) */
     char *profiles_dir, *settings_file, *last_dir;
     sk_appsettings settings;
     SK_VEC(problem) problems;
@@ -230,6 +238,10 @@ struct gui {
     sk_glyph_cache *cache;
     double font_px; /* the terminal's, from the settings */
     SK_VEC(gwin *) wins;
+    /* The visualization's window and the tab strip's bands. */
+    sk_vizwin *vizwin;
+    sk_tabviz *tabviz;
+    uint64_t viz_at; /* the last frame's time, ms */
     /* Each dashboard tab's pane, by tab id. */
     SK_VEC(struct dview) dviews;
 };
@@ -423,6 +435,7 @@ static void post_snapshot(gui *g)
             strip_of(g, active, &w->strip);
     }
     sk_vec_free(&list);
+    s->current = sk_tabs_current(g->tabs);
     void **pair = sk_xmalloc(2 * sizeof *pair);
     pair[0] = g;
     pair[1] = s;
@@ -583,6 +596,17 @@ static void mon_pane(void *ud, sk_tab *tab, const char *text)
     on_output(ud, tab, text, strlen(text));
 }
 
+static void ui_viz_frame(void *ud);
+
+/* The visualization's frame, to the UI thread, which owns it then. */
+static void viz_frame(void *ud, sk_vizfeed_msg *msg)
+{
+    void **pair = sk_xmalloc(2 * sizeof *pair);
+    pair[0] = ud;
+    pair[1] = msg;
+    sk_ui_post(ui_viz_frame, pair);
+}
+
 /* The dashboard's sessions, boards and view (decision 0028). */
 static void dash_list(void *ud, sk_foreign_entries *out)
 {
@@ -633,14 +657,39 @@ static int make_tab(void *ud, sk_tab *tab, const sk_tab_spec *spec, char **err)
     return 0;
 }
 
+/* The visualization's panes follow the tabs (decision 0015): every tab
+ * in the list's order, its bus, whether it is the active one and has a
+ * pane. gone: a tab leaving, its bus about to go. */
+static void viz_tabs(gui *g, const sk_tab *gone)
+{
+    if (!g->viz)
+        return;
+    size_t n = sk_tabs_count(g->tabs), k = 0;
+    sk_vizfeed_tab *l = sk_xcalloc(n ? n : 1, sizeof *l);
+    sk_tab *active = sk_tabs_active(g->tabs);
+    for (size_t i = 0; i < n; i++) {
+        sk_tab *t = sk_tabs_at(g->tabs, i);
+        if (t == gone)
+            continue;
+        sk_bus *bus = t->kind == SK_TAB_MONITOR     ? sk_monitor_bus(t)
+                      : t->kind == SK_TAB_DASHBOARD ? sk_dashboard_bus(t)
+                                                    : sk_clitab_bus(t);
+        l[k++] = (sk_vizfeed_tab){t->id, bus, t == active, t->kind != SK_TAB_DASHBOARD};
+    }
+    sk_vizfeed_tabs(g->viz, l, k);
+    free(l);
+}
+
 static void on_change(void *ud)
 {
+    viz_tabs(ud, NULL);
     post_snapshot(ud);
 }
 
 static void on_active(void *ud, sk_tab *tab)
 {
     (void)tab;
+    viz_tabs(ud, NULL);
     post_snapshot(ud);
 }
 
@@ -648,6 +697,7 @@ static void on_gone(void *ud, sk_tab *tab, int code, sk_tab *next)
 {
     (void)code, (void)next;
     gui *g = ud;
+    viz_tabs(g, tab);
     for (size_t i = 0; i < g->ctabs.len; i++) {
         if (g->ctabs.ptr[i].id != tab->id)
             continue;
@@ -994,11 +1044,38 @@ static void skins_rows(row_vec *v)
     }
 }
 
-static void viz_rows(row_vec *v)
+/* A flyout of the visualization's choices, the current one marked. */
+static void viz_flyout(row_vec *v, const char *title, const sk_vizfeed_choice *c, size_t n, int action)
 {
-    row_item(v, "Show visualization", ACT_TOGGLE_VIZ, SK_ROW_CLOSES, NULL)->disabled = true;
-    row_add(v, SK_ROW_FLYOUT, "Visualization mode");
-    row_add(v, SK_ROW_FLYOUT, "Visualization input");
+    size_t at = v->len;
+    row_add(v, SK_ROW_FLYOUT, title);
+    sk_menu_row *f = &v->ptr[at];
+    f->nsub = n;
+    f->sub = sk_xcalloc(n ? n : 1, sizeof *f->sub);
+    for (size_t i = 0; i < n; i++) {
+        char text[128];
+        snprintf(text, sizeof text, "%s%s", c[i].current ? "* " : "  ", c[i].label);
+        sk_menu_row *s = &f->sub[i];
+        s->kind = SK_ROW_ITEM;
+        s->text = sk_xstrdup(text);
+        s->current = c[i].current;
+        s->disabled = !c[i].available;
+        s->action = action;
+        s->then = SK_ROW_WAITS;
+        s->arg = sk_xstrdup(c[i].id);
+    }
+}
+
+/* Visualization: the window, its modes and inputs (decision 0015), and
+ * the skin's sounds (decision 0024), which wait for the skin runtime. */
+static void viz_rows(gui *g, row_vec *v)
+{
+    bool open = sk_vizfeed_is_open(g->viz);
+    row_item(v, open ? "Hide visualization" : "Show visualization", ACT_TOGGLE_VIZ, SK_ROW_CLOSES, NULL);
+    sk_vizfeed_choice modes[SK_VIZ_MODES], inputs[SK_VIZ_INPUTS];
+    size_t nm = sk_vizfeed_modes(g->viz, modes), ni = sk_vizfeed_inputs(g->viz, inputs);
+    viz_flyout(v, "Visualization mode", modes, nm, ACT_VIZ_MODE);
+    viz_flyout(v, "Visualization input", inputs, ni, ACT_VIZ_INPUT);
     row_item(v, "Mute skin sounds", ACT_TOGGLE_SOUND, SK_ROW_CLOSES, NULL)->disabled = true;
 }
 
@@ -1092,7 +1169,7 @@ static void do_menu(void *ud)
         skins_rows(&v);
         break;
     default:
-        viz_rows(&v);
+        viz_rows(g, &v);
         break;
     }
     m->rows = v.ptr;
@@ -1235,6 +1312,25 @@ static void do_action(void *ud)
     case ACT_SESSION:
         sk_foreign_open(g->foreign, m->arg, &err);
         break;
+    case ACT_TOGGLE_VIZ:
+        sk_vizfeed_toggle(g->viz);
+        break;
+    case ACT_VIZ_MODE:
+        if (!sk_vizfeed_select(g->viz, m->arg)) {
+            sk_buf b = {0};
+            sk_buf_printf(&b, "no visualization mode %s", m->arg);
+            err = b.ptr;
+        }
+        break;
+    case ACT_VIZ_INPUT: {
+        const char *why = NULL;
+        if (!sk_vizfeed_select_input(g->viz, m->arg, &why)) {
+            sk_buf b = {0};
+            sk_buf_printf(&b, "%s", why ? why : "no visualization input");
+            err = b.ptr;
+        }
+        break;
+    }
     case ACT_DASHBOARD:
         if (!sk_dashboard_open(g->tabs, g->l->cwd, &err) && err) {
             add_problem(g, "Sessions dashboard failed", err);
@@ -1487,6 +1583,24 @@ static void ui_snapshot(void *ud)
         redraw(w);
     }
     drop_dviews(g);
+    /* A band for each tab with a session, every window's; the window
+     * the visualization sits by gives it its title. */
+    if (g->tabviz) {
+        SK_VEC(int) ids = {0};
+        for (size_t i = 0; i < g->wins.len; i++)
+            for (size_t k = 0; k < g->wins.ptr[i]->snap.n; k++)
+                if (g->wins.ptr[i]->snap.tabs[k].kind != SK_TAB_DASHBOARD)
+                    sk_vec_push(&ids, g->wins.ptr[i]->snap.tabs[k].id);
+        sk_tabviz_keep(g->tabviz, ids.ptr, ids.len);
+        sk_vec_free(&ids);
+    }
+    gwin *cur = gwin_of(g, s->current);
+    if (g->vizwin && cur && cur->snap.title) {
+        sk_buf t = {0};
+        sk_buf_printf(&t, "visualization: %s", cur->snap.title);
+        sk_vizwin_set_title(g->vizwin, t.ptr);
+        sk_buf_free(&t);
+    }
     free(s->wins);
     free(s);
 }
@@ -1950,6 +2064,39 @@ static bool rename_mouse(gwin *w, const sk_event *ev)
     return ev->type != SK_EV_MOUSE_MOVE || in_strip;
 }
 
+/* ---- The visualization (decision 0015) ---- */
+
+/* The strips alone drawn again: the tab bands change 8 times a second,
+ * which is no reason to draw the terminal. */
+static void redraw_strips(gwin *w)
+{
+    w->strips = true;
+    sk_window_request_frame(w->win);
+}
+
+/* The feed's frame, 30 times a second: the window follows it, and the
+ * tab strips' bands step from it, open or not. */
+static void ui_viz_frame(void *ud)
+{
+    void **pair = ud;
+    gui *g = pair[0];
+    sk_vizfeed_msg *m = pair[1];
+    free(pair);
+    if (g->vizwin)
+        sk_vizwin_frame(g->vizwin, m);
+    if (g->tabviz) {
+        sk_tabviz_feed(g->tabviz, m);
+        uint64_t now = sk_now_ms();
+        double dt = g->viz_at ? (double)(now - g->viz_at) / 1000 : 0;
+        g->viz_at = now;
+        if (sk_tabviz_step(g->tabviz, SK_MIN(dt, 0.1)))
+            for (size_t i = 0; i < g->wins.len; i++)
+                if (tabs_shown(g->wins.ptr[i]))
+                    redraw_strips(g->wins.ptr[i]);
+    }
+    sk_vizfeed_msg_free(m);
+}
+
 /* ---- The dashboard's pane ---- */
 
 static sk_dashview *dview_of(gui *g, int id, bool make)
@@ -2101,6 +2248,9 @@ static void tab_layout(gwin *w, int width, sk_rect *rects, sk_rect *close)
          * padding and border. */
         if (sk_rename_tab(w->rename) == t->id)
             pts = tab_fixed() + 20 * sk_measure_text(g->mono, 0, size, "0", 1) / s + 2 * 3 + 2;
+        /* A tab with a session has its band (tabviz.js) after the mark. */
+        if (t->kind != SK_TAB_DASHBOARD)
+            pts += SK_TABVIZ_W + 6;
         want[i] = SK_MIN(SK_MAX(pts, (double)TAB_MIN_W), (double)TAB_MAX_W) * s;
         sum += want[i];
     }
@@ -2183,6 +2333,25 @@ static void draw_chrome(gwin *w, sk_image *f)
                         SK_RGB(0x6f, 0xa8, 0xdc));
         tx += (float)((MARK_W + 6) * s);
         float room = (float)(c.x - px(w, 6)) - tx;
+        if (t->kind != SK_TAB_DASHBOARD && g->tabviz) {
+            /* The band, flex 0 1 44px and at least 22: when the tab is
+             * narrower than its content, it gives up its share of what
+             * is missing beside the name and the folder. */
+            bool editing = sk_rename_tab(w->rename) == t->id;
+            float named = editing ? (float)(20 * sk_measure_text(g->mono, 0, size, "0", 1) + 8 * s)
+                                  : sk_measure_text(g->mono, 0, size, t->name, strlen(t->name));
+            if (t->folder && !editing)
+                named += (float)(6 * s) + sk_measure_text(g->mono, 0, size, t->folder, strlen(t->folder));
+            float full = (float)(SK_TABVIZ_W * s), between = (float)(6 * s);
+            float missing = full + between + named - room, bw = full;
+            if (missing > 0)
+                bw = SK_MAX((float)(SK_TABVIZ_MIN_W * s), full - missing * full / (full + named));
+            sk_rect band = sk_rect_make((int)lroundf(tx), r.y + (r.h - px(w, SK_TABVIZ_H)) / 2, (int)lroundf(bw),
+                                        px(w, SK_TABVIZ_H));
+            sk_tabviz_draw(g->tabviz, t->id, f, band, s, &r);
+            tx += bw + between;
+            room -= bw + between;
+        }
         if (sk_rename_tab(w->rename) == t->id) {
             /* The input, 18 points high in the strip's line box. */
             sk_menu_style ms = menu_style(w);
@@ -2249,7 +2418,7 @@ static void draw(gwin *w)
 {
     gui *g = w->g;
     sk_image *f = sk_window_frame(w->win);
-    sk_rect dirty[2];
+    sk_rect dirty[3];
     size_t nd = 0;
     /* The drop-down and its shadow lie over what is below: while it is
      * open, each frame is drawn whole and it goes on top. */
@@ -2261,7 +2430,11 @@ static void draw(gwin *w)
         draw_chrome(w, f);
         /* The stage is the page's black around the terminal. */
         sk_fill_rect(f, stage_area(w), SK_RGB(0, 0, 0), SK_BLEND_SRC, NULL);
+    } else if (w->strips) {
+        draw_chrome(w, f);
+        dirty[nd++] = sk_rect_make(0, 0, f->w, px(w, top_points(w)));
     }
+    w->strips = false;
     sk_term *t = active_term(w);
     snap_tab *at = active_tab(w);
     if (t && at->kind == SK_TAB_DASHBOARD) {
@@ -2964,6 +3137,9 @@ static void on_scroll(gwin *w, const sk_event *ev)
 static void on_event(void *ud, const sk_event *ev)
 {
     gui *g = ud;
+    /* The visualization's window is its own, and no gwin. */
+    if (g->vizwin && sk_vizwin_event(g->vizwin, ev))
+        return;
     gwin *w = ev->win ? sk_window_ud(ev->win) : NULL;
     if (!w || chooser_event(w, ev))
         return;
@@ -3210,6 +3386,21 @@ static void probe(gui *g, gwin *w, ctl_msg *m)
         sk_menu_state(w->menu, &jw);
     else
         sk_jw_null(&jw);
+    /* The visualization's window: open, and a pane a tab. */
+    sk_jw_key(&jw, SK_STR("viz"));
+    if (g->vizwin) {
+        sk_jw_object(&jw);
+        sk_jw_key(&jw, SK_STR("open"));
+        sk_jw_bool(&jw, sk_vizwin_is_open(g->vizwin));
+        sk_jw_key(&jw, SK_STR("panes"));
+        sk_jw_array(&jw);
+        for (size_t i = 0; i < sk_vizwin_panes(g->vizwin); i++)
+            sk_jw_int(&jw, sk_vizwin_pane_tab(g->vizwin, i));
+        sk_jw_array_end(&jw);
+        sk_jw_object_end(&jw);
+    } else {
+        sk_jw_null(&jw);
+    }
     /* A tab's drop-down and the name being edited (decision 0032). */
     sk_jw_key(&jw, SK_STR("rename"));
     if (w) {
@@ -3593,6 +3784,32 @@ int sk_gui_run(const sk_options *o, const sk_envp *env, const char *self)
     g->newtab.profiles_dir = g->profiles_dir;
     g->newtab.log = log_line;
     g->newtab.ud = g;
+    /* The visualization (decision 0015): its feed on the core thread,
+     * open at launch unless --no-viz, its window and the tab bands on
+     * this one. */
+    sk_vizfeed_config vc;
+    memset(&vc, 0, sizeof vc);
+    char *mode_dir = sk_vizfeed_mode_dir(&g->paths), *input_dir = sk_vizfeed_input_dir(&g->paths);
+    vc.loop = g->loop;
+    vc.mode_dir = mode_dir;
+    vc.input_dir = input_dir;
+    vc.frame = viz_frame;
+    vc.log = log_line;
+    vc.ud = g;
+    g->viz = sk_vizfeed_new(&vc);
+    free(mode_dir);
+    free(input_dir);
+    if (o->viz)
+        sk_vizfeed_open(g->viz);
+    sk_vizwin_config wc;
+    memset(&wc, 0, sizeof wc);
+    wc.mono = g->mono;
+    wc.cache = g->cache;
+    wc.feed = g->viz;
+    wc.title = "visualization: skinned";
+    wc.hidden = g->hidden;
+    g->vizwin = sk_vizwin_new(&wc);
+    g->tabviz = sk_tabviz_new((uint64_t)getpid() ^ sk_now_ms());
     sk_loop_signal(g->loop, SIGINT, on_stop, g);
     sk_loop_signal(g->loop, SIGTERM, on_stop, g);
     sk_loop_signal(g->loop, SIGHUP, on_stop, g);
@@ -3604,6 +3821,7 @@ int sk_gui_run(const sk_options *o, const sk_envp *env, const char *self)
     if (control && *control && !(ctl = sk_control_open(g->loop, control, on_control, g, &err))) {
         sk_tell("%s", err);
         free(err);
+        sk_vizfeed_free(g->viz);
         sk_tabs_free(g->tabs);
         sk_boards_free(g->boards);
         sk_foreign_free(g->foreign);
@@ -3639,8 +3857,10 @@ int sk_gui_run(const sk_options *o, const sk_envp *env, const char *self)
             status = sk_tabs_done(g->tabs) ? sk_tabs_exit_status(g->tabs) : g->status;
         }
     }
-    /* The tabs' watch agents are the foreign sessions', so the tabs go
-     * first. */
+    /* The feed reads the tabs' buses, and the tabs' watch agents are the
+     * foreign sessions': the feed goes first, then the tabs. */
+    sk_vizfeed_free(g->viz);
+    g->viz = NULL;
     sk_tabs_free(g->tabs);
     sk_boards_free(g->boards);
     sk_foreign_free(g->foreign);
@@ -3661,6 +3881,8 @@ out:
     while (g->wins.len)
         gwin_free(g->wins.ptr[--g->wins.len]);
     sk_vec_free(&g->wins);
+    sk_vizwin_free(g->vizwin);
+    sk_tabviz_free(g->tabviz);
     for (size_t i = 0; i < g->dviews.len; i++)
         sk_dashview_free(g->dviews.ptr[i].v);
     sk_vec_free(&g->dviews);
