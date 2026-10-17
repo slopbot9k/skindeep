@@ -25,6 +25,7 @@
     X(claude_parse)                                                          \
     X(claude_core)                                                           \
     X(claude_settings)                                                       \
+    X(claude_migrate)                                                        \
     X(claude_adapter)                                                        \
     X(command)                                                               \
     X(proctree)                                                              \

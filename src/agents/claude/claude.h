@@ -23,4 +23,12 @@ sk_part sk_claude_watch(const sk_agent_ctx *ctx, sk_claude_find_fn find, void *u
 sk_part sk_claude_watch_owned(const sk_agent_ctx *ctx, sk_claude_find_fn find, void *ud,
                               void (*free_ud)(void *));
 
+/* The settings files in store the JavaScript app wrote (decision 0036's
+ * cutover): once its relay is gone, each hook and statusline command
+ * that ran it runs relay instead, rewritten in the same file, so a
+ * background session it started keeps its relays. While that relay is
+ * there, or when relay cannot run, nothing is touched. The number of
+ * files rewritten. */
+int sk_claude_migrate_settings(const char *store, const char *relay);
+
 #endif

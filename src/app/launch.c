@@ -1,5 +1,6 @@
 #include "launch.h"
 
+#include "../agents/claude/claude.h"
 #include "../base/log.h"
 #include "../base/paths.h"
 #include "../core/command.h"
@@ -69,6 +70,10 @@ int sk_launch_open(sk_launch *l, const sk_options *o, const sk_envp *env, const 
     }
     sk_log_set_fd(l->log_fd);
     l->relay = relay_path(env, self);
+    int moved = sk_claude_migrate_settings(l->store, l->relay);
+    if (moved)
+        sk_log("settings: %d file%s of the JavaScript app now run%s skinned-relay", moved, moved == 1 ? "" : "s",
+               moved == 1 ? "s" : "");
     /* As process.cwd() throws in app/main.js: a folder that is gone is
      * not the root's. */
     if (!getcwd(l->cwd, sizeof l->cwd)) {
