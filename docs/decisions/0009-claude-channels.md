@@ -1,8 +1,9 @@
 # 0009 Claude Code side channels
 
 Status: accepted 2026-10-11, revised 2026-10-12 for the history read a
-chunk a tick, and again 2026-10-12 for command hooks found by ancestry
-(decision 0030). Facts: `docs/research/side-channels.md`.
+chunk a tick, again 2026-10-12 for command hooks found by ancestry
+(decision 0030), and 2026-10-17 for the C port (decision 0036). Facts:
+`docs/research/side-channels.md`.
 
 ## Context
 
@@ -19,8 +20,8 @@ subcommand:
    fill and window, cost, lines, rate limits, cache hit ratio, model.
    Switch `--statusline=always|chain-only`, default `always` (decision
    0020).
-2. Command hooks, `python3 -I -S app/relay/hook.py ROOT`, which post the
-   event's JSON to the tab's receiver, a Unix socket in the tab's dir
+2. Command hooks, `skinned-relay hook ROOT` (`src/relay/`), which post
+   the event's JSON to the tab's receiver, a Unix socket in the tab's dir
    found by process ancestry (decision 0030): PreToolUse, PostToolUse,
    PostToolUseFailure, SubagentStart, SubagentStop, UserPromptSubmit,
    Stop, PreCompact, PostCompact, SessionStart, Notification. Each entry
@@ -41,7 +42,7 @@ subcommand:
    (decision 0011). The lines a file holds when the tail starts are
    history: they add to totals and level metrics, never to a rate or
    the event feed. The tail reads them 8 MiB at its start and 8 MiB a
-   tick (250 ms) after, so a large transcript holds the main process
+   tick (250 ms) after, so a large transcript holds the core thread
    for at most two chunks at once (a tick that starts a tail and polls
    it reads two), never the whole file, and lines appended meanwhile
    follow the history. Usage deduplicated by `message.id`: output token
@@ -49,17 +50,20 @@ subcommand:
    statusline is off.
 
 When the user passes their own `--settings`, the app injects nothing,
-runs on pty and `/proc` meters only, and the strip says "meters limited:
---settings given". No hook-fed meter is seeded and a hook payload is
-not taken: `tools.total`, `tools.rate`, `agents.active` and
-`state.busy` read null, never 0. The live check verifies that all eleven hook
-entries load without a settings error on the startup screen.
+runs on the pty and process meters only (decision 0014), and the strip
+says "meters limited: --settings given". No hook-fed meter is seeded
+and a hook payload is not taken: `tools.total`, `tools.rate`,
+`agents.active` and `state.busy` read null, never 0. The JavaScript
+app's live check found all eleven hook entries load without a settings
+error on the startup screen. `tests/agents/claude_settings.c` checks
+the eleven entries the C app writes.
 
 ## Why
 
-A command hook costs one python3 start per event (about 10 ms measured
-2026-10-12) and fails silently, where an HTTP hook with no listener is
-reported in the session on every tool call (decision 0030). The hook
+A command hook costs one process start per event (about 10 ms for
+python3, measured 2026-10-12, the relay before the C port) and fails
+silently, where an HTTP hook with no listener is reported in the
+session on every tool call (decision 0030). The hook
 prints nothing, so nothing reaches the model's context. The three
 channels cover every meter the requirements list that any channel
 carries.

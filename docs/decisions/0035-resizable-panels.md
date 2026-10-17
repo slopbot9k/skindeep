@@ -1,7 +1,7 @@
 # 0035 Resizable panels: a dragged boundary between the terminal and a panel
 
 Status: accepted 2026-10-15 (issue #145, the owner's words "resizable
-panels").
+panels"), revised 2026-10-17 for the C port (decision 0036).
 
 ## Context
 
@@ -38,7 +38,9 @@ and deck's eighteen counters fill its playlist.
   boxes that are apart with the splits at their defaults meet, the
   terminal's among them. A layout that holds there holds at every
   window size, since a smaller window takes back the growth by as much
-  as it shrinks. `app/renderer/splits.js` holds the rule, loaded by the
+  as it shrinks. skinc's validator (`skinc/manifest.c`) and its layout
+  (`skinc/splits.c`) apply the rule, and the runtime the same rule
+  (`src/skin/view.c`), as the JavaScript app's `splits.js` served the
   validator and the page.
 - The window's minimum size stays the one the default rects give
   (decision 0006), so a drag never grows the window or holds it large,
@@ -52,13 +54,15 @@ and deck's eighteen counters fill its playlist.
   makes what stretches follow a size key and moves what does not with
   an edge key.
 - The handle: an 8 px strip just outside the terminal's edge, along its
-  whole length, drawn by the app above the skin and the same width at
-  any scale. It shows a grip at its middle, lights under the pointer
-  and shows the resize cursor. A drag moves the split by the pointer's
+  whole length, drawn by the runtime above the skin (`src/skin/view.c`)
+  and the same width at any scale. It shows a grip at its middle,
+  lights under the pointer and shows the resize cursor. A drag moves
+  the split by the pointer's
   travel in the skin's own pixels, within its range at that window
   size, and the terminal reflows as it moves. A handle whose split the
   window leaves no room to move is hidden.
-- The sizes are kept on release in `settings.json`, under `panels`, by
+- The sizes are kept on release in `<state>/settings.json` (decision
+  0022), under `panels`, by
   the skin's name and the split's id, beside the terminal font size,
   and read at launch. Every window of the skin follows. A skin opened
   by path under a shipped skin's name shares that skin's sizes. A kept
@@ -127,8 +131,9 @@ as far as their labels allow.
 - Splits between two panels, or on the window's edges: the owner's
   boundary is the terminal's, and each panel beside it is reached from
   the terminal's edge.
-- The handle inside the skin's shadow root: scaled with the skin, it is
-  3 px wide at a quarter tile, and the skin's CSS could hide it.
+- The handle as an element of the skin's tree, as inside the JavaScript
+  app's shadow root: scaled with the skin, it is 3 px wide at a quarter
+  tile, and the skin's CSS could hide it.
 - Draggable boundaries between the visualization window's panes: the
   grid is chosen from the tab count each time a tab opens or closes, so
   a dragged size would need a memory per count and per tab, a feature

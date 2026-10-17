@@ -1,7 +1,8 @@
 # 0026 Reopen closed tab and Duplicate tab
 
 Status: accepted 2026-10-12, revised the same day for a
-Codex fork's referenced history, measured on Codex 0.162.1.
+Codex fork's referenced history, measured on Codex 0.162.1, and
+2026-10-17 for the C port (decision 0036).
 
 ## Context
 
@@ -41,7 +42,8 @@ continue a session, `claude --resume <id> --fork-session` and
 - Closed tabs are kept in memory, per window, while the app runs. Each CLI's own picker lists every past session.
 - A launch does not restore the tabs of an earlier window:
   a launch is one new session, as typing `claude` is.
-- No shortcut: Ctrl+Shift+T is New tab (decision 0023).
+- No shortcut: Ctrl+Shift+T, Cmd+T on macOS, is New tab (decision
+  0023).
 - The meters of a reopened or duplicated tab start from the session's
   transcript or rollout, read as history (decisions 0009, 0013). A Codex
   `fork` makes a new thread, so discovery takes its argv id for the

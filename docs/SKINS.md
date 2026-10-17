@@ -1,39 +1,79 @@
 # Writing a skin
 
-Status: current for claude-skins 0.1. This is the whole skin format: a
-skinner needs nothing from the code.
+Status: current for claude-skins 0.1, revised 2026-10-17 for the C
+app's `skinc` (decisions 0036 and 0037). This is the whole skin format:
+a skinner needs nothing from the code.
 
 A skin is a directory of data: one manifest (`skin.json`), one stylesheet,
-images, fonts and, if you like, sounds. It carries no code. The app
-draws the widgets, places them where the manifest says, binds them to
-live metrics, and lets your CSS style them.
+images, fonts and, if you like, sounds. It carries no code. `skinc`, the
+skin compiler, checks it and compiles it into a pack: every state of
+every widget resolved, the parts that never change drawn at 1x and 2x,
+the images, fonts and sounds decoded. The app reads the pack, places the
+widgets where the manifest says, binds them to live metrics, and draws
+them as your CSS styles them.
 
 ## Try it
 
     bin/skinned --skin path/to/myskin -- bash
 
-Any command works in place of `bash`. To see the meters move without a
-real session, run the replay fake, which drives every metric:
+Any command works in place of `bash`. `--skin` takes a path, anything
+with a `/` in it, or the name of a shipped skin. The app compiles the
+skin by running `skinc` and keeps the pack in its cache, under
+`~/.cache/claude-skins/packs/` on Linux and
+`~/Library/Caches/claude-skins/packs/` on macOS. To see the meters move
+without a real session, run the replay fake, which plays a recorded
+session through the real hooks and statusline, then exits:
 
-    bin/skinned --skin path/to/myskin -- scripts/fake/claude
+    bin/skinned --skin path/to/myskin -- tools/fake/claude
 
-The skin's menu button opens the app's menus, and in Skins, Open skin...
-loads a skin folder at runtime, and choosing the current skin again
-reloads it from disk while you edit it. A skin with an error refuses to load and says
-why (see Errors).
+While a skin opened by path is shown, the app looks at its files once a
+second: a change compiles it again and shows it, as a reload does. The
+skin's menu button opens the app's menus, and in Skins, Open skin...
+loads a skin folder at runtime, and choosing a skin opened by path again
+compiles it again from disk. The four shipped skins are compiled into
+`skinned` by `make`, so an edit to `skins/deck/` shows after the next
+build, or in a copy opened by path. A skin with an error refuses to load
+and says why (see Errors).
+
+To check a skin without the app:
+
+    build/release/skinc path/to/myskin
+    build/release/skinc path/to/myskin -o myskin.pack
+
+The first checks the manifest, the stylesheet and every state, and
+prints a summary. The second also decodes the images, fonts and sounds
+and writes the pack. Errors go to stderr, one a line, and `skinc` exits
+with status 1.
 
 ## Layout of a skin directory
 
     myskin/
       skin.json           the manifest, required
       skin.css            the stylesheet named by "stylesheet"
-      images/             PNG, JPEG, GIF, WebP or SVG
-      fonts/<Family>/     font files beside their license file (OFL.txt)
-      sounds/             Ogg, Opus, MP3 or WAV, if the skin has sounds
+      images/             PNG, JPEG or SVG
+      fonts/<Family>/     TrueType files beside their license file (OFL.txt)
+      sounds/             Ogg Vorbis or WAV, if the skin has sounds
 
 Allowed file types: `.json .css .png .jpg .jpeg .gif .webp .svg .ttf .otf
 .woff .woff2 .ogg .opus .mp3 .wav .txt .md`, and license files named
 LICENSE, COPYING, OFL and the like. Any other file, a script above all, makes the skin invalid.
+
+Of those, `skinc` compiles fewer, and refuses a skin whose manifest or
+CSS names another:
+
+- Images: PNG and JPEG (a JPEG turned as its Exif orientation says),
+  and SVG, at most 1 MiB and 65536 points. An image may be at most
+  16384 pixels a side and 2^26 pixels in all. GIF and WebP are not
+  decoded.
+- Fonts: `.ttf` or `.otf` with TrueType outlines (a `glyf` table), at
+  most 64 MiB: no CFF outlines, no collection, no bitmap glyphs, no
+  WOFF. `skinc` walks every table and glyph the app's font reader
+  reads, and the app checks the font again when it loads the pack. A
+  font whose glyph boxes hold only the points on the curve, as DejaVu's
+  do, is refused.
+- Sounds: Ogg Vorbis, or WAV of 8, 16, 24 or 32-bit PCM or 32-bit float,
+  mono or stereo, 8 to 48 kHz, at most 300 s. A stereo sound is mixed
+  down to mono. Opus and MP3 are not decoded.
 
 ## The skin area
 
@@ -58,7 +98,7 @@ it loses columns and rows. The window cannot be narrower than half of
 `minWidth`, nor narrower than where the terminal would fall below 40
 columns of the skin's own font. Its skin area cannot be shorter than
 half of the minimum, nor shorter than where the terminal would fall
-below 10 rows (`app/skins/scale.js`). Draw for `minWidth` and
+below 10 rows (`src/skin/skinpack.c`). Draw for `minWidth` and
 `minHeight` and the skin fits smaller screens with no work of yours.
 
 ## skin.json
@@ -135,8 +175,8 @@ whether it is there.
 | Field | Meaning |
 | --- | --- |
 | `rect` | all four of `left`, `top`, `right`, `bottom`: the terminal stretches with the window |
-| `theme` | xterm.js colours: `foreground` and `background` required (opaque `#rgb` or `#rrggbb`), optional `cursor`, `cursorAccent`, `selectionBackground`, `selectionForeground`, `selectionInactiveBackground`, and the 16 ANSI colours `black` ... `white`, `brightBlack` ... `brightWhite` |
-| `fontFamily` | a family from `fonts`, or DejaVu Sans Mono, the default, which every install has. A skin that names a font only your machine has looks different everywhere else |
+| `theme` | the terminal's colours, as xterm.js names them: `foreground` and `background` required (opaque `#rgb` or `#rrggbb`), optional `cursor`, `cursorAccent`, `selectionBackground`, `selectionForeground`, `selectionInactiveBackground`, and the 16 ANSI colours `black` ... `white`, `brightBlack` ... `brightWhite` |
+| `fontFamily` | a family from `fonts`, or DejaVu Sans Mono, the default, which `skinned` has built in. Any other family gives DejaVu Sans Mono, so a font only your machine has is never used |
 | `fontSize` | 8 to 32, default 14. The user's Terminal font size setting overrides it |
 
 Two rules keep the CLI readable: foreground and background must have a
@@ -189,7 +229,7 @@ so a smaller window draws a grown panel smaller, down to its default,
 and the handle hides while it cannot move. The skin keeps the sizes in
 the user's settings, by your skin's name, and Reset panel sizes in the
 menu returns them to yours. Design `max` at the initial window and
-`min` at the minimum: the validator checks the splits at their `max`
+`min` at the minimum: `skinc` checks the splits at their `max`
 at the initial window and at their `min` at the minimum window, where
 the terminal must keep 40 x 10 cells, an element that follows must
 keep a size, and no two boxes apart at the defaults, the terminal's
@@ -288,9 +328,23 @@ How the shipped skins draw them:
 
 ## Styling with CSS
 
-Your stylesheet loads into a shadow root that holds only your skin, after
-the app's base widget styles, so any rule of yours wins. Relative `url()`
-paths resolve against the stylesheet.
+`skinc` reads your stylesheet after the app's base widget styles, so a
+rule of yours wins over theirs, and applies it to your skin alone.
+Relative `url()` paths resolve against the stylesheet.
+
+`skinc` compiles the CSS that the four shipped skins and the app's
+widget styles use, and refuses the rest with its line, as decision 0037
+lists it. In short: the usual selectors with `:hover`, `:nth-child()`,
+`:not()`, `:is()`, `:where()`, `:has()` and `::before` and `::after`;
+`@keyframes`; custom properties and `var()`; block, flex and grid
+layout; transforms, filters, shadows, gradients, blend modes,
+animations and transitions. Refused, among others: attribute
+selectors, `:root`, `vw`, `vh`, `ch` and `ex`, conic gradients,
+`minmax()` and named grid lines, `attr()`, and vertical margins between
+boxes in block flow. `skinc` works out ahead of time every state an
+element's selectors can reach, from the classes the widgets toggle and
+`:hover`, and refuses an element with more than 10 such inputs or 4096
+states.
 
 Class names you can style:
 
@@ -322,7 +376,9 @@ What does not work, on purpose:
 - `@import` and any `url()` with a scheme (`https:`, `file:`). Only files
   inside the skin, or `data:image/...`.
 - `@font-face`: declare fonts in the manifest's `fonts` instead. Your CSS
-  may also name DejaVu Sans Mono and DejaVu Sans, which every install has.
+  may also name DejaVu Sans Mono and DejaVu Sans, which `skinned` has
+  built in. Any other family the skin does not declare is drawn in
+  DejaVu Sans, and `monospace` in DejaVu Sans Mono.
 - Anything that would escape the skin area. `position: fixed`, huge
   z-indexes and `:host` rules stay inside it, under the strip and the
   terminal.
@@ -404,7 +460,7 @@ does. Declare each file:
 
 | Field | Meaning |
 | --- | --- |
-| `file` | a `.ogg`, `.opus`, `.mp3` or `.wav` file inside the skin, required |
+| `file` | an Ogg Vorbis `.ogg` or a `.wav` file inside the skin, required. `skinc` refuses `.opus` and `.mp3` |
 | `mode` | `loop`: plays without end. `random`: plays once after a wait of `interval` seconds, then waits again, required |
 | `volume` | 0 to 1, default 0.3 |
 | `interval` | for a `random` sound only, required there: `[min, max]` seconds, 1 <= min <= max <= 3600. Each wait is drawn evenly from the range, the first one too |
@@ -430,10 +486,11 @@ products.
 
 ## Errors
 
-A skin that fails validation never loads. At launch the app prints every
+A skin that `skinc` refuses never loads. At launch the app prints every
 error and exits with status 125 before the command starts. From the menu,
-the current skin stays and the menu shows the errors. Each error names the
-file, the field and the fault:
+or when a skin you are editing changes, the current skin stays and the
+menu shows the errors. Each error names the file, the field or the
+stylesheet's line, and the fault:
 
     skins/myskin/skin.json: widgets[3].bind: unknown metric "foo"
     skins/myskin/skin.json: widgets[1].image: "images/knob.png": file not found
@@ -445,5 +502,5 @@ file, the field and the fault:
     skins/myskin/skin.css: line 2: @import is not allowed
     skins/myskin/tool.js: (file): file type not allowed in a skin
 
-The fixtures under `test/fixtures/skins/` show one of each, and
-`npm test` checks the shipped skins.
+The fixtures under `tests/fixtures/skins/` show one of each, and
+`make test` checks them and the shipped skins.

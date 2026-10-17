@@ -3,7 +3,8 @@
 Status: accepted 2026-10-12, the last slice of the agent manager, under
 the maintainer's ruling of 2026-10-12: "i'm imagining this as a thin wrapper
 around claude code so it should have identical functionality as claude
-code (to the extent possible)."
+code (to the extent possible)." Revised 2026-10-17 for the C port
+(decision 0036).
 
 ## Context
 
@@ -20,24 +21,26 @@ token of its own.
   reads it (`git -C <folder> remote get-url origin`). An https remote, or
   an ssh or scp-like one, names its forge on https. A user or password
   in the URL is dropped. A plain http remote is read only on the loopback
-  host, so the live check can run a fake forge. A file path, another
-  scheme, or a path that is not `owner/repo` has no board.
+  host, where the JavaScript app's live check ran a fake forge. A file
+  path, another scheme, or a path that is not `owner/repo` has no board.
 - github.com is read through `gh issue list --repo O/R --state all
   --json createdAt,closedAt --limit 500`, with the user's own gh login,
   which gh keeps to itself.
 - Any other host is taken as Gitea: `GET /api/v1/repos/O/R/issues?
   state=all&type=issues&limit=50&page=N` on that host, pages until a
-  short one, at most 10. The token is the password `git credential fill`
-  gives for that host, as git itself would use it. It is sent as an
-  `Authorization`
-  header to that host alone, no redirect is followed, and it is dropped
+  short one, at most 10, each page a run of the `curl` command (decision
+  0036). The token is the password `git credential fill` gives for that
+  host, as git itself would use it. It is sent as an `Authorization`
+  header to that host alone, no redirect is followed, and it is wiped
   after the read: never written to disk, never logged, never sent to the
-  page. `tea` is not used: the API needs nothing more installed.
+  pane. The request, header included, reaches curl on its stdin as a
+  config (`--config -`), never on its command line, where `ps` would show
+  it. `tea` is not used: curl reads the API.
 - Nothing prompts. git and gh run with `GIT_TERMINAL_PROMPT=0`,
   `GH_PROMPT_DISABLED=1`, no `GIT_ASKPASS` or `SSH_ASKPASS`, and
-  `core.askPass` empty. stderr of both is dropped unread. A credential
-  helper that itself asks, such as a locked keyring's unlock dialog, is
-  the helper's, as it would be for git.
+  `core.askPass` empty. stderr of git, gh and curl is dropped unread. A
+  credential helper that itself asks, such as a locked keyring's unlock
+  dialog, is the helper's, as it would be for git.
 - A miss, no remote login, a gh or git error, a timeout or a status
   other than 2xx, shows `no access` in the board column, logged once
   with its reason and the remote, never a token. A host with no login
@@ -45,7 +48,7 @@ token of its own.
 - Each remote is read at most once per 5 minutes, and only while a
   dashboard tab asks, by every session of that remote together, in a
   cache per window that a dashboard opened again keeps.
-- Only counts leave `app/board.js`: per local day of the last 14, today
+- Only counts leave `src/sessions/board.c`: per local day of the last 14, today
   last, the issues open at its end and those closed in it. The dashboard
   draws a board column per row, headed `open / closed`: a
   sparkline of the open issues and `N / M`, open now and closed in the

@@ -1,6 +1,7 @@
 # 0014 CLI-agnostic meters
 
-Status: accepted 2026-10-11.
+Status: accepted 2026-10-11, revised 2026-10-17 for the C port
+(decision 0036).
 
 ## Context
 
@@ -8,10 +9,12 @@ Any CLI, Claude, Codex or a shell, should still drive some meters.
 
 ## Decision
 
-- `proc.cpu_pct`, `proc.mem_mb`: the child's process tree, sampled from
-  `/proc` once a second (utime and stime deltas over the clock tick,
-  RSS sum). Tree from `/proc/<pid>/task/*/children`, falling back to a
-  scan of `/proc/*/stat` parents.
+- `proc.cpu_pct`, `proc.mem_mb`: the child's process tree, sampled once
+  a second (`src/platform/<os>/proctree.c`). On Linux, utime and stime
+  deltas from `/proc/<pid>/stat` over the system's clock tick, the RSS
+  sum from `statm`, the tree from `/proc/<pid>/task/*/children`. On
+  macOS, libproc's total user and system time and resident size of each
+  process, the tree from `proc_listchildpids`.
 - `pty.out_bps`: pty output bytes per second over a 1 s window.
 - `pty.in_kps`: input writes per second (keystrokes and pastes) over
   1 s. The count only, never the content.
@@ -22,14 +25,16 @@ Any CLI, Claude, Codex or a shell, should still drive some meters.
 - Generic writes through a writer source (decision 0011): the two 1 s
   windows are the writer's, and every name above appears once the child
   exists, never before. It holds no timer: the seam's clock (decision
-  0021) polls it every 250 ms, and it samples `/proc` once a second.
+  0021) polls it every 250 ms, and it samples the process tree once a
+  second.
 
 ## Why
 
-These come from the app's own pty and `/proc`, so they need no CLI
-cooperation. Reading `stat` and `statm` only, never `environ` or
-`cmdline` of other processes than the child (decision 0004 reads the
-child's cmdline), keeps credentials out of reach.
+These come from the app's own pty and the process table, so they need
+no CLI cooperation. Reading `stat` and `statm` only on Linux, and
+libproc's task info only on macOS, never `environ` or `cmdline` of
+other processes than the child (decision 0004 reads the child's
+cmdline), keeps credentials out of reach.
 
 ## Rejected
 

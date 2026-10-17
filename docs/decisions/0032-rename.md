@@ -1,6 +1,7 @@
 # 0032 A session's name in its tab
 
-Status: accepted 2026-10-14 (maintainer).
+Status: accepted 2026-10-14 (maintainer), revised 2026-10-17 for the C
+port (decision 0036).
 
 ## Context
 
@@ -36,9 +37,10 @@ had no way to name a tab from the app.
   and the Codex UI shows both the same, so a Codex tab shows whichever
   stands. The adapter reads the index every 5 s, and only when its size
   or mtime changed.
-- A right click on a tab in the strip opens a drop-down of one entry,
-  Rename. Rename puts an input in the tab's place with the shown name:
-  Enter commits, Escape cancels, leaving the field commits. The strip
+- A right click on a tab in the strip, or a Ctrl+click on macOS, opens
+  a drop-down of one entry, Rename. Rename puts an input in the tab's
+  place with the shown name: Enter commits, Escape cancels, leaving the
+  field commits. The strip
   holds its redraw while the drop-down or the input is open, as it does
   during a drag. The strip shows from the second tab (decision 0023),
   so a window of one tab is renamed through the CLI alone. An empty
@@ -59,10 +61,14 @@ had no way to name a tab from the app.
   the app's own: Codex also keeps thread state in sqlite, and which
   store its picker reads is unmeasured, so the index is read and not
   written.
-- The adapter report (decision 0021) gains `title`, the probe each
-  tab's shown `title`, and the live check `scripts/checks/rename.js`
-  drives both parts with the fake agent, which records a typed
-  `/rename NAME` as the real CLI does.
+- The adapter report (decision 0021) gains `title`, and the control
+  socket's probe gives each tab's shown `name`. `tests/app/window.c`
+  renames a tab in the live window, `tests/agents/claude_adapter.c`
+  checks that a rename goes into the transcript and
+  `custom-title.json`, and `tests/agents/claude_core.c` that the line
+  names the session. The JavaScript app's live check typed `/rename
+  NAME` into its fake agent, which recorded it as the real CLI does;
+  the C app's fake agent (`tools/fake/claude`) has no `/rename`.
 
 ## Why
 

@@ -1,6 +1,7 @@
 # 0001 Stack and process model
 
-Status: accepted 2026-10-11.
+Status: accepted 2026-10-11. Superseded by decision 0036 at the C port's
+cutover, 2026-10-17: the text below is the record of the JavaScript app.
 
 ## Context
 

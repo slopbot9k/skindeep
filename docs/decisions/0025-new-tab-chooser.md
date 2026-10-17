@@ -1,7 +1,8 @@
 # 0025 New tab... with another agent, profile or folder
 
 Status: accepted 2026-10-12. The scan of the home directory
-added 2026-10-13 on the maintainer's word.
+added 2026-10-13 on the maintainer's word. Revised 2026-10-17 for the C
+port (decision 0036).
 
 ## Context
 
@@ -13,14 +14,15 @@ layout of config dirs.
 
 ## Decision
 
-- File menu entry **New tab...** opens an app-owned dialog above the
-  skin and the tab strip, under the identity strip, out of reach of skin
-  CSS (decision 0005): the agent (Claude Code or Codex), its profile, the
-  folder, and the command line the tab will run. The tab strip's `+` opens
-  it too. The plain New tab and its shortcut stay as decision 0023
-  has them, a new tab at once. Enter opens, Escape
-  cancels. While the dialog is open the terminal has no focus, the tab
-  chords do nothing and a dropped file is not pasted.
+- File menu entry **New tab...** opens a dialog the app draws
+  (`src/app/chooser.c`) above the skin and the tab strip, under the
+  identity strip, out of reach of skin CSS (decision 0005): the agent
+  (Claude Code or Codex), its profile, the folder, and the command line
+  the tab will run. The tab strip's `+` opens it too. The plain New tab
+  and its shortcut stay as decision 0023 has them, a new tab at once.
+  Enter opens, Escape cancels. While the dialog is open it takes the
+  keys and the pointer: the terminal has no focus and the tab chords do
+  nothing.
 - A profile is a config dir. The tab runs with `CLAUDE_CONFIG_DIR` or
   `CODEX_HOME` set to it, as a user would for the bare CLI (decision
   0003). The default profile, `~/.claude` or `~/.codex`, runs with the
@@ -44,21 +46,25 @@ layout of config dirs.
   (a profile at `~/.accounts/work/.claude` is three), follows no
   symlink, enters no config dir, `.git`, `node_modules` or `.cache`, and
   lists at most 20000 directories, about 130 ms on a home of 5000.
-- **Other profile...** opens a folder picker that shows hidden folders,
-  for a profile the scan misses: one never logged in, one deeper than
-  four levels, one reached through a symlink.
+- **Other profile...** opens a folder picker, for a profile the scan
+  misses: one never logged in, one deeper than four levels, one reached
+  through a symlink. The picker is the system's
+  (`src/platform/<os>/picker.c`): on macOS an NSOpenPanel that shows
+  hidden folders, on Linux zenity, else kdialog, which take no such
+  option, so there the user shows them with the dialog's own toggle.
 - Each profile a tab was opened on, the default excepted, is recorded in
-  a file of its own, `$XDG_STATE_HOME/claude-skins/profiles/<agent>-<hash>`,
-  by write and rename, as the last skins are (decision 0022), so no two
-  windows write one file.
+  a file of its own, `<state>/profiles/<agent>-<hash>` (the state
+  directory of decision 0022), by write and rename, as the last skins
+  are, so no two windows write one file.
 - The folder starts as the active tab's live folder (decision 0023).
   `~` and a relative path are taken as typed in a shell: the home
-  directory, the active tab's folder. A folder picker sits beside it.
+  directory, the active tab's folder. The system's folder picker sits
+  beside it.
 - The command line is shown and editable. For the
   window's own agent it starts as the window's command with the options
   New tab carries (decision 0023), and the dialog names what it does not
   carry. For the other agent it starts as the bare CLI. The line is split
-  into words as a shell splits them, by `app/argv.js`, and no shell runs:
+  into words as a shell splits them, by `src/app/argv.c`, and no shell runs:
   quotes and backslashes work, `~`, `$VAR`, globs and redirection do not.
   A wrapper on PATH (`claude_work`) gets its CLI's adapter (decision
   0021). The command resolves on the tab's PATH, a relative path against

@@ -18,13 +18,15 @@ leaves with drifting psychedelic colors and an infinite zoom-in") and
 then the fern garden (maintainer: "re: fern, get more creative"), and
 2026-10-15 for each tab's visualization in the tab strip (maintainer:
 "visualizations in the tabs"), and 2026-10-15 for the Carbon mode
-(issue #144).
+(issue #144). Revised 2026-10-17 for the C port (decision 0036).
 
 ## Context
 
 A separate window, like Winamp's, animates procedurally from the
 session's event stream, in at least two modes. Butterchurn is MIT, and
-its preset equations compile through `new Function`. The maintainer asked for
+its preset equations compile through `new Function`. The C port runs no
+butterchurn code: `src/viz/milk.c` ports its renderer, and the presets'
+equations are C. The maintainer asked for
 a handful of Winamp's visualizations and for the menu to pick them.
 Nullsoft opened the AVS source under a BSD license in 2005, and the
 MilkDrop 2.25c source in 2013, but that release holds no preset. No
@@ -33,38 +35,44 @@ butterchurn-presets is MIT for its conversion only.
 
 ## Decision
 
-- Window: created with `show: false`, then `showInactive()`, so it never
-  takes focus from the terminal. Opened at launch unless `--no-viz`,
-  toggled from the menu. Title per decision 0004.
+- Window: one that never takes the keyboard, so it never takes focus
+  from the terminal: on macOS a window that never becomes key, on X11
+  `WM_HINTS` input False (`src/app/vizwin.c`). Opened at launch unless
+  `--no-viz`, toggled from the menu. Title per decision 0004.
 - One window, one pane per tab with a session, in strip order: CLI tabs
   and monitor tabs (decision 0027), not the sessions dashboard (decision
   0028). The panes tile the window in equal cells, the column count the
-  one that gives a pane the longest shorter side, by `app/viz/layout.js`,
-  which the main process and the page both load. Each pane shows its
+  one that gives a pane the longest shorter side, by `src/viz/layout.c`,
+  which the feed and the window both use. Each pane shows its
   tab's place in the strip and its mode. With more than one pane the
   active tab's is outlined.
-- Its own preload exposes one receive-only channel of numeric frames,
-  one entry per pane: the tab's id and place, whether it is active, the
-  index of the mode to show, and its rates, levels and event codes from
-  a fixed enum. No strings from the session, no pty input, no IPC send.
+- The feed, `src/app/vizfeed.c` on the core thread, posts the window
+  one numeric frame 30 times a second, one entry per pane: the tab's id
+  and place, whether it is active, the index of the mode to show, and
+  its rates, levels and event codes from a fixed enum. No strings from
+  the session and no pty input. The window sends the feed only a left
+  press, the space bar and its close.
   Every tab's events are drained each frame, so none piles up for a tab
   out of view or while the window is closed.
-- Signal: a synthesiser per pane in the viz renderer builds 1024-sample
+- Signal: a synthesiser per pane in the window (`src/viz/synth.c`)
+  builds 1024-sample
   waveforms each frame from its tab's frame: a base tone whose amplitude follows `pty.out_bps`, a
   noise burst per tool call with a pitch per tool class (read, edit,
   shell, web, agent, other), a sweep on prompt submit and on stop, a low
   drone while idle, brightness from `tokens.out_rate`. Every mode draws
   from it.
-- Modes: seventeen, listed once in `app/viz/modes.js`, which the main process
-  and the page both load, in the order they cycle and the menu lists
+- Modes: seventeen, listed once in `src/viz/modes.c`, which the feed
+  and the window both read, in the order they cycle and the menu lists
   them:
-  - Drift, Rings, Plasma, Star dust and Whirlpool: butterchurn presets
-    the project writes, fed by `render({audioLevels})`. Star dust and
+  - Drift, Rings, Plasma, Star dust and Whirlpool: MilkDrop presets
+    the project wrote for butterchurn. Their equations and shaders are
+    translated by hand into C (`src/viz/milkpresets.c`) and drawn on
+    the CPU by a port of butterchurn 2.6.7's renderer (`src/viz/milk.c`),
+    fed the pane's signal. Star dust and
     Whirlpool recreate the look of two presets by Ryan Geiss from his
     screenshots named cosmic dust and vortex, with none of their
     equations.
-  - Scope: a Canvas2D oscilloscope over spectrum bars, also shown for a
-    butterchurn mode without WebGL2.
+  - Scope: an oscilloscope over spectrum bars.
   - Spectrum analyzer and Fire analyzer: Winamp's main-window analyzer,
     drawn from its look in its normal and fire styles: 19 bars on a
     dotted panel, peak caps that hold and fall.
@@ -73,7 +81,7 @@ butterchurn-presets is MIT for its conversion only.
     examples of the Superscope's built-in list over a fade, and the Dot
     Plane in its default colours.
   - Fern, Go, Zoom out, Gravity, Gravity 3D, Quantum and Carbon: the project's
-    procedural modes, one file each, no image or video. Each reacts to
+    procedural modes, one file each under `src/viz/`, no image or video. Each reacts to
     its pane's events, a prompt, a tool call in its class's colour, a
     stop, a subagent, and calms at idle. Fern: a night garden of fronds,
     one a turn, each rising as a fiddlehead and unrolling as the turn
@@ -96,22 +104,24 @@ butterchurn-presets is MIT for its conversion only.
     jump's front crossing the pane, beside the level diagram and the
     spectrum (see 2026-10-15: Carbon). With the sound output alone,
     which brings no events, a rise of its loudness counts as one.
-- Each pane's mode belongs to the main process. The space bar steps the
-  active tab's pane: the main process reads it from the window's input
-  events, so the page sends nothing. A click steps no mode: it goes to
+- Each pane's mode belongs to the feed. The space bar steps the
+  active tab's pane when the window has the keyboard, and the window
+  posts it to the feed. The window never takes the keyboard (above), so
+  the space bar reaches it only where a window manager gives it the keys
+  anyway. A click steps no mode: it goes to
   the mode, save a click on the pane's drop-down (see 2026-10-15
   below). The menu's Visualization mode flyout
   lists every mode, the active tab's marked, and shows the one picked in
   the active tab's pane, opening the window when it is hidden. Each pick
-  is recorded as the last skin is (decision 0022), one file per window
-  under `$XDG_STATE_HOME/claude-skins/last-viz/`. A new pane starts in
+  is recorded as the last skin is (decision 0022), one file per launch
+  under `<state>/last-viz/`, the state directory of decision 0016. A new pane starts in
   the first mode no other pane shows, counting from the last pick, and a
   launch's first pane in the newest record's mode, else in Drift. The
   modes are not kept per tab across launches.
-- The pointer belongs to the page, which reads it and sends nothing,
-  save a press on a drop-down: the left button's press, moves and release go to the pane under the
-  press, found with `layout.js`, in the pane's canvas pixels, through
-  the renderer's optional `pointer(kind, x, y, down)`. The press holds
+- The pointer belongs to the window, which reads it and sends the feed
+  only a left press, for the drop-downs: the left button's press, moves and release go to the pane under the
+  press, found with `layout.c`, in the pane's points, through
+  the renderer's optional pointer method (`sk_vmode_pointer`). The press holds
   the pointer to its pane until the release. Nothing the pointer does
   changes a mode, the pane layout or the tab, and the keyboard stays
   with the terminal. Each mode answers in its own way:
@@ -139,43 +149,45 @@ butterchurn-presets is MIT for its conversion only.
     surprise.
   - Fern: a click curls the fronds near it, which unroll again, and
     gold spores rise from it.
-  - Every other mode, the five butterchurn presets, Scope, the two
+  - Every other mode, the five MilkDrop presets, Scope, the two
     analyzers, Superscope and Dot plane, has no method of its own: a
     press adds a short tone to the pane's signal, its pitch on the
     bands' scale by the pointer's place across the pane and its
     loudness by its height, again every 60 ms of a drag, so a band
     display rises under the pointer and a drag sweeps it. The tone is
     no event and no beat, and it sounds on every input.
-- A butterchurn pane holds a WebGL2 context, made the first time the
-  pane shows a butterchurn mode and released with the pane. Chromium
-  drops a page's oldest context past about 16, so at most 8 panes hold
-  one, and a ninth pane in a butterchurn mode shows the scope and says
-  so.
-- CSP of the viz window adds `'unsafe-eval'` for butterchurn's preset
-  equations, and `img-src data:` for the two textures butterchurn builds
-  in as data URLs, clouds2 and an empty one. No shipped preset
-  names either, but butterchurn hands clouds2 to any sampler it does not
-  know. Only the app's own preset files are loaded.
+- A MilkDrop pane holds one renderer, made the first time the pane
+  shows a MilkDrop mode and freed with the pane, which blends 1.5 s
+  from one MilkDrop mode to the next. It draws on the CPU, its passes
+  over rows on a pool of up to 8 threads that every pane shares, so no
+  pane count is capped.
+- No preset equation is compiled at run time. The five presets are C,
+  translated by hand from the app's own preset files, and no other
+  preset can be loaded.
 - Input, from the menu's Visualization input flyout: Session (the
   synthesiser alone, the default), Sound output (what the machine plays,
   every pane alike, the session ignored) or Session and sound output
   (added). The pick is recorded as the mode is, under
-  `$XDG_STATE_HOME/claude-skins/last-viz-input/`, and a launch starts on
+  `<state>/last-viz-input/`, and a launch starts on
   the newest record's input.
-- The sound output is the default sink's monitor, recorded by the main
-  process with `parec -d @DEFAULT_MONITOR@`, which PulseAudio and
+- The sound output is the default sink's monitor, recorded by the feed
+  on the core thread with `parec -d @DEFAULT_MONITOR@`, which PulseAudio and
   PipeWire's pulse server both answer, else `pw-record` with
-  `stream.capture.sink`, mono 16-bit at 44.1 kHz. The recorder runs only
+  `stream.capture.sink`, mono 16-bit at 44.1 kHz, each a child read
+  through a pipe. The recorder runs only
   while the window is open on an input that takes the sound output, and
   the app ends it, the pid it started, when either stops. Its newest
   1024 samples are kept in memory and sent as numbers in the frame. No
-  microphone, nothing written to disk, nothing sent anywhere but the viz
-  page. With no recorder, or none that starts, each caption says so and
+  microphone, nothing written to disk, nothing sent anywhere but the
+  window. With no recorder, or none that starts, each caption says so and
   the log names each one's reason.
-- No AudioContext in the visualization window: no stream on the user's
-  audio device from the page. A skin's own sound files may play in the
-  main window (decision 0024), and the sound output input records them
-  too.
+- On macOS no recorder is known (decision 0036: speaker capture is
+  Linux-only at first). The flyout shows the two sound inputs
+  disabled, and a launch whose newest record is one starts on Session.
+- The visualization opens no audio device: its signal is synthesised,
+  and the sound output comes from the recorder. A skin's own sound
+  files play through the app's sound output (decision 0024), and the
+  sound output input records them too.
 
 ### Fern forest
 
@@ -184,27 +196,27 @@ very boring"), and replaced the same day by the fern garden, below.
 
 ## Why
 
-A numeric, receive-only channel keeps eval away from any session text.
-The tab's place, not its label, names a pane, so the channel stays
+A numeric frame keeps session text away from the modes.
+The tab's place, not its label, names a pane, so the frame stays
 numeric. One window keeps decision 0023's one window per app.
-Synthetic levels drive butterchurn without audio hardware. Recording in
-the main process keeps the page receive-only and numeric when it shows
+Synthetic levels drive the MilkDrop renderer without audio hardware. Recording
+on the core thread keeps the frame numeric when the window shows
 the sound output, and a monitor source records what plays, never a
 room. With the mode
-in the main process the menu can mark it and the record keep it, and the
-page still cannot send. The pointer acts on what the page draws, so the
-page reads it, and nothing of it needs to reach the main process. A
+in the feed the menu can mark it and the record keep it. The pointer
+acts on what the window draws, so the window reads it, and only a
+press reaches the feed. A
 click that stepped the mode would take the click from the modes. The
 pointer's tone, for the modes that only draw the signal, makes each of
 them answer with no code of its own, and it is kept out of the events
 so a procedural mode never takes it for one. A flyout keeps the drop-down short: seventeen more
 rows would run past the bottom of a window at its minimum height.
-The procedural modes are Canvas2D, as the Winamp ports are: they need no
-WebGL context, so they never count against the eight, and every one
-draws under swiftshader. Each draws on a canvas backed by the CPU and
-blits it to the pane once a frame: under swiftshader a canvas on the
-GPU rasterizes paths and gradients in software GL, and the zoom mode ran
-at a fifth of the rate there.
+Every mode draws on the CPU. The procedural modes and the Winamp ports
+draw with `src/viz/canvas.c`, the part of Canvas2D the JavaScript modes
+used, each into a picture of its own, blitted to the pane once a frame.
+In the JavaScript app they were Canvas2D on canvases of the CPU, which
+took none of the eight WebGL contexts: under swiftshader a canvas on the
+GPU ran the zoom mode at a fifth of the rate.
 
 ## Rejected
 
@@ -234,35 +246,37 @@ not cycle through the vis options. and the vis window itself should
 have drop down menus in each split screen to switch modes easily".
 
 - Each pane carries a button at its top left naming its mode. A click
-  on it opens a list of every mode, in the order of `modes.js`, the
+  on it opens a list of every mode, in the order of `modes.c`, the
   pane's own marked, laid over the window below the button in as many
   columns as the window's height needs. A click on a row shows that
   mode in that pane alone and is recorded as the menu's pick is. A
   press anywhere else closes the list and reaches no mode, and the
   button closes its own list. One list is open at a time.
-- The channel: the main process reads the presses, as it reads the
-  space bar. `layout.js` gives the button and the rows in CSS pixels
+- The channel: the feed reads the presses, as it reads the
+  space bar. `layout.c` gives the button and the rows in points
   from the pane's place, the mode count and the window's size, with no
-  text measured, and the main process and the page both load it. The
-  main process takes each left `mouseDown` of the window's input events,
-  whose x and y are CSS pixels at any device scale, finds what it hits,
+  text measured, and the feed and the window both use it. The
+  window posts each left press to the feed, in points at any scale,
+  and the feed finds what it hits
   and keeps which pane's list is open. The frame carries that as one
-  number per pane. The page draws the button and the open list, and
+  flag per pane. The window draws the button and the open list, and
   hands no press on a button, or any press while a list is open, to a
-  mode. The page still sends nothing.
-- A butterchurn pane whose WebGL2 context is lost, as every context of
-  the page is when the GPU process exits, drops its butterchurn and its
-  canvas, and the next frame shows its mode on a new context, or on the
-  scope with the reason. Before this, the pane stayed black while its
-  mode stepped through the five butterchurn modes, so stepping seemed
-  to stop part way. The maintainer's launch that ran overnight before
-  the report logged two GPU process exits.
+  mode.
+- In the JavaScript app a butterchurn pane whose WebGL2 context was
+  lost, as every context of the page is when the GPU process exits,
+  dropped its butterchurn and its canvas, and the next frame showed its
+  mode on a new context, or on the scope with the reason. Before this,
+  the pane stayed black while its mode stepped through the five
+  butterchurn modes, so stepping seemed to stop part way. The
+  maintainer's launch that ran overnight before the report logged two
+  GPU process exits. The C renderer draws on the CPU and has no context
+  to lose.
 
 Why: the window never takes focus, and a native `<select>` opens its
-list only in a focused window, so the list is the page's own. Reading
-the presses in the main process keeps the channel receive-only, as the
-space bar did, at the cost of the geometry living in `layout.js` rather
-than in the page's CSS.
+list only in a focused window, so the list is the window's own. Reading
+the presses in the feed keeps the modes and the open list in one place,
+as the space bar does, at the cost of the geometry living in `layout.c`
+rather than in the window's drawing.
 
 Rejected:
 
@@ -278,8 +292,8 @@ first 2d gravity visualizer, but which allows blackholes (schwarzchild
 radii, rotating black holes, etc) and has a thematically consistent,
 distant background of stars".
 
-- Gravity 3D is a mode of its own, after Gravity in `modes.js`, drawn by
-  `app/viz/gravity3d.js` on a canvas of the CPU as the other procedural
+- Gravity 3D is a mode of its own, after Gravity in `modes.c`, drawn by
+  `src/viz/gravity3d.c` on the CPU as the other procedural
   modes are. Its id, `gravity3d`, is the first with a digit, so an id is
   a lowercase letter, then letters or digits. It copies the Gravity
   mode's step, softening and drawing rather than sharing them: in three
@@ -313,7 +327,7 @@ distant background of stars".
   momentum and angular momentum about the hole the hole's, whose spin
   follows, capped at $\chi = 0.95$. A grain of dust weighs 0.004. Two
   holes merge when their horizons touch.
-- Checked by `test/viz-gravity3d.test.js`: $r_+ = r_s$ at rest and
+- Checked by `tests/viz/physics.c`: $r_+ = r_s$ at rest and
   $0.9 r_s$ at $\chi = 0.6$, the least $L$ at $3 r_s$ to within 0.002,
   orbits at 3.3, 4 and 6 $r_s$ started 0.1% slow staying above $3 r_s$
   for 30 periods, orbits at 2.5 and 2.9 $r_s$ started so falling in
@@ -376,14 +390,14 @@ distant background of stars".
   everything falls inward. An output event puffs 16 grains from a body
   that is not a hole. The rates set the clock as in Gravity: an idle
   spell all but stops it, shortens the trails and slows the camera.
-- Pointer: a drag past 5 pixels turns the camera, across about the
+- Pointer: a drag past 5 points turns the camera, across about the
   vertical and up and down in height, which holds for 4 s before the
   camera turns by itself again. A click throws a moon from the point
   under it, on the plane through the centre facing the camera, on a
   circular orbit about the heaviest body in the plane of that body's
-  spin, at least 3.3 $r_s$ out. `scripts/checks/vizpointer.js` drags
-  and clicks it.
-- Frame rate: under swiftshader, three panes of a 720 by 460 window all
+  spin, at least 3.3 $r_s$ out. `tests/viz/modes.c` drags and clicks
+  it, its frame against a golden image.
+- Frame rate, measured on the JavaScript app: under swiftshader, three panes of a 720 by 460 window all
   in one mode, each mode in turn for five rounds and counted as
   `vizmodes.js` counts its sets, ran at a median of 46 frames per second
   in Gravity 3D and 43.5 in Gravity. `vizmodes.js` itself gave 35.5 for
@@ -410,10 +424,10 @@ helpful at determining if an agent has finished something". The test
 of every choice below: a glance at the tab strip tells a working agent
 from a finished one.
 
-- Where: in the tab strip, a canvas 44 by 16 CSS pixels in each tab
+- Where: in the tab strip, a band 44 by 16 points in each tab
   with a session, CLI tabs and monitor tabs, between the unseen mark
-  and the name, the active tab's too. The dashboard's tab has none.
-  When the tabs crowd, the canvas gives up to half its width to the
+  and the name, the active tab's too (`src/app/tabviz.c`). The dashboard's tab has none.
+  When the tabs crowd, the band gives up to half its width to the
   name. The strip shows from the second tab on (decision 0023), so a
   lone tab draws none: no other tab is there to tell it from, and the
   skin's meters and its pane show its state.
@@ -432,20 +446,21 @@ from a finished one.
   command or a Claude session watched from its transcript alone
   (decision 0027), also needs its token rate over 10 s at zero. A
   monitor tab has no terminal of its own, so its events alone count.
-- The numbers: `feed()` in `app/viz.js` drains each tab's events as
-  before, and hands the same numbers, whether the window is open or
-  not, to each main window that shows a strip, on the channel
-  `tab:viz`, each window its own tabs, 30 times a second, with two
-  numbers more: whether the tab lacks a busy state, and its quiet
+- The numbers: the feed (`src/app/vizfeed.c`) drains each tab's events as
+  before, and posts its frame 30 times a second, whether the window is
+  open or not, to the UI thread, which hands it to the window and to
+  the tab strips' bands, with two
+  numbers more per pane: whether the tab lacks a busy state, and its quiet
   seconds. One drain feeds both, so the pane and the tab see the same
-  events. The page eases the levels itself and runs no synthesiser.
+  events. The bands ease the levels themselves and run no synthesiser.
 - The pulsing mark of a background tab at work (decision 0023) is gone:
   the band says the same of every tab. The mark of output not yet seen
   stays, so a finished tab whose result is unread shows both.
-- Cost: the page draws on a canvas backed by the CPU, and redraws
-  every tab at once as a column closes, 8 times a second, since under
-  software GL each new frame of the strip recomposites the window. A
-  done tab whose line has settled is not redrawn. Measured by
+- Cost: a band is drawn anew only as a column closes, 8 times a
+  second, and the strips are drawn again when a band changed. A
+  done tab whose line has settled is not redrawn. The JavaScript app
+  redrew every tab at once as a column closed, since under software GL
+  each new frame of the strip recomposited the window. Measured on it by
   `scripts/checks/tabviz.js cost` against c5d1a70, the commit before,
   six tabs of the fake claude at work, three alternating rounds on a
   host at load average 26 to 40 on 16 cores, under swiftshader, the
@@ -460,21 +475,22 @@ from a finished one.
   | viz window open: its frame rate | 5.5 | 7.3 |
   | main window frame rate | 7.6 | 8.1 |
 
-  The difference is within the rounds' spread but for the main
+  The difference was within the rounds' spread but for the main
   renderer's CPU, about one point of a core more. With the window open
-  both are bound by the GPU process, whose five butterchurn panes run
+  both were bound by the GPU process, whose five butterchurn panes ran
   in software GL.
-- Checked by `scripts/checks/tabviz.js look`: four tabs of the fake
+- Checked in the JavaScript app by `scripts/checks/tabviz.js look`: four tabs of the fake
   claude, two held idle, in deck and phosphor, then at a quarter tile
-  and at eight tabs there. Each held tab shows the flat line alone,
-  each working tab a band, the strip stays 24 px high, and a held tab
-  let go works again.
+  and at eight tabs there. Each held tab showed the flat line alone,
+  each working tab a band, the strip stayed 24 px high, and a held tab
+  let go worked again. `tests/app/tabviz.c` checks the C bands: the
+  columns scroll and events light them, a done tab greys and settles,
+  and the bands match a golden image.
 
 Why: the strip is the one place where every tab shows at once. The
 pane's modes do not survive the size: a fern, a Go board or a wave
-function is a smear in 44 by 16 pixels, butterchurn needs a WebGL
-context, and the main window's terminals already hold theirs (xterm's
-WebGL addon), and a mode per tab would run in the renderer that draws
+function is a smear in 44 by 16 points, a MilkDrop mode is a whole
+renderer, and a mode per tab would run on the UI thread that draws
 the terminal. Motion against a flat line is what the eye catches in a
 strip. The synthesiser's 1024 samples and 48 bands per frame per tab
 are the work that would compete with the terminal, and the band needs
@@ -515,7 +531,7 @@ and the night forest gave it a stage, so the two together were kept.
   constant and by the wind, the rest a coil whose turning per unit
   length grows as $s^{3/2}$ to the tip. The pinnae sit at fixed
   stations of the blade, so they stay put as the rachis opens. A unit
-  test pins the strand: straight when open, its length kept, its
+  test (`tests/viz/rules.c`) pins the strand: straight when open, its length kept, its
   heading turned by $2 \pi T$ for a coil of $T$ turns.
 - Forest: kept as the backdrop, a still forest of the four species
   grown by the chaos game, once per pane size, under mist on the
@@ -533,7 +549,8 @@ and the night forest gave it a stage, so the two together were kept.
   under it.
 - Drawing: lines of light, a dot a pixel, into a buffer of the CPU,
   faded each frame and blitted once over the backdrop, as the forest's
-  points were. Canvas2D strokes of a like garden cost 80 to 110 ms a
+  points were, about 400 by 400 points whatever the pane, stretched to
+  it. Measured on the JavaScript app: Canvas2D strokes of a like garden cost 80 to 110 ms a
   frame in a prototype at 600 by 380. Drawn alone at that size, a
   frame of the garden costs a median 2.9 ms, quantum 2.2, gravity 0.3
   and the fern forest before it 4.6. Frame rate with three panes, the
@@ -566,20 +583,21 @@ comments on #144 of 2026-10-15: the ruling on the photon and a
 spectrum, and the answers on the Phase 2 plan, which replace that
 ruling's starting point by `carbon-photon.md`.
 
-- Carbon is a mode of its own, after Quantum in `modes.js`, drawn by
-  `app/viz/carbon.js` on a canvas of the CPU as the other procedural
-  modes are. Its data is `app/viz/carbon-data.js`, written by
-  `scripts/research/carbon_slim.js` from
-  `docs/research/carbon-atom-data.json`: the 68 levels, all 559 lines,
+- Carbon is a mode of its own, after Quantum in `modes.c`, drawn by
+  `src/viz/carbon.c` on the CPU as the other procedural
+  modes are. Its data is `src/viz/carbon_data.c`, the JavaScript app's
+  slim copy of `docs/research/carbon-atom-data.json` converted to C, its
+  numbers as written there: the 68 levels, all 559 lines,
   the Rydberg ladders, the outer-electron model, the M_L components'
-  subshell occupations and the Bunge 1993 basis. `test/viz-carbon.test.js`
-  rewrites it and fails if the file differs, and checks it against the
-  research data: every energy, $A$ and branching ratio, the Ritz
+  subshell occupations and the Bunge 1993 basis. `tests/viz/physics.c`
+  checks it: each level's $g = 2J + 1$, the Ritz
   wavelengths $10^7/(E_k - E_i)$ against NIST's within $2\times10^{-7}$,
-  each level's branches summing to 1 and $1/\sum A$ its lifetime, every
-  level reaching the ground term by listed decays. It also pins the two
-  clocks, the ensemble's jumps and M_L, the radial samplers, the
-  patterns and a jump's source.
+  each level's branches summing to 1 and $1/\sum A$ its lifetime, the
+  ionization limit, every cascade resting in the ground term. It also
+  pins the two clocks, the radial samplers' mean radii, the patterns,
+  the ground term's thermal populations and a jump's source. The
+  JavaScript app's test also compared every energy, $A$ and branching
+  ratio with the research data, and the ensemble's jumps and M_L.
 - Sources: NIST ASD 5.12 for the levels, lines, $A$ and branching, Haris
   and Kramida 2017 for the ionization limit, Bunge, Barrientos and Bunge
   1993 for the ground orbitals, CIE 1931 and CSS Color 4 for the visible
@@ -590,15 +608,17 @@ ruling's starting point by `carbon-photon.md`.
 - The pane: the atom on the left, the level diagram on the right (below
   in a tall pane), the spectrum along the bottom, the drawn atom's last
   jump as a caption at the top beside the drop-down. An atom under 240
-  pixels a side, as in a split of three panes, is small: a band of two
+  points a side, as in a split of three panes, is small: a band of two
   rows above it holds the jump's caption and the ensemble's, and nothing
   is written over the cloud. Every text is written only where it
   overlaps no text written before it, in this order: the jump's
   caption, the ensemble's, the lit level's name, the arrow's
   wavelength (left to the caption in a small pane), the atom's rows,
   the axis's name and the scale bar, so that a crowded pane drops the
-  last first. The code keeps each part behind a small interface:
-  `Clock`, `Ensemble`, `Cloud`, `Front` and `Warp`.
+  last first. The JavaScript code kept each part behind a small interface:
+  `Clock`, `Ensemble`, `Cloud`, `Front` and `Warp`. `carbon.c` keeps
+  them as sections of one file: the levels, the orbitals, the radiation
+  patterns, the ensemble, the cloud, the fronts and the drawing.
 - One site, many atoms: an ensemble of 160 atoms at one site, so that
   hundreds of photons a second come from a picture of one atom. The pane
   says "one site, 160 atoms: cloud of 1, fronts of all". The cloud, the
@@ -693,16 +713,17 @@ ruling's starting point by `carbon-photon.md`.
   off-scale bin for the ground term's far-infrared lines. A line flashes
   at each detection and keeps a bar that grows as the square root of its
   count.
-- Checked by `scripts/checks/vizcarbon.js`: one pane watched by its
+- Checked in the JavaScript app by `scripts/checks/vizcarbon.js`: one pane watched by its
   probe through the fake session's turns, frames of a source flash,
   visible, ultraviolet and infrared fronts, hundreds of fronts at full
   activity and the spectrum, then the frame rate below. At every frame
-  it captures, at 1200 by 760 and in each Carbon pane of the 720 by 460
-  split, no two texts overlap: the ink box of every text the probe
-  reports, and the drop-down's box. `vizmodes.js`
-  captures Carbon in its phases with the other procedural modes,
-  `vizpointer.js` clicks it.
-- Frame rate, under swiftshader on a loaded host: at full activity,
+  it captured, at 1200 by 760 and in each Carbon pane of the 720 by 460
+  split, no two texts overlapped: the ink box of every text the probe
+  reported, and the drop-down's box. In the C app, `tests/viz/modes.c`
+  draws Carbon on the scripted session at its start, busy at 2x, idle
+  and in a wide pane, and after a click on the level diagram, a click
+  on the atom and a drag, each frame against a golden image.
+- Frame rate, measured on the JavaScript app under swiftshader on a loaded host: at full activity,
   drawn alone on a 400 by 380 canvas with 158 fronts, a frame of Carbon
   costs a median 7.9 ms, Gravity 0.8 and Quantum 2.2. Three panes of a
   720 by 460 window all in one mode, five rounds in turn, ran at a

@@ -1,6 +1,7 @@
 # 0024 Skin sounds
 
-Status: accepted 2026-10-12.
+Status: accepted 2026-10-12, revised 2026-10-17 for the C port
+(decision 0036).
 
 ## Context
 
@@ -13,37 +14,48 @@ validator checks, a player the app owns, and a way to silence them.
 
 - The manifest's optional `sounds`: at most 16 entries `{ file, mode,
   volume?, interval? }`. `file` is a `.ogg`, `.opus`, `.mp3` or `.wav`
-  file inside the skin. `mode` is `loop`, played without end, or
-  `random`, played once after a wait drawn evenly from `interval`, `[min,
+  file inside the skin, by the validator's rule. skinc then refuses
+  `.opus` and `.mp3` as files it cannot compile, so a skin's sounds are
+  Ogg Vorbis or PCM WAVE (decision 0037). `mode` is `loop`, played
+  without end, or `random`, played once after a wait drawn evenly from
+  `interval`, `[min,
   max]` seconds with 1 <= min <= max <= 3600, then waiting again.
   `volume` is 0 to 1, default 0.3. A loop with an interval, an unknown
   field, a missing file or a file of another type is an error, as
   elsewhere in the manifest.
-- The player, `app/renderer/sounds.js`, runs in the main window's page.
-  It plays the current skin's declared files and nothing else, through
-  `skin://` (decision 0005), as HTML media elements, at half the
+- skinc decodes each sound into the pack: mono, a stereo source mixed
+  down, at its own rate of 8 to 48 kHz, at most 300 s, stored as IMA
+  ADPCM (`skinc/media.c`). The app decodes no sound file.
+- The player, `src/audio/sounds.c`, one a window, plays the current
+  skin's declared sounds and nothing else, from its pack, through one
+  mixer for the launch (`src/audio/mixer.c`), at half the
   manifest's volume: the loudest a skin can play is half of full scale,
   the default 0.15. A random sound's first play waits its interval too,
   so no one-shot sounds at launch.
+- The mixer's output is the system's (`src/platform/*/audio.c`): an
+  AudioToolbox AudioQueue on macOS, and on Linux the first of
+  `pw-play`, `paplay` and `aplay` on PATH, a child fed raw samples
+  through a pipe. It opens the first time a sound may play and stops
+  after 3 s of silence. With no device the sounds are silent, with a
+  log line.
 - Only while the skin is current: choosing another skin, or the same
   skin again (a reload), stops every sound and every wait, then starts
   the new skin's.
-- Mute: per window. `--mute` of `bin/skinned` or `SKINNED_MUTE=1` starts
+- Mute: for the launch, every window alike (decision 0023). `--mute` of
+  `skinned` or `SKINNED_MUTE=1` starts
   muted, and the menu's Mute skin sounds and Unmute skin sounds toggle
   it. Muted, nothing plays and nothing waits. Unmuted, the skin's sounds
-  start over. The page starts muted until the main process answers, so a
+  start over. A player starts muted until the app has set it, so a
   muted launch never sounds. The CLI's environment never holds
   `SKINNED_MUTE`.
-- `skin://` serves byte ranges (206) and the scheme is registered with
-  `stream`, so a long loop has a duration and loops. The CSP adds
-  `media-src skin:`.
-- Nothing is captured for the skin's sounds. No microphone, no
-  AudioContext. The visualization's sound output input (decision 0015)
+- A loop plays its decoded samples again from the start, so a sound
+  made to loop loops without a gap.
+- Nothing is captured for the skin's sounds. No microphone. The
+  visualization's sound output input (decision 0015)
   records the default sink's monitor, which carries these sounds too.
-- The live checks (`scripts/drive.js`) pass Chromium's `--mute-audio`
-  and set `PULSE_SERVER` to no server, so a checked skin never reaches
-  the speakers, and `scripts/checks/sounds.js` reads the player's state
-  through `window.skinnedPage().sounds`.
+- The tests of `tests/audio/` play through the null sink of
+  `platform/audio.h`, so nothing they play reaches a speaker, and read
+  each sound's state from the player.
 
 ## Why
 
@@ -58,7 +70,8 @@ covers every skin.
   issue left them optional, and the random plays already make the room.
 - Remembering the mute across launches: `--mute` and `SKINNED_MUTE` say
   it once for every launch.
-- An AudioContext for gapless loops: a media element loops a sound made
-  to loop, with no new audio graph in the page.
+- An AudioContext for gapless loops, in the JavaScript app: a media
+  element looped a sound made to loop, with no new audio graph in the
+  page. The C mixer loops the samples itself.
 - The menu entry only for a skin with sounds: muting before switching to
   such a skin would be impossible.

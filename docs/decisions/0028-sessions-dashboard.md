@@ -4,7 +4,8 @@ Status: accepted 2026-10-12, the second slice of the agent manager,
 under the maintainer's ruling of one window (decision 0023), revised
 the same day for
 the issue board of each row (decision 0029), for a session whose
-history is still being read, and for the rate rule.
+history is still being read, and for the rate rule. Revised 2026-10-17
+for the C port (decision 0036).
 
 ## Context
 
@@ -15,17 +16,18 @@ compactions over time.
 
 ## Decision
 
-- File menu entry **Sessions dashboard**, under Agent sessions, opens one
-  dashboard tab per window, labelled `sessions`. Choosing it again makes
-  that tab active. Like a monitor tab it has no pty and no child, its pid
-  is null, it has no exit status of its own (the app exits with the last
-  CLI tab's), Reopen closed tab does not record it and Duplicate tab is
-  disabled on it.
-- Its pane is app DOM in place of a terminal, at the skin's terminal
-  rect, in the terminal theme's foreground, out of reach of skin CSS
-  (decision 0005). At the top, the sums across sessions: output tokens
-  per minute, tool calls per minute, and cost. Below, one row per session
-  as Agent sessions lists it (label, folder, state) with a sparkline and
+- The Agents menu's entry **Sessions dashboard** (decision 0022), under
+  Agent sessions, opens one dashboard tab per window, labelled
+  `sessions`. Choosing it again makes that tab active. Like a monitor
+  tab it has no pty and no child, its pid is 0, it has no exit status of
+  its own (the app exits with the last CLI tab's), Reopen closed tab
+  does not record it and Duplicate tab is disabled on it.
+- Its pane is drawn by the app in place of a terminal
+  (`src/app/dashview.c`), at the skin's terminal rect, in the terminal
+  theme's foreground, out of reach of the skin (decision 0005). At the
+  top, the sums across sessions: output tokens per minute, tool calls
+  per minute, and cost. Below, one row per session as Agent sessions
+  lists it (label, folder, state) with a sparkline and
   the last value of tool calls, output tokens, cost, context fill and
   compactions. A click on a live row does what the menu's row does: its
   tab made active, else a monitor tab opened.
@@ -54,8 +56,10 @@ compactions over time.
   at 5 s) per meter per session, nothing written to disk. It starts when
   the dashboard opens. A session that ends keeps its row, greyed, for 10
   minutes or until the dashboard is opened again.
-- The page gets numbers and the strings the menu already shows (label,
-  folder, state), as the viz feed gets numbers (decision 0015).
+- The pane gets numbers and the strings the menu already shows (label,
+  folder, state), as the viz feed gets numbers (decision 0015). The core
+  thread samples (`src/app/dashboard.c`, `src/sessions/history.c`), and
+  the UI thread draws what it sends.
 
 ## Why
 

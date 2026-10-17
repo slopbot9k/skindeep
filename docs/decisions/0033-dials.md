@@ -1,7 +1,7 @@
 # 0033 Readouts open dials on the sessions dashboard
 
 Status: accepted 2026-10-14 (the maintainer's words of the same
-day).
+day), revised 2026-10-17 for the C port (decision 0036).
 
 ## Context
 
@@ -31,15 +31,16 @@ dashboard".
   open mark stays while the readout has no data, as it has while the
   dashboard tab is the active one and the skin's meters show nothing.
 - No widget shows the I-beam: `.w` sets `cursor: default` and
-  `user-select: none`, so a widget is a display and never selectable
-  text. The dashboard's own rows show the pointer while live, the
-  arrow otherwise.
-- The mousedown of a click on a widget is swallowed, so the terminal
-  keeps the keyboard.
-- The dial toggle is one IPC call, `dial:toggle`, answered with the
-  dials open. The sessions dashboard's history (app/history.js) keeps
-  one series per dial, null for the ticks before the dial opened and
-  dropped when it closes.
+  `user-select: none` in the app's widget styles (`skinc/appcss.c`),
+  so a widget is a display and never selectable text. The dashboard's
+  own rows show the pointer while live, the arrow otherwise.
+- The press of a click on a widget is the skin's, never the terminal's,
+  so the terminal keeps the keyboard.
+- The dial toggle goes from the window's thread to the core thread,
+  which keeps the dials open and sends them to every window and
+  dashboard (`do_dial` in `src/app/gui.c`). The sessions dashboard's
+  history (`src/sessions/history.c`) keeps one series per dial, null
+  for the ticks before the dial opened and dropped when it closes.
 
 ## Why
 

@@ -1,98 +1,150 @@
 # skindeep design
 
-Status: current, 2026-10-15. User documentation is `README.md`, the skin
-format `docs/SKINS.md`.
+Status: current, 2026-10-17, for the C app of decision 0036. User
+documentation is `README.md`, the skin format `docs/SKINS.md`.
 
 Contents: Goal, Architecture, Decisions.
 
 ## Goal
 
-A Winamp-style skinnable GUI shell for terminal coding agents on Linux.
-`claude-skins` and `codex-skins` open the real, unmodified CLI in a
-skinned window with live animated gauges fed by side channels, and a
-visualization window, in any of four sample skins, one of which plays
-quiet sounds of its place.
+A Winamp-style skinnable GUI shell for terminal coding agents on Linux
+and macOS. `claude-skins` and `codex-skins` open the real, unmodified
+CLI in a skinned window with live animated gauges fed by side channels,
+and a visualization window, in any of four sample skins, one of which
+plays quiet sounds of its place.
 
 ## Architecture
 
-    bin/skinned  (sh: fd 3 = caller stderr, Electron stderr -> log)
-        |
-    Electron main process  (app/main.js)
-        |-- cli.js        options, command resolution, exit codes
-        |-- identity.js   label, title, /proc cmdline for the strip
-        |-- runtime.js    per-pid runtime dir, userData, cleanup, logs
-        |-- tabs.js       the window's tabs: order, the active one, the
-        |                 app's end with the last tab's status
-        |-- profiles.js   the config dirs New tab... offers, found, recorded
-        |-- argv.js       New tab...'s command line split into words
-        |-- sessions.js   the live agent sessions of this user, from /proc,
-        |                 and the transcript or rollout of each
-        |-- monitor.js    a read-only tab of a session started elsewhere
-        |-- dashboard.js  the sessions dashboard's tab: samples every
-        |                 session, history.js keeps the last 60 min
-        |-- board.js      each session's issue board, read with the
-        |                 user's gh login or git's credential helper
-        |-- session.js    one tab's CLI child: adapter order, spawn, one
-        |     |           kill policy, its exit status, its strip state
-        |     `-- pty     node-pty, raw bytes, SIGHUP to the group on close
-        |-- view.js       the main window as the modules see it, the
-        |                 window-gone check once
-        |-- metrics/      per tab: bus (named metrics, null = no data) and its
-        |     |                writer: sources, rates, defaults, reset
-        |     |-- agent.js     the adapter seam: dispatch, one object
-        |     |                at the Session, Generic beside the agent,
-        |     |                the one clock that polls them all,
-        |     |                the options a new tab carries
-        |     |-- carry.js     the option picker each provider's
-        |     |                carry.js table feeds
-        |     |-- generic.js   /proc tree CPU and RSS, pty rates, idle
-        |     |-- plain.js     the adapter of any other CLI
-        |     |-- tail.js      a followed JSONL file, read when polled
-        |     |-- proc.js      the child's process tree
-        |     |-- claude/      hook server (HTTP, 204), settings writer,
-        |     |                statusline receiver, transcript tail, the
-        |     |                session core, the compaction rule
-        |     `-- codex/       rollout discovery and parser
-        |-- skins/        manifest loader and validator, skin:// protocol,
-        |                 the last skin used of each window
-        |
-        |-- main window renderer (app/renderer/)
-        |     identity strip | tab strip from the second tab, each
-        |     tab's visualization a small Canvas2D trace (tabviz.js) |
-        |     contained skin wrapper > shadow root (panels, widgets) |
-        |     one xterm.js pane per tab at the manifest insets, its
-        |     edges moved by the skin's splits, a handle on each |
-        |     the skin's menu button > DOM drop-down, a bar of four
-        |     menus: File (tabs, settings, housekeeping), Agents,
-        |     Skins, Visualization (viz toggle, modes, input, mute) |
-        |     New tab... dialog |
-        |     the skin's declared sounds (sounds.js)
-        |
-        `-- viz window renderer (app/viz/), one pane per tab
-              receive-only numeric feed, the mode main chose, the
-              sound output's samples when asked (app/viz/sound.js) ->
-              synthesiser -> butterchurn (own presets) or Canvas2D
-              (scope, classic analyzer, AVS ports)
+Three programs, built by `make` from ISO C17 and POSIX:
 
-    claude child  <-- --settings <state>/settings/<hash>.json
-        statusLine: node app/relay/statusline.js <root> <chain>
-                    (runs the profile's own statusline in parallel)
-        hooks:      python3 app/relay/hook.py <root>
+    bin/claude-skins, bin/codex-skins   (sh: exec skinned -- claude|codex)
+    bin/skinned   (sh: exec build/release/skinned)
+        |
+    skinned  (src/main/skinned.c)
+        |-- core thread: one poll() loop (src/core/loop.c) owns every
+        |   file descriptor: the ptys, the hook sockets, the followed
+        |   files, the recorder and opener children, the control socket
+        |     |-- tabs.c       every window's tabs: order, the active one,
+        |     |                the app's end with the last tab's status
+        |     |-- clitab.c     a CLI tab: its Session and agent
+        |     |-- core/session.c  the CLI's fork, exec and pty, one kill
+        |     |                policy, its exit status
+        |     |-- agents/      the adapter seam (agent.c), one clock
+        |     |                polling every part at 250 ms:
+        |     |   |-- claude/  settings writer, hook and statusline
+        |     |   |            receiver on the tab's Unix socket
+        |     |   |            (server.c), transcript tail, session core,
+        |     |   |            the compaction rule, carried options
+        |     |   |-- codex/   rollout discovery and parser, thread names
+        |     |   |-- generic.c  the process tree's CPU and memory, pty
+        |     |   |            rates, idle
+        |     |   `-- plain.c  the adapter of any other CLI
+        |     |-- core/bus.c   per tab: named metrics (null = no data)
+        |     |                and their one writer: sources, rates,
+        |     |                defaults, reset
+        |     |-- sessions/    the live agent sessions of this user, the
+        |     |                profiles New tab... offers, the dashboard's
+        |     |                history, each project's issue board
+        |     |-- monitor.c, dashboard.c, foreign.c, newtab.c
+        |     |                read-only monitor tabs, the dashboard tab,
+        |     |                sessions started elsewhere, New tab...
+        |     |-- skins.c      the shipped packs, a skin opened by path
+        |     |                compiled by a skinc child and cached, the
+        |     |                last skin used, the watch of its files
+        |     `-- vizfeed.c    every tab's numbers and events, 30 a
+        |                      second, the modes, the sound output's
+        |                      recorder
+        |
+        `-- UI thread (on macOS the main thread, under AppKit's run
+            loop): every window, drawn in software and presented
+            (src/app/gui.c)
+              |-- identity strip | tab strip from the second tab, each
+              |   tab's visualization a small band (tabviz.c)
+              |-- the skin: the pack laid out, painted and animated
+              |   (src/skin/view.c), its state tables looked up as the
+              |   metrics and the pointer change, the splits' handles
+              |   and the menu button above it
+              |-- one terminal per tab (src/term/), the active one drawn
+              |   by src/ui/termview.c at the skin's terminal rect
+              |-- the drop-down, a bar of four menus (menu.c), the New
+              |   tab... dialog (chooser.c), the dashboard's pane
+              |   (dashview.c), a tab's rename
+              |-- the skin's declared sounds (src/audio/), one mixer for
+              |   every window
+              `-- viz window (vizwin.c), one pane per tab: the
+                  synthesiser (src/viz/synth.c) -> the MilkDrop modes
+                  (milk.c) or the drawn modes (scope, classic analyzer,
+                  AVS ports, Fern, Go, Zoom out, Gravity, Gravity 3D,
+                  Quantum, Carbon)
+
+    skinned-relay  (src/relay/)
+        hook ROOT                Claude Code's command hooks
+        statusline ROOT CHAIN    its statusLine, which runs the
+                                 profile's own statusline in parallel
         both post to <root>/pids/<pid of the tab's CLI>, found by
         ancestry, a link to the tab's Unix socket
 
-Data flow: each tab's pty bytes go to its xterm.js unchanged. Side
-channels (statusline JSON, command hooks, transcript JSONL, Codex rollout,
-`/proc`) feed the tab's bus. The active tab's bus pushes snapshots at
-10 Hz to the main renderer (widgets). Every tab's numbers and events go
-at 30 Hz to the viz and to the tab strip. Nothing flows back into the pty but the user's
-own keys, pastes and mouse reports.
+    skinc  (skinc/)
+        skinc DIR [-o PACK]      checks a skin, resolves its CSS for
+                                 every state, pre-renders its static
+                                 layers at 1x and 2x, decodes its
+                                 images, fonts and sounds into a pack
+
+    claude child  <-- --settings <state>/settings/<hash>.json
+        statusLine: skinned-relay statusline <root> <chain>
+        hooks:      skinned-relay hook <root>
+
+The platform layers, `src/platform/<os>/`, hold what POSIX leaves to
+each system:
+
+- Windows: on Linux, X11's wire protocol over a socket, with no Xlib
+  (`src/platform/x11/`); Wayland desktops run it under XWayland. On
+  macOS, AppKit and CoreGraphics through the Objective-C runtime.
+- The pty's controlling terminal and modes, the process tree, a
+  process's fds, name, folder and start time (`/proc` on Linux, libproc
+  and sysctl on macOS).
+- Sound output: an AudioQueue on macOS, `pw-play`, `paplay` or `aplay`
+  as a child on Linux. Speaker capture for the visualizer is `parec` or
+  `pw-record` on Linux, and none yet on macOS.
+- The folder picker and the one question asked before a window opens:
+  AppKit on macOS, `zenity` or `kdialog` on Linux.
+
+Beneath them all: `src/gfx/` draws, composites and strokes paths into
+images; `src/text/` reads fonts with stb_truetype, DejaVu Sans and
+DejaVu Sans Mono embedded, the system's fonts for fallback; `src/base/`
+holds JSON, the HTTP/1.1 the hook socket speaks, SHA-256, base64, the
+paths and the log. Vendored single-file libraries live in `third_party/`
+(decision 0017).
+
+Skin packs (decision 0037): `skinc` reads `skin.json` and `skin.css`
+once. It checks the manifest, parses the CSS subset, builds the element
+tree, and computes each element's style in every state its selectors
+can reach. It pre-renders what never changes, and decodes the images to
+QOI, the sounds to IMA ADPCM and keeps the fonts its checker passed. The
+four shipped skins compile during the build and link into `skinned`. A
+skin given by path compiles in a `skinc` child into
+`<cache>/packs/<hash>.pack`. The app loads every pack through one
+loader that checks every byte, and never interprets CSS.
+
+Data flow: each tab's pty bytes go, on the core thread, into its
+terminal unchanged. Side channels (statusline JSON, command hooks,
+transcript JSONL, Codex rollout, the process table) feed the tab's bus.
+The active tab's metrics go to the skin 10 times a second. Every tab's
+numbers and events go 30 times a second to the viz window and to the
+tab strip. Nothing flows back into the pty but the user's own keys,
+pastes and mouse reports.
+
+Directories (decision 0016): state under `$XDG_STATE_HOME/claude-skins`,
+else `~/.local/state/claude-skins` on Linux and
+`~/Library/Application Support/claude-skins` on macOS; cache under
+`~/.cache/claude-skins` or `~/Library/Caches/claude-skins`; the
+runtime root under `$XDG_RUNTIME_DIR`, else `$TMPDIR`.
 
 ## Decisions
 
 | No. | Decision |
 | --- | --- |
-| [0001](decisions/0001-stack.md) | Stack and process model |
+| [0001](decisions/0001-stack.md) | Stack and process model (superseded by 0036) |
 | [0002](decisions/0002-terminal-fidelity.md) | Terminal fidelity |
 | [0003](decisions/0003-launcher.md) | Launcher, commands, exit status, stderr |
 | [0004](decisions/0004-identity.md) | Identity strip and window title |

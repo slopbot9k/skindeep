@@ -2,7 +2,8 @@
 
 Status: accepted 2026-10-11, label rule revised 2026-10-12, and again
 2026-10-12 to follow the dispatched adapter, for tabs (decision 0023),
-and for the home directory written as ~ in the strip.
+and for the home directory written as ~ in the strip, and revised
+2026-10-17 for the C port (decision 0036).
 
 ## Context
 
@@ -20,19 +21,22 @@ that no skin can hide name the wrapped command, for example
   or `.codex`, without a leading dot or a `claude-` or `codex-` prefix.
   `~/.claude-work` and `~/profiles/work/.claude` both give
   `claude [work]`.
-- Window title: `<label> in claude-skins`. `page-title-updated` is
-  prevented. The viz window's title is `visualization: <label> in
+- Window title: `<label> in claude-skins`. A title the CLI sets with
+  OSC 0 or 2 stays in the terminal (`src/term/term.c`) and never reaches
+  the window. The viz window's title is `visualization: <label> in
   claude-skins`.
 - Strip: a fixed-height bar at the top of the main window, outside the
   skin's coordinate space, showing the label, then the live command line
-  of the child read from `/proc/<pid>/cmdline` after exec (so a flag a
-  wrapper script adds is visible, as is the `--settings` the app
-  injects), then the cwd. An unquoted word under the home directory is
-  written with `~`, as in the cwd: the injected settings file lives
-  under `~/.local/state` (decision 0030).
-- The strip is app DOM, a later sibling of the skin's containment wrapper
-  with a higher z-index (decision 0005). No manifest field or CSS rule
-  reaches it.
+  of the child as the kernel keeps it after exec, `/proc/<pid>/cmdline`
+  on Linux and `KERN_PROCARGS2` on macOS (so a flag a wrapper script
+  adds is visible, as is the `--settings` the app injects), then the
+  cwd. An unquoted word under the home directory is written with `~`,
+  as in the cwd: the injected settings file lives under the state
+  directory, `~/.local/state` on Linux (decision 0030).
+- The app draws the strip itself (`src/app/gui.c`), above the skin
+  area, which the skin's paint never leaves (decision 0005). No
+  manifest field or CSS rule reaches it. `src/app/identity.c` derives
+  the label, the title and the command line.
 - Tabs (decision 0023): each tab has its own label by the rule above,
   and tabs with one label add their folder's name in the tab strip. A
   tab cannot be renamed. The strip and the titles follow the active
