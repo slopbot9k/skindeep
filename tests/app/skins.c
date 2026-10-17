@@ -189,6 +189,39 @@ static void test_open_by_path(void)
     sk_skins_free(r);
 }
 
+/* A name the build did not link in is a folder of skins/, as
+ * registry.js took one by name there, compiled as a skin opened by path
+ * is; a name that is none, or "..", is refused as before. */
+static void test_a_name_in_the_skins_folder(void)
+{
+    const char *bin = skinc();
+    if (!bin)
+        return;
+    char *root = sk_path_join(sk_test_tmpdir(), "skins-root"), *made = skin_named("local", "local");
+    char *dir = sk_path_join(root, "local"), *cache = sk_path_join(sk_test_tmpdir(), "cache");
+    CHECK_INT(sk_mkdirs(root, 0700), 0);
+    CHECK_INT(rename(made, dir), 0);
+    sk_skins_opts o = {bin, cache, root, NULL};
+    sk_skins *r = sk_skins_new(&o);
+    sk_buf err = {0};
+    CHECK(sk_skins_start(r, "local", &err));
+    CHECK_STR(sk_buf_cstr(&err), "");
+    CHECK_STR(sk_skins_current_id(r), "local");
+    sk_buf_clear(&err);
+    CHECK(!sk_skins_start(r, "nonesuch", &err));
+    CHECK_STR(sk_buf_cstr(&err), "skins/nonesuch: skin: directory not found\n");
+    sk_buf_clear(&err);
+    CHECK(!sk_skins_start(r, "..", &err));
+    CHECK_STR(sk_buf_cstr(&err), "skins/..: skin: directory not found\n");
+    CHECK_STR(sk_skins_current_id(r), "local");
+    sk_buf_free(&err);
+    sk_skins_free(r);
+    free(root);
+    free(made);
+    free(dir);
+    free(cache);
+}
+
 static void test_records(void)
 {
     sk_skins *r = registry(NULL);
@@ -305,7 +338,7 @@ static void test_sounds(void)
 
 const sk_test sk_suite_skins[] = {
     T(test_shipped_and_default),
-    T(test_open_by_path),
+    T(test_open_by_path), T(test_a_name_in_the_skins_folder),
     T(test_records),
     T(test_remembered),
     T(test_sounds),

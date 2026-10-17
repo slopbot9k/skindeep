@@ -1628,7 +1628,7 @@ static void check_room(checker *k, const sk_json *root, const splits_t *ids)
 
 /* ---- skinc's own refusals ---- */
 
-static const char *const DECODE_IMAGE[] = {".png", ".jpg", ".jpeg", ".gif", ".svg", NULL};
+static const char *const DECODE_IMAGE[] = {".png", ".jpg", ".jpeg", ".svg", NULL};
 static const char *const DECODE_FONT[] = {".ttf", ".otf", NULL};
 static const char *const DECODE_AUDIO[] = {".ogg", ".wav", NULL};
 
@@ -1677,7 +1677,7 @@ static void skinc_checks(checker *k, const sk_json *root)
     static const char *const MI[] = {"image", "hover", "pressed"};
     for (int i = 0; i < 3; i++) {
         char *x = field_of("menu.%s", MI[i]);
-        skinc_file(k, get(m, MI[i]), x, DECODE_IMAGE, "images are PNG, JPEG, GIF or SVG");
+        skinc_file(k, get(m, MI[i]), x, DECODE_IMAGE, "images are PNG, JPEG or SVG");
         free(x);
     }
     const sk_json *widgets = get(root, "widgets");
@@ -1686,7 +1686,7 @@ static void skinc_checks(checker *k, const sk_json *root)
         static const char *const WI[] = {"face", "image"};
         for (int j = 0; j < 2; j++) {
             char *x = field_of("widgets[%zu].%s", i, WI[j]);
-            skinc_file(k, get(w, WI[j]), x, DECODE_IMAGE, "images are PNG, JPEG, GIF or SVG");
+            skinc_file(k, get(w, WI[j]), x, DECODE_IMAGE, "images are PNG, JPEG or SVG");
             free(x);
         }
         static const char *const COUNTS[] = {"ticks", "segments", "frames", "rows"};
