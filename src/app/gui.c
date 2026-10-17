@@ -214,6 +214,12 @@ typedef struct {
     bool term_all; /* the strips and the terminal drawn whole */
     bool term_press; /* a press the terminal took, held until its release */
     bool asking;     /* Close N tabs? is open */
+    /* The hover text under the pointer, as a title attribute showed it,
+     * where the pointer was, in points, and whether it shows yet. */
+    char *tip;
+    double tip_x, tip_y;
+    bool tip_shown;
+    int tip_timer;
     /* The skin in the stage (decision 0037), the timer of its next step,
      * the least size it gave the window, the pointer's shape. */
     sk_skinview *skin;
@@ -2342,6 +2348,9 @@ static gwin *gwin_new(gui *g, int id)
 
 static void gwin_free(gwin *w)
 {
+    if (w->tip_timer)
+        sk_ui_cancel(w->tip_timer);
+    free(w->tip);
     if (w->blink_timer)
         sk_ui_cancel(w->blink_timer);
     if (w->sync_timer)
@@ -3043,9 +3052,12 @@ static bool skin_mouse(gwin *w, const sk_event *ev)
     return e.action != SK_SKIN_NOTHING;
 }
 
-/* The pointer's shape at height y: the skin's where it says one, else
- * the strips' arrow, a link's hand, the terminal's I-beam. */
-static void pointer_shape(gwin *w, double y)
+static sk_dashview *active_dview(gwin *w);
+
+/* The pointer's shape at (x, y): the skin's where it says one, else the
+ * strips' arrow, on the dashboard a live row's hand and the arrow, else
+ * a link's hand or the terminal's I-beam. */
+static void pointer_shape(gwin *w, double x, double y)
 {
     sk_skin_cursor c = w->skin ? sk_skinview_cursor(w->skin) : SK_SKIN_CURSOR_NONE;
     switch (c) {
@@ -3067,10 +3079,16 @@ static void pointer_shape(gwin *w, double y)
     default:
         break;
     }
-    if (y < top_points(w))
+    sk_dashview *dv = y >= top_points(w) ? active_dview(w) : NULL;
+    if (y < top_points(w)) {
         set_cursor(w, SK_CURSOR_ARROW);
-    else
+    } else if (dv) {
+        double ox, oy;
+        term_origin(w, &ox, &oy);
+        set_cursor(w, sk_dashview_hit(dv, x - ox, y - oy) ? SK_CURSOR_POINTER : SK_CURSOR_ARROW);
+    } else {
         set_cursor(w, w->hover_link || w->link_uri ? SK_CURSOR_POINTER : SK_CURSOR_IBEAM);
+    }
 }
 
 /* ---- The visualization (decision 0015) ---- */
@@ -3147,6 +3165,74 @@ static void drop_dviews(gui *g)
     }
 }
 
+/* How long the pointer rests before its hover text shows, as Chromium's
+ * tooltips wait. */
+#define TIP_MS 500
+
+static void on_tip_due(void *ud)
+{
+    gwin *w = ud;
+    w->tip_timer = 0;
+    if (w->tip) {
+        w->tip_shown = true;
+        overlay_frame(w);
+    }
+}
+
+/* The hover text under the pointer at (x, y) points, NULL for none: a
+ * new one shows after TIP_MS, and the one shown goes at once. */
+static void tip_set(gwin *w, const char *text, double x, double y)
+{
+    if (text && w->tip && !strcmp(text, w->tip))
+        return;
+    if (w->tip_timer)
+        sk_ui_cancel(w->tip_timer);
+    w->tip_timer = 0;
+    if (w->tip_shown)
+        overlay_frame(w);
+    w->tip_shown = false;
+    free(w->tip);
+    w->tip = text ? sk_xstrdup(text) : NULL;
+    w->tip_x = x;
+    w->tip_y = y;
+    if (w->tip)
+        w->tip_timer = sk_ui_timer(TIP_MS, 0, on_tip_due, w);
+}
+
+/* The hover text's box, in device pixels: below the pointer, kept on
+ * the frame. */
+#define TIP_PX 12
+#define TIP_PAD_X 6
+#define TIP_PAD_Y 4
+#define TIP_LINE 16
+
+static sk_rect tip_box(gwin *w, const sk_image *f)
+{
+    double s = sk_window_scale(w->win);
+    float tw = sk_measure_text(w->g->sans, SK_STYLE_REGULAR, (float)(TIP_PX * s), w->tip, strlen(w->tip));
+    int bw = SK_MIN((int)ceil(tw + 2 * TIP_PAD_X * s), f->w), bh = (int)ceil((TIP_LINE + 2 * TIP_PAD_Y) * s);
+    int x = (int)lround(w->tip_x * s), y = (int)lround((w->tip_y + 20) * s);
+    if (y + bh > f->h)
+        y = (int)lround((w->tip_y - 4) * s) - bh;
+    x = SK_MAX(0, SK_MIN(x, f->w - bw));
+    y = SK_MAX(0, y);
+    return sk_rect_make(x, y, bw, bh);
+}
+
+static void tip_draw(gwin *w, sk_image *f)
+{
+    double s = sk_window_scale(w->win);
+    sk_rect r = tip_box(w, f);
+    sk_fill_rect(f, r, SK_RGB(0x5a, 0x5a, 0x5a), SK_BLEND_SRC_OVER, NULL);
+    int b = SK_MAX(1, (int)lround(s));
+    sk_fill_rect(f, sk_rect_make(r.x + b, r.y + b, r.w - 2 * b, r.h - 2 * b), SK_RGB(0x1f, 0x1f, 0x1f),
+                 SK_BLEND_SRC_OVER, NULL);
+    float px = (float)(TIP_PX * s), base = sk_baseline_in(w->g->sans, SK_STYLE_REGULAR, px, (float)r.y,
+                                                           (float)r.h);
+    sk_draw_fit(f, w->g->cache, w->g->sans, SK_STYLE_REGULAR, px, (float)(r.x + TIP_PAD_X * s), base,
+                (float)(r.w - 2 * TIP_PAD_X * s), w->tip, SK_RGB(0xe8, 0xe8, 0xe8), false, &r);
+}
+
 /* The pointer on the dashboard's pane: the live row under it lit, a
  * press opening its session, the wheel scrolling it. True when the
  * event was the pane's. */
@@ -3161,8 +3247,15 @@ static bool dash_mouse(gwin *w, const sk_event *ev)
     double ox, oy;
     term_origin(w, &ox, &oy);
     double x = ev->mouse.x - ox, y = ev->mouse.y - oy;
-    if (ev->type == SK_EV_MOUSE_MOVE && sk_dashview_hover(v, x, y))
-        redraw(w);
+    if (ev->type == SK_EV_MOUSE_MOVE) {
+        if (sk_dashview_hover(v, x, y))
+            redraw(w);
+        sk_buf tip = {0};
+        tip_set(w, sk_dashview_title_at(v, x, y, &tip) ? tip.ptr : NULL, ev->mouse.x, ev->mouse.y);
+        sk_buf_free(&tip);
+    } else {
+        tip_set(w, NULL, 0, 0);
+    }
     if (ev->type == SK_EV_MOUSE_DOWN && ev->mouse.button == 1) {
         const char *key = sk_dashview_hit(v, x, y);
         if (key) {
@@ -3433,6 +3526,8 @@ static sk_rect overlay_bounds(gwin *w, const sk_image *f)
         int top = px(w, IDENTITY_H);
         r = sk_rect_union(r, sk_rect_make(0, top, f->w, SK_MAX(0, f->h - top)));
     }
+    if (w->tip_shown && w->tip && active_dview(w))
+        r = sk_rect_union(r, tip_box(w, f));
     return sk_rect_intersect(r, sk_image_bounds(f));
 }
 
@@ -3450,7 +3545,8 @@ static void draw(gwin *w)
     sk_rect dirty[DIRTY_MAX];
     size_t nd = 0;
     bool menu = sk_menu_open(w->menu), chooser = chooser_up(w), popup = sk_rename_popup_open(w->rename);
-    bool editing = sk_rename_editing(w->rename), overlay = menu || chooser || popup;
+    bool editing = sk_rename_editing(w->rename), tip = w->tip_shown && w->tip && active_dview(w);
+    bool overlay = menu || chooser || popup || tip;
     /* Below the drop-downs and the dialog everything is drawn into the
      * window's base, and copied into the frame where it changed and
      * under them, so that one open over the skin asks no whole skin a
@@ -3612,6 +3708,8 @@ static void draw(gwin *w)
             sk_menu_style ms = menu_style(w);
             sk_rename_popup_draw(w->rename, f, &ms);
         }
+        if (tip)
+            tip_draw(w, f);
     }
     /* A name being edited has the input method's candidates. */
     if (editing) {
@@ -4071,11 +4169,11 @@ static void on_mouse(gwin *w, const sk_event *ev)
     /* The skin next, but not while the terminal's selection or a tab's
      * drag holds the pointer. */
     if (!w->selecting && !w->drag_tab && !w->term_press && skin_mouse(w, ev)) {
-        pointer_shape(w, ev->mouse.y);
+        pointer_shape(w, ev->mouse.x, ev->mouse.y);
         return;
     }
     if (ev->type == SK_EV_MOUSE_MOVE)
-        pointer_shape(w, ev->mouse.y);
+        pointer_shape(w, ev->mouse.x, ev->mouse.y);
     sk_term *t = active_term(w);
     double gx, gy;
     grid_point(w, ev->mouse.x, ev->mouse.y, &gx, &gy);
@@ -4088,11 +4186,13 @@ static void on_mouse(gwin *w, const sk_event *ev)
         if (strip_mouse(w, ev))
             return;
     }
-    /* The pointer in the strips leaves the dashboard's row unlit. */
+    /* The pointer in the strips leaves the dashboard's row unlit, and
+     * its hover text gone. */
     if (chrome && ev->type == SK_EV_MOUSE_MOVE) {
         sk_dashview *dv = active_dview(w);
         if (dv && sk_dashview_hover(dv, -1e9, -1e9))
             redraw(w);
+        tip_set(w, NULL, 0, 0);
     }
     if (!t || (!chrome && dash_mouse(w, ev)))
         return;
@@ -4293,6 +4393,7 @@ static void on_event(void *ud, const sk_event *ev)
         redraw(w);
         break;
     case SK_EV_KEY_DOWN:
+        tip_set(w, NULL, 0, 0);
         on_key(w, &ev->key);
         break;
     case SK_EV_MOUSE_DOWN:
@@ -4303,6 +4404,7 @@ static void on_event(void *ud, const sk_event *ev)
             w->term_press = false;
         break;
     case SK_EV_MOUSE_LEAVE: {
+        tip_set(w, NULL, 0, 0);
         if (w->skin) {
             sk_skinview_mouse(w->skin, SK_SKIN_MOUSE_LEAVE, 0, 0, 0);
             skin_frame(w);

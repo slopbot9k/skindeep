@@ -58,6 +58,13 @@ bool sk_dashview_hover(sk_dashview *v, double x, double y);
  * NULL. Valid until the next update. */
 const char *sk_dashview_hit(sk_dashview *v, double x, double y);
 
+/* The hover text at (x, y) points from the area's top-left, as the
+ * title attributes of dashboard.js gave it, into out: a dial's name over
+ * its header, the board's over its header, a row's folder whole over
+ * its folder, and its issues spelled out over its board cell. False,
+ * out empty, where there is none. */
+bool sk_dashview_title_at(sk_dashview *v, double x, double y, sk_buf *out);
+
 /* For the live checks, what state() of dashboard.js gave: null before
  * the first view, else { ticks, dials, rows: [{ key, label, state,
  * ended, points, last, board, boardText }], shownRows: [{ key, ended,
