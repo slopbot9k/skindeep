@@ -65,6 +65,7 @@ struct sk_vizwin {
     double tone;
     bool inside;
     double hx, hy;
+    sk_cursor cursor;
 };
 
 static const char *const SOURCE[] = {"", "sound output", "session and sound output"};
@@ -140,7 +141,8 @@ static bool open_window(sk_vizwin *v)
         free(err);
         return false;
     }
-    sk_window_set_cursor(v->win, SK_CURSOR_ARROW);
+    v->cursor = SK_CURSOR_ARROW;
+    sk_window_set_cursor(v->win, v->cursor);
     sk_window_size(v->win, &v->w, &v->h);
     v->scale = sk_window_scale(v->win);
     v->last_frame = 0;
@@ -485,6 +487,25 @@ static void point(sk_vizwin *v, int kind, double x, double y, uint64_t now)
     }
 }
 
+/* Whether (x, y) is on a button or a row of the open drop-down, whose
+ * cursor is the pointer's. */
+static bool on_control(const sk_vizwin *v, double x, double y)
+{
+    int n = (int)v->panes.len, open_at = open_pane(v);
+    sk_viz_menu m;
+    if (open_at >= 0) {
+        sk_viz_menu_of(sk_viz_pane_rect(open_at, n, v->w, v->h), SK_VIZ_MODES, v->w, v->h, &m);
+        for (int i = 0; i < m.n_items; i++)
+            if (inside(m.items[i], x, y))
+                return true;
+    }
+    int at = sk_viz_pane_at(x, y, n, v->w, v->h);
+    if (at < 0 || v->panes.ptr[at]->shown < 0)
+        return false;
+    sk_viz_menu_of(sk_viz_pane_rect(at, n, v->w, v->h), SK_VIZ_MODES, v->w, v->h, &m);
+    return inside(m.button, x, y);
+}
+
 void sk_vizwin_pointer(sk_vizwin *v, sk_event_type type, double x, double y, int button, uint64_t now)
 {
     if (v->win)
@@ -496,6 +517,10 @@ void sk_vizwin_pointer(sk_vizwin *v, sk_event_type type, double x, double y, int
     v->inside = true;
     v->hx = x;
     v->hy = y;
+    sk_cursor want = on_control(v, x, y) ? SK_CURSOR_POINTER : SK_CURSOR_ARROW;
+    if (v->win && want != v->cursor)
+        sk_window_set_cursor(v->win, want);
+    v->cursor = want;
     if (type == SK_EV_MOUSE_DOWN) {
         if (button != 1)
             return;

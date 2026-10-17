@@ -335,12 +335,9 @@ static void test_four_panes_and_a_drop_down(void)
 
 /* ---- The window ---- */
 
-static int ui_events;
-
-static void count_event(void *ud, const sk_event *ev)
+static void to_window(void *ud, const sk_event *ev)
 {
     sk_vizwin *v = *(sk_vizwin **)ud;
-    ui_events++;
     if (v)
         sk_vizwin_event(v, ev);
 }
@@ -350,7 +347,7 @@ static void test_the_window_never_takes_the_focus(void)
     static sk_vizwin *v;
     v = NULL;
     char *err = NULL;
-    if (!sk_ui_open("skinned-tests", count_event, &v, &err)) {
+    if (!sk_ui_open("skinned-tests", to_window, &v, &err)) {
         fprintf(stderr, "    skipped: %s\n", err ? err : "no display");
         free(err);
         return;

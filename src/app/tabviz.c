@@ -228,8 +228,10 @@ static void render(sk_tabviz *t, band *b, double scale)
     sk_vc_clear(vc, 0);
     b->img_scale = scale;
     b->dirty = false;
-    if (!b->painted)
+    if (!b->painted) {
+        sk_vc_target(vc, &t->none, 1);
         return;
+    }
     double mid = H / 2.0, fade = 1 - 0.75 * b->done;
     for (int x = 0; x < W; x++) {
         double amp = b->amp[x], lit = b->lit[x];
@@ -245,6 +247,8 @@ static void render(sk_tabviz *t, band *b, double scale)
         sk_vc_paint p = sk_vc_solid(sk_vc_rgba(143, 209, 143, b->done));
         sk_vc_fill_rect(vc, 0, mid - 1, W, 2, &p);
     }
+    /* The canvas lets go of the band, which a keep may free. */
+    sk_vc_target(vc, &t->none, 1);
 }
 
 static uint32_t mul(uint32_t x, uint32_t y)
