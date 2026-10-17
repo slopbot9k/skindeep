@@ -9,7 +9,7 @@ entry per chapter, in plain words, with a picture. The latest:
 
 [Chapter 23: Chalk, and a shorter front page](docs/diary/23-chalk-and-readme.md)
 
-Winamp-style skins for Claude Code and Codex on Linux. Your agent runs
+Winamp-style skins for Claude Code and Codex on Linux and macOS. Your agent runs
 as always in a real terminal, while the skin around it shows gauges,
 needles and lamps that move with what the agent is doing, and a second
 window draws a visualizer from it. Its commands are `claude-skins`,
@@ -25,21 +25,24 @@ cover names the running command and its folder.
 
 ## Install
 
-You need Linux with a desktop, `git`, `claude` or `codex` on PATH,
-Node.js 22.12 or newer, `python3`, `make`, `g++`, fontconfig and the
-DejaVu fonts. To draw the visualizer from your speakers, add `parec`
-(`pulseaudio-utils`) or `pw-record` (`pipewire-bin`).
+You need Linux with a desktop (X11, or Wayland through XWayland) or
+macOS, `git`, `claude` or `codex` on PATH, a C compiler and GNU make: on
+macOS, Apple's Command Line Tools. No Node.js, Python or fonts: the
+DejaVu fonts are built in. On Linux, skin sounds play through `pw-play`,
+`paplay` or `aplay`, and to draw the visualizer from your speakers, add
+`parec` (`pulseaudio-utils`) or `pw-record` (`pipewire-bin`).
 
     git clone https://github.com/b-g-goodell/skindeep.git
     cd skindeep
     ./install.sh
 
 If something is missing, the script says how to get it and stops.
-Otherwise it downloads Electron (about 120 MB) and puts `claude-skins`,
-`codex-skins` and `skinned` in `~/.local/bin`, or in `BINDIR` if you
-set it. Run it again after each `git pull`, and `./uninstall.sh`
-removes the commands, as [decision 0018](docs/decisions/0018-install.md)
-explains. Or tell your agent:
+Otherwise it builds `skinned`, `skinned-relay` and `skinc` with make,
+puts `claude-skins`, `codex-skins` and `skinned` in `~/.local/bin`, or
+in `BINDIR` if you set it, and names the optional tools it did not find.
+Run it again after each `git pull`, and `./uninstall.sh` removes the
+commands, as [decision 0018](docs/decisions/0018-install.md) explains.
+Or tell your agent:
 
 > Install skindeep from https://github.com/b-g-goodell/skindeep
 > by its README, running ./install.sh until it succeeds.
@@ -60,10 +63,13 @@ your machine, **Skins** for Open skin... and the skins, and
 A click on a title, or Left and Right, moves between them, and Escape
 closes them.
 
-Ctrl+Shift+T opens a tab, Ctrl+Shift+W closes one and
-Ctrl+Tab moves between them, and you can drag a tab out to give it its
-own window, or right click it to rename it. Ctrl+Shift+C copies,
-Ctrl+Shift+V pastes and Ctrl+click opens a link, while a bare Ctrl+V
+On Linux, Ctrl+Shift+T opens a tab, Ctrl+Shift+W closes one and
+Ctrl+Tab moves between them. Ctrl+Shift+C copies, Ctrl+Shift+V pastes
+and Ctrl+click opens a link, while a bare Ctrl+V goes to the CLI. You
+can drag a tab out to give it its own window, or right click it to
+rename it. On macOS the chords take Cmd: Cmd+T, Cmd+W, Cmd+C,
+Cmd+V and Cmd+click, with Cmd+Shift+] and Cmd+Shift+[ beside Ctrl+Tab,
+and Cmd+Q quits. There every Ctrl key but Ctrl+Tab and Ctrl+Shift+Tab
 goes to the CLI. The [decisions](docs/decisions/) say how each part
 behaves.
 
@@ -72,14 +78,17 @@ behaves.
     skinned [--skin NAME|PATH] [--statusline=always|chain-only] [--no-viz] [--mute] -- COMMAND [ARGS...]
 
 Any command gets CPU, memory and output meters, `claude` and `codex`
-get the rest, and each launch writes a log to
-`~/.local/state/claude-skins/`.
+get the rest, and each launch writes a log, `skinned-<pid>.log`, to
+`~/.local/state/claude-skins/` on Linux and
+`~/Library/Application Support/claude-skins/` on macOS, or to
+`$XDG_STATE_HOME/claude-skins/` where that is set.
 
 ## Where the meters come from
 
 The meters, listed in [decision 0011](docs/decisions/0011-metric-vocabulary.md),
 come from Claude Code's statusline, hooks and transcript, from Codex's
-session file, and for any other command from `/proc` and the terminal.
+session file, and for any other command from the terminal and the
+process table: `/proc` on Linux, libproc on macOS.
 For Claude Code, the app adds `--settings <file>` to the command line,
 and your own statusline still runs. Claude Code hides its shortcuts
 hint under a statusline, so to keep the hint, run
@@ -93,10 +102,11 @@ thumps, tool calls ring and the picture calms when the agent idles.
 With two tabs or more, each tab draws its own small trace of it in the
 tab strip: a moving band while its agent works, a flat green line once
 it is done.
-**Visualization input** in the Visualization menu switches it to what
-your speakers play, and it never records a microphone. Each pane has a
-drop-down at its top left to pick its mode, and space steps through
-them all, six of which [docs/viz-modes.png](docs/viz-modes.png) shows.
+On Linux, **Visualization input** in the Visualization menu switches it
+to what your speakers play, and it never records a microphone. Each
+pane has a drop-down at its top left to pick its mode, as the menu's
+Visualization mode does for the active tab's pane, and
+[docs/viz-modes.png](docs/viz-modes.png) shows six of the modes.
 A click goes to the mode: a drag in Quantum raises a barrier, a click
 in Go plays a stone, and a click on Carbon's level diagram excites the
 atom to that level.
@@ -116,31 +126,37 @@ sizes** in the File menu's Settings brings back its own.
 A plain `claude-skins` opens the skin you used last, and you can mute
 its sounds from the Visualization menu or start muted with
 `skinned --mute` or `SKINNED_MUTE=1`. To make your own, read
-[docs/SKINS.md](docs/SKINS.md), put it under `skins/` or pass its path,
-and try it on the fake agent in the checkout, which moves every meter
-without spending tokens:
+[docs/SKINS.md](docs/SKINS.md), pass its folder with `--skin`, which
+compiles it with `skinc` and compiles it again as you edit it, and try
+it on the fake agent in the checkout, which replays a recorded session
+through the real hooks and statusline without spending tokens:
 
-    skinned --skin ~/my-skin -- scripts/fake/claude
+    skinned --skin ~/my-skin -- tools/fake/claude
 
 ## Known limits
 
-- Electron runs with `--no-sandbox`, since Ubuntu blocks what Chromium's
-  sandbox needs, but the app loads only local content and skins carry
-  no code.
 - Two Codex sessions started in one folder within 2 s may swap meters
   ([decision 0013](docs/decisions/0013-codex-channel.md)).
 - Claude Code's `/context` breakdown has no channel, so the context
   gauge shows cached and uncached tokens instead.
+- On Linux there is no input method yet, so a dead key types nothing
+  and the key after it types its own character. XIM comes later
+  ([decision 0036](docs/decisions/0036-c-port.md)); macOS has its input
+  methods.
+- The visualizer draws from your speakers on Linux only, for now.
 
 ## Development
 
-`npm test` runs the tests, `scripts/checks/` holds live checks that run
-under Xvfb, and `npm run checks -- OUT` runs every one of them that
-needs no real agent, `scripts/fuzz/` holds a fuzz harness, and `scripts/shots.js`
-retakes this page's screenshots with two real prompts. The design is in
-[docs/DESIGN.md](docs/DESIGN.md), how it was built, chapter by chapter,
-in the [dev diary](docs/diary/README.md), and [decision 0019](docs/decisions/0019-tests.md)
-says what the tests cover.
+`make` builds the programs and the tests into `build/release/`,
+`make test` runs the tests, `make debug` runs them under
+AddressSanitizer and UBSan, and `make fuzz-run` fuzzes every parser for
+30 s each. The live checks of the window, in `tests/app/window.c`, drive
+`skinned` through its control socket and run in `make test` wherever
+there is a display. `tools/fake/claude`, a POSIX sh script, stands in
+for Claude Code. The design is in [docs/DESIGN.md](docs/DESIGN.md), how
+it was built, chapter by chapter, in the
+[dev diary](docs/diary/README.md), and
+[decision 0019](docs/decisions/0019-tests.md) says what the tests cover.
 
 ## License
 
