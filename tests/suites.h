@@ -131,4 +131,5 @@
     X(skin_pack)                                                             \
     X(skin_compile)                                                          \
     X(skin_view)                                                             \
+    X(skin_live)                                                             \
     X(skins)
