@@ -6,6 +6,7 @@
  * one they print a skip line. */
 #include "../../src/app/lastskin.h"
 #include "../../src/base/arena.h"
+#include "../../src/base/paths.h"
 #include "../../src/base/json.h"
 #include "../../src/base/strv.h"
 #include "../../src/core/loop.h"
@@ -16,8 +17,10 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <signal.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/un.h>
 #include <sys/wait.h>
 #include <time.h>
@@ -923,6 +926,52 @@ static void test_the_skin(void)
     CHECK_INT(finish(&a, 5000), 128 + SIGHUP);
 }
 
+/* A Claude Code that refuses to resume a session running in the
+ * background, as 2.1.296 does, ends by itself: the tab reads the
+ * refusal off its last screen and opens the session with `claude
+ * attach ID` in its place (decision 0030). */
+static void test_a_refused_background_session_opens_with_attach(void)
+{
+    char *dir = sk_path_join(sk_test_tmpdir(), "fakebin"), *claude = sk_path_join(dir, "claude");
+    CHECK_INT(sk_mkdirs(dir, 0700), 0);
+    FILE *f = fopen(claude, "w");
+    CHECK(f != NULL);
+    if (f) {
+        fputs("#!/bin/sh\n"
+              "for a in \"$@\"; do [ \"$a\" = attach ] && { echo attached; exec cat; }; done\n"
+              "echo '\"Fix it\" is running in the background (5e3a91c0). Run `claude attach 5e3a91c0` to open it,"
+              " or `claude stop 5e3a91c0` first'\n"
+              "exit 1\n",
+              f);
+        fclose(f);
+    }
+    chmod(claude, 0755);
+    app a;
+    const char *cmd[] = {claude, "--resume", "abc", NULL};
+    if (!start(&a, cmd)) {
+        free(dir);
+        free(claude);
+        return;
+    }
+    sk_arena ar;
+    sk_arena_init(&ar, 0);
+    bool attached = false;
+    for (uint64_t until = sk_now_ms() + 8000; sk_now_ms() < until && !attached; sk_test_sleep_ms(100)) {
+        const sk_json *argv = sk_json_get(sk_json_at(sk_json_get(probe(&a, &ar), "tabs"), 0), "argv");
+        sk_str s0 = {0}, s1 = {0}, s2 = {0};
+        attached = len_of(argv) == 3 && sk_json_as_string(sk_json_at(argv, 0), &s0) &&
+                   sk_str_eq_c(s0, claude) && sk_json_as_string(sk_json_at(argv, 1), &s1) &&
+                   sk_str_eq_c(s1, "attach") && sk_json_as_string(sk_json_at(argv, 2), &s2) &&
+                   sk_str_eq_c(s2, "5e3a91c0");
+    }
+    CHECK(attached);
+    sk_arena_free(&ar);
+    ok(&a, "{\"op\":\"hangup\"}");
+    CHECK_INT(finish(&a, 5000), 128 + SIGHUP);
+    free(dir);
+    free(claude);
+}
+
 /* Windows that recorded different skins within 5 s of each other: a
  * launch with no dialog to show takes the newest, forgets the records,
  * and records its own. */
@@ -1055,5 +1104,6 @@ const sk_test sk_suite_window[] = {
     T(test_the_strip_waits_for_a_rename),
     T(test_the_skin),
     T(test_raced_skins),
+    T(test_a_refused_background_session_opens_with_attach),
     {0},
 };

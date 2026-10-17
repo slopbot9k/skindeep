@@ -98,6 +98,9 @@ const char *sk_session_failure(const sk_session *s);
  * the spawn. */
 char *const *sk_session_argv(const sk_session *s);
 const char *sk_session_label(const sk_session *s);
+/* Whether the end came from sk_session_hangup, not from the CLI
+ * exiting by itself. */
+bool sk_session_hung_up(const sk_session *s);
 /* A child still running is killed and reaped first: the app leaves no
  * child behind (decision 0016). The agent is closed, not freed. */
 void sk_session_free(sk_session *s);

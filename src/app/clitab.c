@@ -19,6 +19,8 @@ typedef struct {
     sk_bus *bus;
     sk_agent *agent;
     sk_session *session;
+    /* The terminal's last screen, kept when the CLI ended by itself. */
+    char *last_screen;
 } clitab;
 
 static void on_spawn(void *ud, pid_t pid)
@@ -51,10 +53,14 @@ static void on_tell(void *ud, const char *msg)
         t->c->tell(t->c->ud, msg);
 }
 
-/* The tabs may free this tab, and so t, inside the call. */
+/* The tabs may free this tab, and so t, inside the call. A CLI that
+ * exited by itself leaves its last screen, as in a terminal, read before
+ * the end; a hung-up one does not (app/session.js's finalScreen). */
 static void on_end(void *ud, int status)
 {
     clitab *t = ud;
+    if (t->c->screen && !t->last_screen && sk_session_pid(t->session) > 0 && !sk_session_hung_up(t->session))
+        t->last_screen = t->c->screen(t->c->ud, t->tab);
     sk_tabs_ended(t->c->tabs, t->id, status);
 }
 
@@ -104,11 +110,9 @@ static bool op_rename(void *self, const char *name)
     return sk_agent_rename(((clitab *)self)->agent, name);
 }
 
-/* The final screen is the terminal's, which comes with the window. */
 static const char *op_last_screen(void *self)
 {
-    (void)self;
-    return NULL;
+    return ((clitab *)self)->last_screen;
 }
 
 static void op_free(void *self)
@@ -119,6 +123,7 @@ static void op_free(void *self)
     sk_bus_free(t->bus);
     free(t->dir);
     free(t->note);
+    free(t->last_screen);
     free(t);
 }
 

@@ -615,6 +615,15 @@ static void on_output(void *ud, sk_tab *tab, const char *bytes, size_t n)
     ask_frame(g);
 }
 
+/* The last screen of a tab's terminal as text, as its CLI ends by
+ * itself (decision 0030): the core feeds the terminal, so it holds every
+ * byte the CLI wrote. */
+static char *tab_screen(void *ud, sk_tab *tab)
+{
+    ctab *ct = find(ud, tab->id);
+    return ct && ct->st->term ? sk_term_screen_text(ct->st->term) : NULL;
+}
+
 static void on_spawn(void *ud, sk_tab *tab, pid_t pid)
 {
     (void)ud;
@@ -4790,6 +4799,24 @@ static const char *raced_choice(gui *g, const sk_strv *choices, const char *home
     return choices->ptr[k];
 }
 
+/* text and a newline on stdout, past short writes. */
+static void echo_screen(const char *text)
+{
+    sk_buf b = {0};
+    sk_buf_printf(&b, "%s\n", text);
+    for (size_t done = 0; done < b.len;) {
+        ssize_t n = write(1, b.ptr + done, b.len - done);
+        if (n < 0 && errno == EINTR)
+            continue;
+        if (n <= 0) {
+            sk_log("last screen: %s", n < 0 ? strerror(errno) : "short write");
+            break;
+        }
+        done += (size_t)n;
+    }
+    sk_buf_free(&b);
+}
+
 int sk_gui_run(const sk_options *o, const sk_envp *env, const char *self)
 {
     sk_launch l;
@@ -4909,6 +4936,7 @@ int sk_gui_run(const sk_options *o, const sk_envp *env, const char *self)
     g->cli.statusline = o->statusline;
     g->cli.spawned = on_spawn;
     g->cli.output = on_output;
+    g->cli.screen = tab_screen;
     g->cli.log = log_line;
     g->cli.tell = tell_line;
     g->cli.ud = g;
@@ -5052,6 +5080,13 @@ int sk_gui_run(const sk_options *o, const sk_envp *env, const char *self)
                 sk_loop_post(g->loop, do_hangup_all, g);
             pthread_join(core, NULL);
             status = sk_tabs_done(g->tabs) ? sk_tabs_exit_status(g->tabs) : g->status;
+            /* A window that ends because its last CLI exited by itself
+             * leaves that CLI's last screen in the terminal it was
+             * started from, as the CLI would have left it (decision
+             * 0030). */
+            const char *last = sk_tabs_done(g->tabs) ? sk_tabs_last_screen(g->tabs) : NULL;
+            if (last && isatty(1))
+                echo_screen(last);
         }
     }
     /* The feed reads the tabs' buses, and the tabs' watch agents are the

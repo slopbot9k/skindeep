@@ -603,6 +603,11 @@ sk_session_state sk_session_get_state(const sk_session *s)
     return s->state;
 }
 
+bool sk_session_hung_up(const sk_session *s)
+{
+    return s->hung_up;
+}
+
 pid_t sk_session_pid(const sk_session *s)
 {
     return s->pid;
