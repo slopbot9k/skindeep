@@ -35,9 +35,11 @@ butterchurn-presets is MIT for its conversion only.
 
 ## Decision
 
-- Window: one that never takes the keyboard, so it never takes focus
-  from the terminal: on macOS a window that never becomes key, on X11
-  `WM_HINTS` input False (`src/app/vizwin.c`). Opened at launch unless
+- Window: one that opens without taking the keyboard, so opening it
+  never takes focus from the terminal, as Electron's `showInactive`
+  opened it: on macOS ordered front without becoming key, on X11
+  mapped with `_NET_WM_USER_TIME` 0 (`src/app/vizwin.c`). A click gives
+  it the keyboard, as on any window. Opened at launch unless
   `--no-viz`, toggled from the menu. Title per decision 0004.
 - One window, one pane per tab with a session, in strip order: CLI tabs
   and monitor tabs (decision 0027), not the sessions dashboard (decision
@@ -105,10 +107,8 @@ butterchurn-presets is MIT for its conversion only.
     spectrum (see 2026-10-15: Carbon). With the sound output alone,
     which brings no events, a rise of its loudness counts as one.
 - Each pane's mode belongs to the feed. The space bar steps the
-  active tab's pane when the window has the keyboard, and the window
-  posts it to the feed. The window never takes the keyboard (above), so
-  the space bar reaches it only where a window manager gives it the keys
-  anyway. A click steps no mode: it goes to
+  active tab's pane once a click has given the window the keyboard,
+  and the window posts it to the feed. A click steps no mode: it goes to
   the mode, save a click on the pane's drop-down (see 2026-10-15
   below). The menu's Visualization mode flyout
   lists every mode, the active tab's marked, and shows the one picked in

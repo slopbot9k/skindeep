@@ -78,7 +78,7 @@ behaves.
     skinned [--skin NAME|PATH] [--statusline=always|chain-only] [--no-viz] [--mute] -- COMMAND [ARGS...]
 
 Any command gets CPU, memory and output meters, `claude` and `codex`
-get the rest, and each launch writes a log, `skinned-<pid>.log`, to
+get the rest, and each launch writes a log, `<stamp>-<pid>.log`, to
 `~/.local/state/claude-skins/` on Linux and
 `~/Library/Application Support/claude-skins/` on macOS, or to
 `$XDG_STATE_HOME/claude-skins/` where that is set.
@@ -105,8 +105,9 @@ it is done.
 On Linux, **Visualization input** in the Visualization menu switches it
 to what your speakers play, and it never records a microphone. Each
 pane has a drop-down at its top left to pick its mode, as the menu's
-Visualization mode does for the active tab's pane, and
-[docs/viz-modes.png](docs/viz-modes.png) shows six of the modes.
+Visualization mode does for the active tab's pane, and with the
+window clicked, space steps through them all, six of which
+[docs/viz-modes.png](docs/viz-modes.png) shows.
 A click goes to the mode: a drag in Quantum raises a barrier, a click
 in Go plays a stone, and a click on Carbon's level diagram excites the
 atom to that level.

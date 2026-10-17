@@ -48,7 +48,11 @@ rewrite output.
 - Links: OSC 8 links, and URLs found in the text as xterm.js's web-links
   addon finds them (`src/term/links.c`). Ctrl+click opens one on Linux,
   Cmd+click on macOS, by spawning `xdg-open` or `open` with an argv
-  array, http and https URLs only.
+  array: http, https and file URLs, but never a file URL that names a
+  program, an executable file, an application bundle, a `.desktop`
+  launcher or Terminal settings (`src/app/opener.c`). On macOS `open`
+  would start any of them, from a link whose text may hide where it
+  points.
 
 ## Why
 

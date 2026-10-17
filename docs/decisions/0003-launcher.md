@@ -22,7 +22,7 @@ the user's shell.
   command after `--`, prints the usage and exits 125.
 - User-facing errors (bad skin, missing command) go to the caller's
   stderr, each line starting `skinned: `. The app's own lines go to its
-  log, `<state>/skinned-<pid>.log` (decision 0016). When the caller
+  log, `<state>/<stamp>-<pid>.log` (decision 0016). When the caller
   leaves its stderr open on fd 3, as the JavaScript app's launcher did,
   `skinned` writes the user's errors there instead, and no child
   inherits it.

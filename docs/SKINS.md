@@ -32,7 +32,9 @@ skin's menu button opens the app's menus, and in Skins, Open skin...
 loads a skin folder at runtime, and choosing a skin opened by path again
 compiles it again from disk. The four shipped skins are compiled into
 `skinned` by `make`, so an edit to `skins/deck/` shows after the next
-build, or in a copy opened by path. A skin with an error refuses to load
+build, or in a copy opened by path. Any other folder of `skins/` opens
+by its name, as `--skin myskin`, and is compiled as one opened by path
+is. A skin with an error refuses to load
 and says why (see Errors).
 
 To check a skin without the app:

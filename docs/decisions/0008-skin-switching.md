@@ -16,7 +16,8 @@ in screenshots. A broken skin fails loudly, naming the file and field.
   compiles each into a pack linked into `skinned` (decision 0037).
   `--skin` takes a shipped skin's name, or a path to any skin directory,
   which serves skinners: a value with a `/` is a path, compiled by
-  `skinc`.
+  `skinc`. A name the build did not link in is a folder of `skins/`,
+  opened as a path is, as `registry.js` took any folder there by name.
 - Default skin: `deck`, where no last skin used is recorded (decision
   0022).
 - Identity: a skin's id is its name. A shipped skin's manifest name

@@ -36,8 +36,10 @@ window must end the session the way closing a terminal does.
 - The generated Claude settings live in `<state>/settings/`, kept: a
   session sent to the background outlives the window and starts again
   from them (decision 0030).
-- Log: `<state>/skinned-<pid>.log`, the app's own lines, stamped in UTC
-  (`src/base/log.c`). The newest 10 are kept.
+- Log: `<state>/<stamp>-<pid>.log`, its stamp the launch's local time
+  as `%Y%m%d-%H%M%S`, so the names sort by age; the app's own lines,
+  stamped in UTC (`src/base/log.c`). Each launch keeps the newest 10
+  (`src/app/launch.c`).
 - One kill policy, `src/core/session.c`, for a close of a tab or of the
   main window, SIGINT, SIGTERM or SIGHUP to the app, and an internal
   error: SIGHUP to each child's process group (the recorded pid, a
