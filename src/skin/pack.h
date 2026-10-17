@@ -53,11 +53,18 @@
 /* The loader's limits: a pack beyond any of them is refused. */
 #define SK_PACK_MAX_BYTES (1u << 30)
 #define SK_PACK_MAX_ELEMENTS 65535u
+/* How deep the element tree goes. skinc's trees are a few levels deep;
+ * the view, layout and paint walk it by recursion, on threads whose
+ * stacks are small. */
+#define SK_PACK_MAX_DEPTH 64u
 #define SK_PACK_MAX_INPUTS 10u     /* state inputs of one element */
 #define SK_PACK_MAX_STATES 4096u   /* entries of one state table */
 #define SK_PACK_MAX_TOTAL_STATES 65536u /* entries of every state table */
 #define SK_PACK_MAX_LIST 256u      /* items of one value list */
 #define SK_PACK_MAX_PIXELS (1u << 26)
+/* Every layer's pixels together: the view keeps each one decoded once
+ * drawn. coffee's are 3.3 million; skinc stops pre-rendering at this. */
+#define SK_PACK_MAX_LAYER_PIXELS (1u << 24)
 #define SK_PACK_MAX_SIDE 16384u    /* an image's width or height */
 #define SK_PACK_MAX_LIMITS 8u      /* meters of a limits widget */
 /* A style's number, other than an iteration count, is at most this far

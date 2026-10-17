@@ -332,15 +332,14 @@ static void test_layer_pixels(void)
  * resampled, and an edge the painter would put on a whole pixel lands
  * between two: a thin line or a glyph's stem may then differ by much,
  * in up to 3 pixels in a thousand. */
-static void frame_alike(const char *name, double scale)
+/* How many pixels in a million of sp's frame at scale, the terminal's
+ * left out, lie more than 24 apart drawn with and without layers; the
+ * worst difference in *worst. */
+static long frame_apart(sk_skinpack *sp, double scale, int *worst_out)
 {
-    sk_skinpack *sp = shipped(name);
-    if (!sp)
-        return;
     sk_skin_window w;
     sk_skinpack_window(sp, &w);
     sk_skinview *v = sk_skinview_new(sp, 0);
-    sk_skinpack_unref(sp);
     v->wall_fn = fixed_wall;
     sk_skinview_set_stage(v, 0, SK_VIEW_STRIP, w.width, w.height - SK_VIEW_STRIP, scale);
     const sk_skin_metric m[] = {
@@ -372,11 +371,52 @@ static void frame_alike(const char *name, double scale)
             off += d > 24;
         }
     long ppm = off * 1000000L / ((long)a.w * a.h);
-    if (ppm > (scale == floor(scale) ? 300 : 3000))
-        sk_test_fail(__FILE__, __LINE__, "%s at %gx: %ld pixels more than 24 apart (worst %d)", name, scale, off, worst);
     sk_image_free(&a);
     sk_image_free(&b);
     sk_skinview_free(v);
+    *worst_out = worst;
+    return ppm;
+}
+
+static void frame_alike(const char *name, double scale)
+{
+    sk_skinpack *sp = shipped(name);
+    if (!sp)
+        return;
+    int worst = 0;
+    long ppm = frame_apart(sp, scale, &worst);
+    sk_skinpack_unref(sp);
+    if (ppm > (scale == floor(scale) ? 300 : 3000))
+        sk_test_fail(__FILE__, __LINE__, "%s at %gx: %ld pixels in a million more than 24 apart (worst %d)", name, scale,
+                     ppm, worst);
+}
+
+/* The view draws no layer of a scale below the frame's, which would be
+ * blurred up, and none its subtree no longer fits, as when a box grew
+ * in a state no layer was drawn in: those subtrees paint live. deck at
+ * 2x with its 2x layers made unusable, then at 1x with its 1x ones moved
+ * 10 px off their boxes. */
+static void test_layers_refused_where_drawn(void)
+{
+    for (int moved = 0; moved < 2; moved++) {
+        sk_skinpack *sp = shipped("deck");
+        if (!sp)
+            return;
+        sk_pack_layer *ls = (sk_pack_layer *)sp->pack.layers;
+        for (uint32_t i = 0; i < sp->pack.nlayers; i++) {
+            if (ls[i].scale == 2)
+                ls[i].kind = SK_LAYER_MASK;
+            else if (moved)
+                ls[i].x += 10;
+        }
+        double scale = moved ? 1 : 2;
+        int worst = 0;
+        long ppm = frame_apart(sp, scale, &worst);
+        if (ppm > 300)
+            sk_test_fail(__FILE__, __LINE__, "deck at %gx: %ld pixels in a million more than 24 apart (worst %d)",
+                         scale, ppm, worst);
+        sk_skinpack_unref(sp);
+    }
 }
 
 static void test_frame_alike(void)
@@ -532,6 +572,6 @@ static void test_small_skins(void)
 
 const sk_test sk_suite_skin_layers[] = {
     T(test_coffee_kinds), T(test_deck_kinds),  T(test_library_kinds), T(test_phosphor_kinds), T(test_layer_pixels),
-    T(test_frame_alike),  T(test_kept),        T(test_small_skins),
+    T(test_frame_alike),  T(test_layers_refused_where_drawn), T(test_kept),        T(test_small_skins),
     {0},
 };

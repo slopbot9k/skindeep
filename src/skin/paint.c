@@ -186,6 +186,10 @@ static sk_px sample(const sk_image *src, float u, float v)
 {
     u -= 0.5f;
     v -= 0.5f;
+    /* No pixel of src under it, and no integer: a map scaled far down
+     * sends a pixel's inverse anywhere, NaN or past any int. */
+    if (!(u >= -1 && v >= -1 && u < (float)src->w && v < (float)src->h))
+        return 0;
     float fu = floorf(u), fv = floorf(v);
     int x0 = (int)fu, y0 = (int)fv;
     uint32_t wx = (uint32_t)((u - fu) * 256), wy = (uint32_t)((v - fv) * 256);
@@ -1029,19 +1033,27 @@ static bool whole_pixels(const sk_xform *m, int *x, int *y)
     return true;
 }
 
+/* The layer box i is drawn from, and its mapping to the canvas, when
+ * use_layer will draw it; NULL when the box paints live. */
+static const sk_player *usable_layer(const painter *P, const canvas *cv, uint32_t i, sk_xform *M)
+{
+    const sk_player *L = layer_for(P, cv, i, SK_PART_SUBTREE);
+    if (!L || !L->im || L->im->w <= 0 || L->im->h <= 0 || !layer_map(P, cv, i, L, M))
+        return NULL;
+    return L;
+}
+
 /* Box e and all it holds drawn from its layer, at its opacity and blend
  * and through its own transform, as its group would composite: true
  * when there was a layer to draw. Pixels land one for one where the
  * layer's scale is the canvas's, else resampled. */
 static bool use_layer(painter *P, canvas *cv, uint32_t e)
 {
-    const sk_player *L = layer_for(P, cv, e, SK_PART_SUBTREE);
-    if (!L || !L->im || L->im->w <= 0 || L->im->h <= 0)
+    sk_xform M;
+    const sk_player *L = usable_layer(P, cv, e, &M);
+    if (!L)
         return false;
     const sk_css_style *s = P->nodes[e].style;
-    sk_xform M;
-    if (!layer_map(P, cv, e, L, &M))
-        return false;
     if (!(s->opacity > 0))
         return true;
     uint32_t opacity = (uint32_t)lroundf(clampf(s->opacity) * 255);
@@ -1165,7 +1177,10 @@ static void collect(const painter *P, const canvas *cv, uint32_t root, uint32_t 
             entry e = {c, 0, (uint32_t)out->len};
             sk_vec_push(out, e);
         }
-        if (P->nodes[c].kind != SK_EL_SVG && !layer_for(P, cv, c, SK_PART_SUBTREE))
+        /* A box drawn from its layer holds its positioned descendants;
+         * the flow draws no inline box from one. */
+        sk_xform M;
+        if (P->nodes[c].kind != SK_EL_SVG && (is_inline(P, c) || !usable_layer(P, cv, c, &M)))
             collect(P, cv, root, c, out);
     }
 }

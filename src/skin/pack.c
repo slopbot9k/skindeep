@@ -762,6 +762,7 @@ static bool layers(loader *L)
 {
     uint32_t n = count(L, S_LAYR);
     sk_pack_layer *out = sk_packfmt_fixed(&L->f, n, sizeof *out);
+    uint64_t pixels = 0;
     for (uint32_t i = 0; i < n; i++) {
         at_rec(L, S_LAYR, i);
         const uint8_t *p = rec(L, S_LAYR, i);
@@ -785,6 +786,9 @@ static bool layers(loader *L)
             !finite_at(L, p + 20, "its origin", &y.ox) || !finite_at(L, p + 24, "its origin", &y.oy) ||
             !size_ok(L, y.w, y.h))
             return false;
+        pixels += (uint64_t)y.w * y.h;
+        if (pixels > SK_PACK_MAX_LAYER_PIXELS)
+            return sk_packfmt_fail(&L->f, "the layers hold more than %u pixels", SK_PACK_MAX_LAYER_PIXELS);
         if (fabsf(y.x) > SK_PACK_MAX_FLOAT || fabsf(y.y) > SK_PACK_MAX_FLOAT || fabsf(y.ox) > SK_PACK_MAX_FLOAT ||
             fabsf(y.oy) > SK_PACK_MAX_FLOAT)
             return sk_packfmt_fail(&L->f, "its place %g, %g or origin %g, %g past %g", (double)y.x, (double)y.y,
@@ -827,28 +831,36 @@ static bool tree(loader *L)
     if (rec(L, S_ELEM, 0)[12] != SK_EL_HOST || PARENT(0) != SK_PACK_NONE || NEXT(0) != SK_PACK_NONE)
         return sk_packfmt_fail(&L->f, "the root is not a host without a parent or siblings");
     uint8_t *seen = sk_xcalloc(n / 8 + 1, 1);
-    uint32_t e = 0, reached = 1;
+    uint32_t e = 0, reached = 1, depth = 0;
     seen[0] = 1;
     bool ok = true;
     while (ok) {
-        uint32_t next = FIRST(e), parent = e;
+        /* next: e's first child, else the next sibling of e or of the
+         * nearest ancestor that has one; d: its depth. */
+        uint32_t next = FIRST(e), parent = e, d = depth + 1;
         while (next == SK_PACK_NONE && e != 0) {
             next = NEXT(e);
             parent = PARENT(e);
-            if (next == SK_PACK_NONE)
+            d = depth;
+            if (next == SK_PACK_NONE) {
                 e = parent;
+                depth--;
+            }
         }
         if (next == SK_PACK_NONE)
             break;
         at_rec(L, S_ELEM, next);
         if (seen[next / 8] & (1u << next % 8))
             ok = sk_packfmt_fail(&L->f, "reached twice");
+        else if (d > SK_PACK_MAX_DEPTH)
+            ok = sk_packfmt_fail(&L->f, "%u deep in the tree: at most %u", (unsigned)d, SK_PACK_MAX_DEPTH);
         else if (PARENT(next) != parent)
             ok = sk_packfmt_fail(&L->f, "its parent is %u, not %u, which reaches it", (unsigned)PARENT(next),
                                  (unsigned)parent);
         seen[next / 8] |= (uint8_t)(1u << next % 8);
         reached++;
         e = next;
+        depth = d;
     }
     for (uint32_t i = 0; ok && reached != n && i < n; i++)
         if (!(seen[i / 8] & (1u << i % 8))) {

@@ -111,6 +111,7 @@ typedef struct {
     int rounds;
     sk_wlayers *out;
     sk_layer_summary *summary;
+    uint64_t pixels; /* of the layers put */
 } lpass;
 
 /* ---- Hashing ---- */
@@ -142,8 +143,10 @@ static uint32_t probe_str(void *data, const char *s)
 }
 
 /* Whether a property is the compositor's for a layer's root: opacity,
- * blend, transform and what moves it, z-index, and what paints
- * nothing. */
+ * blend, transform and what moves it, and what paints nothing. Not
+ * z-index: whether the root makes a stacking context decides whether a
+ * descendant of a negative z-index paints below the root's background,
+ * in its picture too. */
 static bool root_free(uint16_t id)
 {
     switch (id) {
@@ -151,7 +154,6 @@ static bool root_free(uint16_t id)
     case SK_PROP_MIX_BLEND_MODE:
     case SK_PROP_TRANSFORM:
     case SK_PROP_TRANSFORM_ORIGIN:
-    case SK_PROP_Z_INDEX:
         return true;
     default:
         break;
@@ -746,6 +748,11 @@ static void put_layer(lpass *L, uint32_t el, uint32_t style, uint8_t kind, uint8
     w.oy = oy;
     w.w = (uint16_t)im->w;
     w.h = (uint16_t)im->h;
+    /* Past the loader's budget the subtree paints live. */
+    uint64_t px = (uint64_t)im->w * (uint64_t)im->h;
+    if (L->pixels + px > SK_PACK_MAX_LAYER_PIXELS)
+        return;
+    L->pixels += px;
     if (slice)
         memcpy(w.slice, slice, sizeof w.slice);
     w.qoi = sk_qoi_encode(im, &w.len);

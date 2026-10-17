@@ -1194,6 +1194,37 @@ static void test_section_checks(void)
 #undef EDIT
 }
 
+/* A tree past SK_PACK_MAX_DEPTH: coffee's elements relinked into one
+ * chain, each the only child of the one before. The view, layout and
+ * paint walk the tree by recursion on small stacks. */
+static void test_tree_depth(void)
+{
+    const sk_embedded_file *coffee = sk_shipped_pack("coffee");
+    CHECK(coffee != NULL);
+    if (!coffee)
+        return;
+    sk_buf b = {0}, x = {0};
+    sk_buf_append(&b, coffee->data, coffee->size);
+    epack e;
+    ep_read(&e, &b);
+    uint32_t n = ep_get(&e, "ELEM")->count;
+    CHECK(n > SK_PACK_MAX_DEPTH + 1);
+    for (uint32_t i = 0; i < n; i++) {
+        uint8_t *r = ep_rec(&e, "ELEM", i);
+        put32_at(r, i ? i - 1 : SK_PACK_NONE);
+        put32_at(r + 4, i + 1 < n ? i + 1 : SK_PACK_NONE);
+        put32_at(r + 8, SK_PACK_NONE);
+    }
+    ep_write(&e, &x);
+    char want[100];
+    snprintf(want, sizeof want, "ELEM %u: %u deep in the tree: at most %u", SK_PACK_MAX_DEPTH + 1,
+             SK_PACK_MAX_DEPTH + 1, SK_PACK_MAX_DEPTH);
+    REFUSED(&x, want);
+    ep_free(&e);
+    sk_buf_free(&x);
+    sk_buf_free(&b);
+}
+
 static void test_style_checks(void)
 {
     sk_buf b = {0}, x = {0};
@@ -1421,6 +1452,11 @@ static void test_layer_checks(void)
          "LAYR 0: a nine-slice for a box of 4 x 4 with no middle");
     EDIT((add_layer(&e, SK_LAYER_STATIC, 1, 0), putf32_at(ep_rec(&e, "LAYR", 0) + 12, 2e6f)),
          "LAYR 0: its place 2e+06, 0 or origin 0, 0 past 1e+06");
+    /* The view keeps every layer it draws decoded: they hold 2^24 pixels
+     * at most, together. */
+    EDIT((add_layer(&e, SK_LAYER_STATIC, 1, 0), add_layer(&e, SK_LAYER_STATIC, 2, 0),
+          put16_at(ep_rec(&e, "LAYR", 1) + 28, 4096), put16_at(ep_rec(&e, "LAYR", 1) + 30, 4096)),
+         "LAYR 1: the layers hold more than 16777216 pixels");
     /* Each element's layers are its own, in order, every one of them
      * some element's, each for a style it takes. */
     EDIT((add_layer(&e, SK_LAYER_STATIC, 1, 0), put32_at(ep_rec(&e, "LAYR", 0), 3)), "ELEM 4: layer 0 is element 3's");
@@ -1698,7 +1734,7 @@ static void test_seeds(void)
 const sk_test sk_suite_skin_pack[] = {
     T(test_style_compare), T(test_coffee),         T(test_deck),          T(test_library),
     T(test_phosphor),      T(test_all_widgets),    T(test_same_bytes),    T(test_shipped),
-    T(test_small),         T(test_header_checks),  T(test_section_checks), T(test_style_checks),
+    T(test_small),         T(test_header_checks),  T(test_section_checks), T(test_tree_depth), T(test_style_checks),
     T(test_media_checks),  T(test_layer_checks),   T(test_layer_fit),     T(test_newer_minor),
     T(test_seeds),
     T(test_writer_refusals),
