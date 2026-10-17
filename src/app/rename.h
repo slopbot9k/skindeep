@@ -3,7 +3,9 @@
  * #tabs .rename. A right click on a tab opens the drop-down at the
  * pointer, Rename alone; Rename puts a text field in the tab's place
  * holding its name, all of it selected; Enter commits, Escape cancels,
- * and a press anywhere else commits. The window places the field and
+ * and what blurs the input commits: Tab, a press anywhere else, the
+ * window losing the focus (the window's to say). The window places the
+ * field and
  * sends the name; the clipboard is the window's, as field.h says.
  *
  * Points from the window's top-left, drawn at the window's scale. UI
@@ -62,9 +64,11 @@ sk_rename_how sk_rename_key(sk_rename *r, const sk_key_event *k, sk_field_key_re
 /* The field's box, x, y, w and h in points, as the window last placed
  * it. A press outside it commits; inside, it places the caret (a double
  * click selects a word, a triple all) and a drag selects; *selected
- * says a selection was made, for X11's PRIMARY. */
+ * says a selection was made, for X11's PRIMARY. On Linux a middle
+ * click places the caret and asks for PRIMARY to be pasted there. */
 void sk_rename_place(sk_rename *r, double x, double y, double w, double h);
-sk_rename_how sk_rename_mouse(sk_rename *r, const sk_event *ev, const sk_menu_style *st, bool *selected);
+sk_rename_how sk_rename_mouse(sk_rename *r, const sk_event *ev, const sk_menu_style *st, bool *selected,
+                              bool *paste_primary);
 /* Draws the field in its box: #000, a 1-point #6fa8dc border with
  * radius 2, 12-point DejaVu Sans Mono in #fff, the selection and the
  * caret, scrolled to keep the caret in view. */

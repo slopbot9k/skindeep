@@ -52,6 +52,7 @@ sk_rename *sk_rename_new(void)
 {
     sk_rename *r = sk_xcalloc(1, sizeof *r);
     sk_field_init(&r->f);
+    r->f.max_chars = 120; /* maxLength */
     return r;
 }
 
@@ -200,29 +201,17 @@ void sk_rename_end(sk_rename *r)
     sk_field_set(&r->f, "");
 }
 
-/* maxLength 120: what passes it is cut at a character. */
-static void cap(sk_field *f)
-{
-    size_t chars = 0, at = 0;
-    while (at < f->text.len && chars < 120) {
-        at = sk_field_next(&f->text, at);
-        chars++;
-    }
-    if (at < f->text.len)
-        sk_field_replace(f, at, f->text.len, NULL, 0);
-}
-
 sk_rename_how sk_rename_key(sk_rename *r, const sk_key_event *k, sk_field_key_result *clip)
 {
     memset(clip, 0, sizeof *clip);
     if (!r->editing)
         return SK_RENAME_GOES_ON;
-    if (k->key == SK_KEY_ENTER || k->key == SK_KEY_KP_ENTER)
+    /* Tab moves the focus out of the input: its blur commits. */
+    if (k->key == SK_KEY_ENTER || k->key == SK_KEY_KP_ENTER || k->key == SK_KEY_TAB)
         return SK_RENAME_COMMIT;
     if (k->key == SK_KEY_ESCAPE)
         return SK_RENAME_CANCEL;
     *clip = sk_field_key(&r->f, k);
-    cap(&r->f);
     return SK_RENAME_GOES_ON;
 }
 
@@ -268,9 +257,10 @@ static size_t offset_at(const sk_rename *r, const sk_menu_style *st, double x)
     return best;
 }
 
-sk_rename_how sk_rename_mouse(sk_rename *r, const sk_event *ev, const sk_menu_style *st, bool *selected)
+sk_rename_how sk_rename_mouse(sk_rename *r, const sk_event *ev, const sk_menu_style *st, bool *selected,
+                              bool *paste_primary)
 {
-    *selected = false;
+    *selected = *paste_primary = false;
     if (!r->editing)
         return SK_RENAME_GOES_ON;
     double x = ev->mouse.x, y = ev->mouse.y;
@@ -281,6 +271,14 @@ sk_rename_how sk_rename_mouse(sk_rename *r, const sk_event *ev, const sk_menu_st
         /* A press elsewhere takes the focus away: the blur commits. */
         if (!inside)
             return SK_RENAME_COMMIT;
+#ifndef __APPLE__
+        /* X11's middle click pastes PRIMARY where it lands. */
+        if (ev->mouse.button == 2) {
+            f->caret = f->anchor = offset_at(r, st, x);
+            *paste_primary = true;
+            return SK_RENAME_GOES_ON;
+        }
+#endif
         if (ev->mouse.button != 1)
             return SK_RENAME_GOES_ON;
         if (ev->mouse.clicks >= 3) {

@@ -792,6 +792,61 @@ static void test_a_tab_renamed(void)
     CHECK_INT(finish(&a, 5000), 128 + SIGHUP);
 }
 
+/* tabs.js holds the strip while a name is edited: the other tab's CLI
+ * ends during the edit, and the field stays where it is until Enter. The
+ * first tab's sh ends by itself; New tab runs a bare sh, which stays. */
+static void test_the_strip_waits_for_a_rename(void)
+{
+    app a;
+    const char *cmd[] = {"sh", "-c", "sleep 3", NULL};
+    if (!start(&a, cmd))
+        return;
+    sk_arena ar;
+    sk_arena_init(&ar, 0);
+    ok(&a, "{\"op\":\"key\",\"key\":\"t\",\"mods\":" APP_MODS "}");
+    const sk_json *p = NULL;
+    for (uint64_t until = sk_now_ms() + 5000; sk_now_ms() < until; sk_test_sleep_ms(50)) {
+        p = probe(&a, &ar);
+        if (len_of(sk_json_dig(p, "window", "tabs", NULL)) == 2)
+            break;
+    }
+    double second = -1, x1 = 0, w1 = 0;
+    sk_json_as_number(sk_json_at(sk_json_dig(p, "window", "tabs", NULL), 1), &second);
+    const sk_json *r = sk_json_dig(p, "window", "tab_rects", NULL);
+    sk_json_as_number(sk_json_at(sk_json_at(r, 1), 0), &x1);
+    sk_json_as_number(sk_json_at(sk_json_at(r, 1), 1), &w1);
+    char req[160];
+    snprintf(req, sizeof req, "{\"op\":\"mouse\",\"kind\":\"down\",\"button\":3,\"x\":%g,\"y\":34}", x1 + w1 / 2);
+    ok(&a, req);
+    snprintf(req, sizeof req, "{\"op\":\"mouse\",\"kind\":\"down\",\"x\":%g,\"y\":%g}", x1 + w1 / 2 + 20, 34.0 + 17);
+    ok(&a, req);
+    ok(&a, "{\"op\":\"type\",\"text\":\"kept\"}");
+    /* The first tab ends; the strip and the field stay. */
+    for (uint64_t until = sk_now_ms() + 8000; sk_now_ms() < until; sk_test_sleep_ms(100)) {
+        p = probe(&a, &ar);
+        if (len_of(sk_json_dig(p, "window", "tabs", NULL)) == 1)
+            break;
+    }
+    CHECK_INT(len_of(sk_json_dig(p, "window", "tabs", NULL)), 1);
+    bool strip = false;
+    sk_json_as_bool(sk_json_dig(p, "window", "strip", NULL), &strip);
+    CHECK(strip);
+    CHECK_INT(num(sk_json_get(p, "rename"), "editing"), second);
+    ok(&a, "{\"op\":\"key\",\"key\":\"Enter\"}");
+    sk_str name = {0};
+    for (uint64_t until = sk_now_ms() + 3000; sk_now_ms() < until; sk_test_sleep_ms(50)) {
+        p = probe(&a, &ar);
+        if (tab_name(p, second, &name) && sk_str_eq_c(name, "kept"))
+            break;
+    }
+    CHECK_MEM(name, "kept");
+    sk_json_as_bool(sk_json_dig(p, "window", "strip", NULL), &strip);
+    CHECK(!strip);
+    sk_arena_free(&ar);
+    ok(&a, "{\"op\":\"hangup\"}");
+    CHECK_INT(finish(&a, 5000), 128 + SIGHUP);
+}
+
 #ifdef __APPLE__
 #define CMD_MODS "[\"super\"]"
 #else
@@ -884,5 +939,6 @@ const sk_test sk_suite_window[] = {
     T(test_the_sessions_dashboard),
     T(test_the_new_tab_chooser),
     T(test_a_tab_renamed),
+    T(test_the_strip_waits_for_a_rename),
     {0},
 };

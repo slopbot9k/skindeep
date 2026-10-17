@@ -23,7 +23,8 @@
 typedef struct {
     sk_buf text;
     size_t caret, anchor;
-    double scroll; /* points the text is scrolled left, the drawer's */
+    double scroll;    /* points the text is scrolled left, the drawer's */
+    size_t max_chars; /* maxLength, in characters; 0: none */
 } sk_field;
 
 void sk_field_init(sk_field *f);
@@ -43,7 +44,7 @@ char *sk_field_selection(const sk_field *f);
 void sk_field_replace(sk_field *f, size_t lo, size_t hi, const char *s, size_t n);
 /* Typed or pasted text in place of the selection. A text input's value
  * holds no line break, so pasted ones are dropped, as Chromium drops
- * them; invalid UTF-8 becomes U+FFFD. */
+ * them; invalid UTF-8 becomes U+FFFD; past max_chars it is cut. */
 void sk_field_insert(sk_field *f, const char *s);
 
 /* The character before and after i, and the words around it, as

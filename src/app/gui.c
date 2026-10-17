@@ -1292,7 +1292,9 @@ static int px(gwin *w, double points)
  * on, then the stage. In points. */
 static bool tabs_shown(gwin *w)
 {
-    return w->snap.n > 1;
+    /* tabs.js holds the strip as it is while a tab's drop-down or a name
+     * being edited is up. */
+    return w->snap.n > 1 || sk_rename_popup_open(w->rename) || sk_rename_editing(w->rename);
 }
 
 static double top_points(gwin *w)
@@ -1461,15 +1463,19 @@ static void ui_snapshot(void *ud)
             continue;
         }
         bool switched = sw->active != w->snap.active;
-        bool strip = (sw->n > 1) != (w->snap.n > 1);
+        bool strip = tabs_shown(w);
         free_snap_win(&w->snap);
         w->snap = *sw;
         sk_window_set_title(w->win, w->snap.title);
-        if (strip || fresh)
-            fit(w);
-        /* A name edited or a drop-down of a tab that left ends. */
-        if (sk_rename_editing(w->rename) && !snap_tab_of(w, sk_rename_tab(w->rename)))
+        /* A name being edited whose tab left ends, the terminal's focus
+         * back as an edit's end gives it. */
+        if (sk_rename_editing(w->rename) && !snap_tab_of(w, sk_rename_tab(w->rename))) {
             sk_rename_end(w->rename);
+            w->ime_x = w->ime_y = -1;
+            focus_term(w);
+        }
+        if (strip != tabs_shown(w) || fresh)
+            fit(w);
         if (switched) {
             sk_term_mouse_reset(&w->mouse);
             w->selecting = false;
@@ -1831,15 +1837,42 @@ static void rename_finish(gwin *w, bool commit)
         m->name[hi - lo] = 0;
         sk_loop_post(w->g->loop, do_rename, m);
     }
+    bool strip = tabs_shown(w);
     sk_rename_end(w->rename);
     w->ime_x = w->ime_y = -1;
     focus_term(w);
+    /* The strip the edit held may go now. */
+    if (strip != tabs_shown(w))
+        fit(w);
     redraw(w);
 }
 
-static void on_rename_paste(void *ud, const char *utf8)
+/* The clipboard answers later, maybe after its window has gone: the
+ * answer finds the window by its id. */
+typedef struct {
+    gui *g;
+    int win;
+    void (*fn)(gwin *w, const char *utf8);
+} paste_req;
+
+static void on_pasted(void *ud, const char *utf8)
 {
-    gwin *w = ud;
+    paste_req *r = ud;
+    gwin *w = gwin_of(r->g, r->win);
+    if (w)
+        r->fn(w, utf8);
+    free(r);
+}
+
+static void ask_clipboard(gwin *w, bool primary, void (*fn)(gwin *w, const char *utf8))
+{
+    paste_req *r = sk_xmalloc(sizeof *r);
+    *r = (paste_req){w->g, w->snap.id, fn};
+    sk_clipboard_get(primary, on_pasted, r);
+}
+
+static void rename_paste(gwin *w, const char *utf8)
+{
     if (!sk_rename_editing(w->rename) || !utf8 || !*utf8)
         return;
     sk_field_insert(sk_rename_field(w->rename), utf8);
@@ -1854,7 +1887,7 @@ static void rename_clip(gwin *w, sk_field_key_result *r)
     free(r->copy);
     r->copy = NULL;
     if (r->paste)
-        sk_clipboard_get(false, on_rename_paste, w);
+        ask_clipboard(w, false, rename_paste);
     if (r->selected) {
         char *s = sk_field_selection(sk_rename_field(w->rename));
         sk_primary_set(s);
@@ -1870,7 +1903,7 @@ static bool rename_mouse(gwin *w, const sk_event *ev)
         if (ev->type == SK_EV_MOUSE_MOVE && sk_rename_popup_hover(w->rename, ev->mouse.x, ev->mouse.y))
             redraw(w);
         if (ev->type == SK_EV_MOUSE_DOWN) {
-            bool rename;
+            bool rename, strip = tabs_shown(w);
             int id;
             bool on = sk_rename_popup_press(w->rename, ev->mouse.x, ev->mouse.y, ev->mouse.button, &rename, &id);
             redraw(w);
@@ -1881,6 +1914,9 @@ static bool rename_mouse(gwin *w, const sk_event *ev)
                 if (term)
                     sk_term_set_focus(term, false);
             }
+            /* The strip the drop-down held may go now. */
+            if (strip != tabs_shown(w))
+                fit(w);
             if (on)
                 return true;
         }
@@ -1888,19 +1924,21 @@ static bool rename_mouse(gwin *w, const sk_event *ev)
     if (!sk_rename_editing(w->rename))
         return false;
     sk_menu_style st = menu_style(w);
-    bool selected = false;
+    bool selected = false, primary = false;
     bool in_strip = tabs_shown(w) && ev->mouse.y >= IDENTITY_H && ev->mouse.y < IDENTITY_H + TABS_H;
     /* A press on the strip keeps the focus in the field, as the page's
      * preventDefault kept it, and does nothing else while it edits. */
     if (ev->type == SK_EV_MOUSE_DOWN && in_strip) {
-        sk_rename_mouse(w->rename, ev, &st, &selected);
+        sk_rename_mouse(w->rename, ev, &st, &selected, &primary);
         if (selected)
             rename_clip(w, &(sk_field_key_result){true, NULL, false, true});
+        if (primary)
+            ask_clipboard(w, true, rename_paste);
         redraw(w);
         return true;
     }
     size_t caret = sk_rename_field(w->rename)->caret;
-    sk_rename_how how = sk_rename_mouse(w->rename, ev, &st, &selected);
+    sk_rename_how how = sk_rename_mouse(w->rename, ev, &st, &selected, &primary);
     if (how == SK_RENAME_COMMIT) {
         rename_finish(w, true);
         return false;
@@ -2365,9 +2403,8 @@ static void copy_selection(gwin *w, bool primary)
     free(text);
 }
 
-static void on_paste(void *ud, const char *utf8)
+static void term_paste(gwin *w, const char *utf8)
 {
-    gwin *w = ud;
     sk_term *t = active_term(w);
     if (!t || !utf8 || !*utf8)
         return;
@@ -2398,7 +2435,7 @@ static bool chord(gwin *w, const sk_key_event *k)
         return true;
     }
     if (k->key == SK_KEY_INSERT && m == SK_MOD_SHIFT) {
-        sk_clipboard_get(false, on_paste, w);
+        ask_clipboard(w, false, term_paste);
         return true;
     }
 #ifdef __APPLE__
@@ -2424,7 +2461,7 @@ static bool chord(gwin *w, const sk_key_event *k)
         copy_selection(w, false);
         return true;
     case 'v':
-        sk_clipboard_get(false, on_paste, w);
+        ask_clipboard(w, false, term_paste);
         return true;
     default:
         return false;
@@ -2670,10 +2707,16 @@ static bool strip_mouse(gwin *w, const sk_event *ev)
         int i = strip_hit(w, ev->mouse.x, ev->mouse.y, &on_close);
         if (i < 0)
             return true;
+        int button = ev->mouse.button;
+#ifdef __APPLE__
+        /* A Ctrl+click is macOS's right click: Chromium sends it as one. */
+        if (button == 1 && ev->mouse.mods & SK_MOD_CTRL)
+            button = 3;
+#endif
         if ((size_t)i == w->snap.n) {
-            if (ev->mouse.button == 1)
+            if (button == 1)
                 chooser_ask(w);
-        } else if (ev->mouse.button == 3) {
+        } else if (button == 3) {
             /* The tab's drop-down at the pointer (decision 0032). */
             if (!sk_rename_editing(w->rename)) {
                 int ww, wh;
@@ -2681,9 +2724,9 @@ static bool strip_mouse(gwin *w, const sk_event *ev)
                 sk_rename_popup(w->rename, w->snap.tabs[i].id, ev->mouse.x, ev->mouse.y, ww);
                 redraw(w);
             }
-        } else if (ev->mouse.button == 2 || (on_close && ev->mouse.button == 1)) {
+        } else if (button == 2 || (on_close && button == 1)) {
             post_tab(g, do_close, w->snap.tabs[i].id, win);
-        } else if (ev->mouse.button == 1) {
+        } else if (button == 1) {
             post_tab(g, do_activate, w->snap.tabs[i].id, win);
             w->drag_tab = w->snap.tabs[i].id;
             w->drag_x0 = ev->mouse.x;
@@ -2765,6 +2808,12 @@ static void on_mouse(gwin *w, const sk_event *ev)
         if (strip_mouse(w, ev))
             return;
     }
+    /* The pointer in the strips leaves the dashboard's row unlit. */
+    if (chrome && ev->type == SK_EV_MOUSE_MOVE) {
+        sk_dashview *dv = active_dview(w);
+        if (dv && sk_dashview_hover(dv, -1e9, -1e9))
+            redraw(w);
+    }
     if (!t || (!chrome && dash_mouse(w, ev)))
         return;
     sk_term_input_modes m;
@@ -2784,6 +2833,14 @@ static void on_mouse(gwin *w, const sk_event *ev)
     case SK_EV_MOUSE_DOWN:
         if (sk_term_mouse_down(&w->mouse, &m, &grid, gx, gy, ev->mouse.button, ev->mouse.mods, &out))
             break;
+#ifndef __APPLE__
+        /* X11's middle click pastes PRIMARY, as Chromium pastes it into
+         * xterm.js's textarea. */
+        if (ev->mouse.button == 2) {
+            ask_clipboard(w, true, term_paste);
+            break;
+        }
+#endif
         if (ev->mouse.button != 1)
             break;
         if (ev->mouse.mods & opener) {
@@ -2931,6 +2988,9 @@ static void on_event(void *ud, const sk_event *ev)
         break;
     case SK_EV_FOCUS:
         w->focused = ev->focused;
+        /* The window's blur is the input's too, which commits. */
+        if (!ev->focused)
+            rename_finish(w, true);
         focus_term(w);
         if (ev->focused)
             post_tab(g, do_touch, 0, w->snap.id);
@@ -2944,13 +3004,17 @@ static void on_event(void *ud, const sk_event *ev)
     case SK_EV_MOUSE_MOVE:
         on_mouse(w, ev);
         break;
-    case SK_EV_MOUSE_LEAVE:
+    case SK_EV_MOUSE_LEAVE: {
+        sk_dashview *dv = active_dview(w);
+        if (dv && sk_dashview_hover(dv, -1e9, -1e9))
+            redraw(w);
         if (w->hover_link || w->link_r0 >= 0 || w->hover_tab >= 0) {
             clear_hover(w);
             w->hover_tab = -1;
             redraw(w);
         }
         break;
+    }
     case SK_EV_SCROLL:
         on_scroll(w, ev);
         break;
@@ -2975,8 +3039,11 @@ static void on_event(void *ud, const sk_event *ev)
         break;
     }
     case SK_EV_PREEDIT:
+        /* A composition is the terminal's only while it has the keys. */
         free(w->preedit);
-        w->preedit = ev->text && *ev->text ? sk_xstrdup(ev->text) : NULL;
+        w->preedit = NULL;
+        if (ev->text && *ev->text && !sk_rename_editing(w->rename) && !sk_menu_open(w->menu))
+            w->preedit = sk_xstrdup(ev->text);
         redraw(w);
         break;
     default:

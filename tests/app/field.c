@@ -98,7 +98,39 @@ static void test_shift_moves_select(void)
     sk_field_free(&f);
 }
 
+static void test_keypad_and_max_length(void)
+{
+    sk_field f;
+    sk_field_init(&f);
+    /* The keypad's keys type their text; its Enter is the caller's. */
+    sk_key_event k = named(SK_KEY_KP_0 + 7, 0);
+    snprintf(k.text, sizeof k.text, "7");
+    CHECK(sk_field_key(&f, &k).took);
+    k = named(SK_KEY_KP_ENTER, 0);
+    snprintf(k.text, sizeof k.text, "\r");
+    CHECK(!sk_field_key(&f, &k).took);
+    CHECK_STR(sk_buf_cstr(&f.text), "7");
+    /* maxLength 5: a full field takes nothing more, where the caret is,
+     * and a paste is cut to what fits; a selection makes room. */
+    f.max_chars = 5;
+    sk_field_set(&f, "abcde");
+    f.caret = f.anchor = 2;
+    sk_key_event t = typed("x");
+    sk_field_key(&f, &t);
+    CHECK_STR(sk_buf_cstr(&f.text), "abcde");
+    CHECK_INT(f.caret, 2);
+    sk_field_set(&f, "ab");
+    sk_field_insert(&f, "\xc3\xa9t\xc3\xa9s and more");
+    CHECK_STR(sk_buf_cstr(&f.text), "ab\xc3\xa9t\xc3\xa9");
+    f.anchor = 0;
+    f.caret = 2;
+    sk_field_insert(&f, "XYZ");
+    CHECK_STR(sk_buf_cstr(&f.text), "XY\xc3\xa9t\xc3\xa9");
+    sk_field_free(&f);
+}
+
 const sk_test sk_suite_field[] = {
+    T(test_keypad_and_max_length),
     T(test_typing_and_select_all),
     T(test_the_clipboard_is_the_callers),
     T(test_shift_moves_select),

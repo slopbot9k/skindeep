@@ -120,6 +120,15 @@ void sk_field_replace(sk_field *f, size_t lo, size_t hi, const char *s, size_t n
     f->caret = f->anchor = lo + n;
 }
 
+/* The characters of t's bytes [lo, hi). */
+static size_t chars_in(const sk_buf *t, size_t lo, size_t hi)
+{
+    size_t n = 0;
+    for (size_t i = lo; i < hi; i = sk_field_next(t, i))
+        n++;
+    return n;
+}
+
 void sk_field_insert(sk_field *f, const char *s)
 {
     sk_buf clean = {0}, text = {0};
@@ -127,6 +136,15 @@ void sk_field_insert(sk_field *f, const char *s)
     for (size_t i = 0; i < clean.len; i++)
         if (clean.ptr[i] != '\n' && clean.ptr[i] != '\r')
             sk_buf_putc(&text, clean.ptr[i]);
+    /* maxLength: only as many characters go in as the rest leaves room
+     * for, as Chromium cuts what is typed or pasted. */
+    if (f->max_chars) {
+        size_t kept = chars_in(&f->text, 0, f->text.len) - chars_in(&f->text, sk_field_sel_lo(f), sk_field_sel_hi(f));
+        size_t room = f->max_chars > kept ? f->max_chars - kept : 0, at = 0;
+        for (size_t n = 0; at < text.len && n < room; n++)
+            at = sk_field_next(&text, at);
+        text.len = at;
+    }
     sk_field_replace(f, sk_field_sel_lo(f), sk_field_sel_hi(f), text.ptr, text.len);
     sk_buf_free(&clean);
     sk_buf_free(&text);
@@ -274,7 +292,9 @@ sk_field_key_result sk_field_key(sk_field *f, const sk_key_event *k)
 #else
     const uint32_t not_typing = SK_MOD_CTRL | SK_MOD_SUPER | SK_MOD_ALT;
 #endif
-    if (k->text[0] && !(m & not_typing) && k->key == SK_KEY_NONE) {
+    /* A character key types its text; so do the keypad's, but Enter. */
+    bool keypad = k->key >= SK_KEY_KP_0 && k->key <= SK_KEY_KP_EQUAL && k->key != SK_KEY_KP_ENTER;
+    if (k->text[0] && !(m & not_typing) && (k->key == SK_KEY_NONE || keypad)) {
         sk_field_insert(f, k->text);
         return r;
     }
