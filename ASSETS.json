@@ -539,6 +539,27 @@
     "notes": "Butterchurn presets written by the project. stardust and whirlpool recreate the look of two MilkDrop presets by Ryan Geiss from his screenshots named cosmic dust and vortex on https://geisswerks.com/milkdrop/screenshots.html. The page names no preset. Geiss - Cosmic Dust 2 is in the preset pack MilkDrop 2 shipped with Winamp, and no preset named Vortex is. The presets' own equations were not read: no license from their authors was found, the MilkDrop 2.25c source (BSD-3-Clause) ships no preset, and the MIT license of butterchurn-presets covers its conversion, not the presets. drift, rings and plasma are the project's own."
   },
   {
+    "path": "src/viz/avs.c",
+    "source": "https://codeberg.org/exo-cortex/vis_avs/src/commit/1cee1f3d4f783b830538c3e4d2082a2c59521dee/avs/vis_avs",
+    "author": "Nullsoft, Inc. (the AVS source release of 2005), as kept by the vis_avs port's contributors",
+    "license": "BSD-3-Clause",
+    "notes": "The C port (decision 0036) of app/viz/avs.js, listed above: the Superscope's three examples and the Dot Plane, as that file ported them from the same AVS source. The file's header carries the BSD license verbatim."
+  },
+  {
+    "path": "src/viz/classic.c",
+    "source": "this repository",
+    "author": "claude-skins",
+    "license": "project-original",
+    "notes": "The C port (decision 0036) of app/viz/classic.js, listed above: the classic analyzer recreated from its look alone. No code, image or colour file of Winamp is used."
+  },
+  {
+    "path": "src/viz/milkpresets.c",
+    "source": "this repository",
+    "author": "claude-skins",
+    "license": "project-original",
+    "notes": "The C port (decision 0036) of app/viz/presets.js, listed above, with the same provenance: the five presets' equations and shaders translated by hand. What they leave unset takes butterchurn 2.6.7's defaults (MIT, third_party/butterchurn/LICENSE)."
+  },
+  {
     "path": "docs/diary/heroes/01-design.png",
     "source": "drawn with Pillow for the dev diary",
     "author": "claude-skins",
