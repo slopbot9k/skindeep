@@ -3,7 +3,7 @@
  * paints its layers with it and the runtime what changes, so the two
  * draw alike.
  *
- *   sk_paint_env env = {&layout, &fonts, &images, glyphs, NULL};
+ *   sk_paint_env env = {&layout, &fonts, &images, glyphs, NULL, NULL};
  *   sk_paint(&im, &env, root, 2, 0, 0);
  *
  * What it paints: background colours, images and linear and radial
@@ -47,12 +47,53 @@ typedef struct sk_paint_cache sk_paint_cache;
 sk_paint_cache *sk_paint_cache_new(size_t max_bytes);
 void sk_paint_cache_free(sk_paint_cache *c);
 
+/* ---- Layers ---- */
+
+/* What a layer stands in for when the painter meets its node. */
+typedef enum {
+    SK_PART_SUBTREE, /* STATIC, STATE, SPRITE: the node and all it holds */
+    SK_PART_NINE,    /* NINE: its box shadows and border, over its background */
+} sk_paint_part;
+
+/* A layer as the painter composites it (decision 0037): premultiplied
+ * pixels painted at scale device pixels to the CSS px, their top left
+ * (x, y) CSS px from the border box of anchor, before that box's
+ * transforms. The anchor is the node itself, or for an SVG shape or
+ * group the svg that holds it.
+ *
+ * SUBTREE: what the node's group holds before its opacity and blend,
+ * which the painter applies, and before the node's own transform, which
+ * it applies too: a turned needle's or knob's group, an animated
+ * element, is turned with its layer.
+ *
+ * NINE: the box drawn ref_w by ref_h CSS px; slice[] (SK_TOP, ...)
+ * device pixels at each edge are kept, the middle row and column
+ * stretched over a box of any size no smaller. */
+typedef struct {
+    const sk_image *im;
+    uint8_t kind; /* sk_layer_kind */
+    float scale;
+    float x, y;
+    uint32_t anchor;
+    float ref_w, ref_h;
+    uint16_t slice[4];
+} sk_player;
+
+typedef struct {
+    /* The layer node paints as for part (sk_paint_part), where it is
+     * drawn at k device pixels to the CSS px; NULL: paint it. Asked
+     * again for a node, it must answer alike within one paint. */
+    const sk_player *(*find)(void *data, uint32_t node, uint8_t part, float k);
+    void *data;
+} sk_players;
+
 typedef struct {
     const sk_layout *layout;
     const sk_lfonts *fonts;
     const sk_pimages *images; /* may be NULL */
     sk_glyph_cache *glyphs;   /* the caller's, the thread's own */
     sk_paint_cache *cache;    /* may be NULL: blur every time */
+    const sk_players *layers; /* may be NULL: paint every node */
 } sk_paint_env;
 
 /* Paints box root and its subtree into dst, at scale device pixels to
@@ -64,5 +105,17 @@ void sk_paint(sk_image *dst, const sk_paint_env *env, uint32_t root, float scale
  * dst: a part of a frame painted again lands on the whole pixels the
  * frame's first paint put it on, whatever the scale. */
 void sk_paint_px(sk_image *dst, const sk_paint_env *env, uint32_t root, float scale, int px, int py);
+
+/* What a layer of node i holds, painted into dst (drawn over, not
+ * cleared): own maps the node's own space (its border box's CSS px, or
+ * an SVG node's user units), before its own transform, to dst's pixels.
+ * SUBTREE: the node and all it holds as its group holds them, filters
+ * and clip-path applied, opacity and blend not. NINE: its box shadows
+ * and border, outside and inset, without its background. */
+void sk_paint_layer(sk_image *dst, const sk_paint_env *env, uint32_t i, uint8_t part, const sk_xform *own);
+/* Whether node i starts a stacking context of its own inside root's,
+ * as the painter decides it: what a layer of a node that does not
+ * must leave alone. */
+bool sk_paint_makes_context(const sk_layout *l, uint32_t i, uint32_t root);
 
 #endif

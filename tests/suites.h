@@ -136,5 +136,6 @@
     X(tabviz)                                                                \
     X(skin_view)                                                             \
     X(skin_live)                                                             \
+    X(skin_layers)                                                           \
     X(skins)                                                                 \
     X(skinterm)

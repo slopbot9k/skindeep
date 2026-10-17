@@ -17,5 +17,9 @@ bool sk_pack_write(const sk_front *f, const unsigned char hash[32], sk_buf *out,
 /* The sections of the n bytes of a pack, a line each: its id, its
  * bytes and its count of records. */
 void sk_pack_print_sections(const uint8_t *p, size_t n, FILE *out);
+/* The layers of the n bytes of the pack f was written to, a line each:
+ * the element as a selector, the kind, the style, the scale, the size
+ * and the place. */
+void sk_pack_print_layers(const sk_front *f, const uint8_t *p, size_t n, FILE *out);
 
 #endif

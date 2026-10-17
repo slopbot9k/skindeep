@@ -23,7 +23,22 @@
  *     needle meters, across.
  *   - ELEM's group and meter are those of the meter an element is or
  *     is in. An element with no layers has first layer 0.
- *   - A pack holds the styles some state table names, no others. */
+ *   - A pack holds the styles some state table names, no others.
+ *   - LAYR's records are in their elements' order, each element's
+ *     layers its range of ELEM, every record in one. A layer's style
+ *     is none or one its element's table gives: none for STATIC, one
+ *     for STATE, either for SPRITE and NINE. skinc writes an
+ *     element's by style (none first), kind, scale.
+ *   - A layer's x and y are from its element's border box, or for an
+ *     SVG shape or group from its svg's: such a layer is painted with
+ *     nothing between it and its svg but the viewBox, and its pixels
+ *     go back through the viewBox to be turned with it.
+ *   - SPRITE: ox, oy are what it turns about, from x, y, as the layout
+ *     gives the turn. NINE: ox, oy are the width and height of the box
+ *     it was painted for, in CSS px; its slices leave a middle row and
+ *     column, which repeat; it is drawn over the box's background in
+ *     place of its box shadows and border.
+ *   - A layer's pictures may share their bytes in BLOB. */
 #ifndef SK_SKIN_PACKFMT_H
 #define SK_SKIN_PACKFMT_H
 

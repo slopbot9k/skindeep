@@ -4,8 +4,10 @@
  * same skin giving the same bytes; the packs linked into the program
  * loading and being those bytes; and every check of the loader
  * refusing a small pack spoiled to fail it, with the message that
- * names the section and the record. A newer minor's pack, with larger
- * records, a section and a property this loader does not know, loads.
+ * names the section and the record, its layers' among them, and a
+ * layer that does not fit its element's box refused once the pack is
+ * laid out. A newer minor's pack, with larger records, a section and a
+ * property this loader does not know, loads.
  *
  * SK_SEED_UPDATE=1 writes the fuzz target's seeds, tests/fuzz/corpus/
  * pack/, from the small packs these tests make. */
@@ -16,6 +18,7 @@
 #include "../../src/skin/compile.h"
 #include "../../src/skin/packfmt.h"
 #include "../../src/skin/shipped.h"
+#include "../../src/skin/view.h"
 #include "../skinc/mediawrite.h"
 #include "../skinc/util.h"
 #include "../test.h"
@@ -420,8 +423,11 @@ static void element_same(const sk_front *f, const sk_pack *p, uint32_t i)
         if (!same || g->image != image)
             sk_test_fail(__FILE__, __LINE__, "%s: svg geometry", at);
     }
-    if (x->ninputs != e->ninputs || x->nlayers != 0)
-        sk_test_fail(__FILE__, __LINE__, "%s: inputs or layers", at);
+    if (x->ninputs != e->ninputs)
+        sk_test_fail(__FILE__, __LINE__, "%s: inputs", at);
+    for (uint32_t y = x->layer; y < x->layer + x->nlayers; y++)
+        if (p->layers[y].el != i)
+            sk_test_fail(__FILE__, __LINE__, "%s: layer %u", at, (unsigned)y);
     for (uint8_t k2 = 0; k2 < x->ninputs && k2 < e->ninputs; k2++)
         if (x->inputs[k2].owner != e->inputs[k2].owner->index || x->inputs[k2].var != e->inputs[k2].var ||
             x->inputs[k2].radix != e->inputs[k2].radix)
@@ -614,7 +620,12 @@ static void round_trip(const char *dir)
         }
     }
     media_same(&f, &p);
-    CHECK_INT(p.nlayers, 0);
+    /* Its layers fit the layout the runtime makes of it. */
+    char err[300];
+    sk_skinpack *sp = sk_skinpack_new((uint8_t *)out.ptr, out.len, false, err, sizeof err);
+    if (!sp)
+        sk_test_fail(__FILE__, __LINE__, "%s: %s", dir, err);
+    sk_skinpack_unref(sp);
     sk_pack_free(&p);
     sk_front_free(&f);
     sk_buf_free(&out);
@@ -1314,11 +1325,39 @@ static void test_media_checks(void)
     sk_buf_free(&x);
 }
 
+/* The pack without the layers skinc made: LAYR empty, no element with
+ * one, and their pictures, which BLOB holds last, cut off. */
+static void no_layers(epack *e)
+{
+    esect *l = ep_get(e, "LAYR"), *blob = ep_get(e, "BLOB"), *el = ep_get(e, "ELEM");
+    uint32_t cut = (uint32_t)blob->b.len;
+    for (uint32_t i = 0; i < l->count; i++)
+        cut = SK_MIN(cut, sk_le32(ep_rec(e, "LAYR", i) + 40));
+    blob->b.len = cut;
+    sk_buf_clear(&l->b);
+    l->count = 0;
+    for (uint32_t i = 0; i < el->count; i++) {
+        put32_at(ep_rec(e, "ELEM", i) + 44, 0);
+        put32_at(ep_rec(e, "ELEM", i) + 48, 0);
+    }
+}
+
+/* b without its layers, as the loader's checks of each section take it. */
+static void bare(sk_buf *b)
+{
+    epack e;
+    ep_read(&e, b);
+    no_layers(&e);
+    ep_write(&e, b);
+    ep_free(&e);
+}
+
 /* A layer drawn from p.png's pixels, kind and scale as given. */
 static void add_layer(epack *e, uint8_t kind, uint8_t scale, uint16_t slice)
 {
     esect *l = ep_get(e, "LAYR");
     uint8_t r[48] = {0};
+    put32_at(r, 4);
     put32_at(r + 4, SK_PACK_NONE);
     r[8] = kind;
     r[9] = scale;
@@ -1336,13 +1375,23 @@ static void test_layer_checks(void)
 {
     sk_buf b = {0}, x = {0};
     SMALL(SMALL_FONT, &b);
+    bare(&b);
     epack e;
     ep_read(&e, &b);
     add_layer(&e, SK_LAYER_STATIC, 2, 1);
     ep_write(&e, &x);
     sk_pack p;
+    uint32_t foreign = SK_PACK_NONE;
     if (load(&x, &p)) {
         CHECK(p.nlayers == 1 && p.els[4].nlayers == 1 && p.layers[0].scale == 2 && p.layers[0].w == 2);
+        /* A style the panel's table never gives. */
+        for (uint32_t s = 0; s < p.nstyles && foreign == SK_PACK_NONE; s++) {
+            bool given = false;
+            for (uint8_t v = 0; v < 2; v++)
+                given |= sk_pack_style_of(&p, &p.els[4], &v) == &p.styles[s];
+            if (!given)
+                foreign = s;
+        }
         sk_pack_free(&p);
     }
     ep_free(&e);
@@ -1358,9 +1407,132 @@ static void test_layer_checks(void)
     EDIT(add_layer(&e, SK_LAYER_NINE, 3, 0), "LAYR 0: scale 3: 1 or 2");
     EDIT(add_layer(&e, SK_LAYER_NINE, 1, 2), "LAYR 0: slices wider than its 2 x 2");
     EDIT(put32_at(ep_rec(&e, "ELEM", 4) + 48, 1), "ELEM 4: layers 0 to 1, past the 0 layers");
+    /* A STATE layer stands for a style, a STATIC one for every state. */
+    EDIT(add_layer(&e, SK_LAYER_STATE, 1, 0), "LAYR 0: a STATE layer of no style");
+    EDIT((add_layer(&e, SK_LAYER_STATIC, 1, 0), put32_at(ep_rec(&e, "LAYR", 0) + 4, 0)),
+         "LAYR 0: a STATIC layer of one style");
+    /* A nine-slice needs the box it was drawn for and a middle. */
+    EDIT(add_layer(&e, SK_LAYER_NINE, 1, 0), "LAYR 0: a nine-slice for a box of 0 x 0 with no middle");
+    EDIT((add_layer(&e, SK_LAYER_NINE, 1, 1), putf32_at(ep_rec(&e, "LAYR", 0) + 20, 4),
+          putf32_at(ep_rec(&e, "LAYR", 0) + 24, 4)),
+         "LAYR 0: a nine-slice for a box of 4 x 4 with no middle");
+    EDIT((add_layer(&e, SK_LAYER_STATIC, 1, 0), putf32_at(ep_rec(&e, "LAYR", 0) + 12, 2e6f)),
+         "LAYR 0: its place 2e+06, 0 or origin 0, 0 past 1e+06");
+    /* Each element's layers are its own, in order, every one of them
+     * some element's, each for a style it takes. */
+    EDIT((add_layer(&e, SK_LAYER_STATIC, 1, 0), put32_at(ep_rec(&e, "LAYR", 0), 3)), "ELEM 4: layer 0 is element 3's");
+    EDIT((add_layer(&e, SK_LAYER_STATIC, 1, 0), put32_at(ep_rec(&e, "ELEM", 4) + 48, 0)),
+         "LAYR: 1 layers, 0 of them an element's");
+    EDIT((add_layer(&e, SK_LAYER_STATIC, 1, 0), add_layer(&e, SK_LAYER_STATIC, 2, 0),
+          put32_at(ep_rec(&e, "LAYR", 0), 5)),
+         "LAYR 1: element 4 after a layer of element 5");
+    EDIT((add_layer(&e, SK_LAYER_STATE, 1, 0), put32_at(ep_rec(&e, "LAYR", 0) + 4, foreign)),
+         "ELEM 4: layer 0 is for style");
 #undef EDIT
     sk_buf_free(&b);
     sk_buf_free(&x);
+}
+
+/* The panel's layer of scale, in the small pack as skinc wrote it. */
+static uint8_t *panel_layer(epack *e, uint8_t scale)
+{
+    esect *l = ep_get(e, "LAYR");
+    for (uint32_t i = 0; i < l->count; i++) {
+        uint8_t *r = ep_rec(e, "LAYR", i);
+        if (sk_le32(r) == 4 && r[8] == SK_LAYER_STATIC && r[9] == scale)
+            return r;
+    }
+    return NULL;
+}
+
+/* Layer record r's picture made a w x h one, appended to BLOB. */
+static void picture_is(epack *e, uint8_t *r, int w, int h)
+{
+    sk_image im;
+    sk_image_init(&im, w, h);
+    size_t n = 0;
+    uint8_t *q = sk_qoi_encode(&im, &n);
+    esect *blob = ep_get(e, "BLOB");
+    while (blob->b.len % 4)
+        sk_put8(&blob->b, 0);
+    put32_at(r + 40, (uint32_t)blob->b.len);
+    put32_at(r + 44, (uint32_t)n);
+    put16_at(r + 28, (unsigned)w);
+    put16_at(r + 30, (unsigned)h);
+    sk_buf_append(&blob->b, q, n);
+    free(q);
+    sk_image_free(&im);
+}
+
+/* sk_skinpack_new refuses b, saying want. */
+static void unfit(const sk_buf *b, const char *want)
+{
+    char err[300];
+    sk_buf copy = {0};
+    sk_buf_append(&copy, b->ptr, b->len);
+    sk_skinpack *p = sk_skinpack_new((uint8_t *)copy.ptr, copy.len, false, err, sizeof err);
+    if (p)
+        sk_test_fail(__FILE__, __LINE__, "a pack whose layer does not fit loads: wanted \"%s\"", want);
+    else if (strncmp(err, want, strlen(want)) != 0)
+        sk_test_fail(__FILE__, __LINE__, "refused with \"%s\", wanted \"%s\"", err, want);
+    sk_skinpack_unref(p);
+    sk_buf_free(&copy);
+}
+
+/* The small pack with its panel's 1x layer w x h at x, y, which
+ * sk_skinpack_new must refuse. */
+static void misfit(const sk_buf *b, int w, int h, float x, float y)
+{
+    epack e;
+    ep_read(&e, b);
+    uint8_t *r = panel_layer(&e, 1);
+    uint32_t at = (uint32_t)((r - (uint8_t *)ep_get(&e, "LAYR")->b.ptr) / SK_REC_LAYR);
+    if (w != sk_le16(r + 28) || h != sk_le16(r + 30))
+        picture_is(&e, r, w, h);
+    putf32_at(r + 12, x);
+    putf32_at(r + 16, y);
+    sk_buf out = {0};
+    ep_write(&e, &out);
+    char want[200];
+    snprintf(want, sizeof want, "LAYR %u: %d x %d pixels at %g, %g do not fit element 4's box of 90 x 90",
+             (unsigned)at, w, h, (double)x, (double)y);
+    unfit(&out, want);
+    sk_buf_free(&out);
+    ep_free(&e);
+}
+
+/* What only the layout can check: a layer the size of what its element
+ * paints as the runtime lays it out, where skinc put it. */
+static void test_layer_fit(void)
+{
+    sk_buf b = {0};
+    SMALL(SMALL_FONT, &b);
+    epack e;
+    ep_read(&e, &b);
+    uint8_t *r1 = panel_layer(&e, 1), *r2 = panel_layer(&e, 2);
+    CHECK(r1 && r2);
+    if (!r1 || !r2) {
+        ep_free(&e);
+        sk_buf_free(&b);
+        return;
+    }
+    /* The panel's 90 x 90, and its "x" reaching out of its corner. */
+    int w = sk_le16(r1 + 28), h = sk_le16(r1 + 30);
+    float x = sk_lef32(r1 + 12), y = sk_lef32(r1 + 16);
+    CHECK(w >= 90 && h >= 90 && x <= 0 && y <= 0 && x + w >= 90 && y + h >= 90);
+    CHECK(sk_le16(r2 + 28) >= 2 * w - 2 && sk_le16(r2 + 28) <= 2 * w + 2);
+    ep_free(&e);
+    char err[300];
+    sk_skinpack *p = sk_skinpack_new((uint8_t *)b.ptr, b.len, false, err, sizeof err);
+    if (!p)
+        sk_test_fail(__FILE__, __LINE__, "the small pack: %s", err);
+    sk_skinpack_unref(p);
+    /* Too small, too large, moved: refused. */
+    misfit(&b, w - 10, h, x, y);
+    misfit(&b, w, h + 30, x, y);
+    misfit(&b, w, h, x + 4, y);
+    misfit(&b, w, h, x, y - 3);
+    sk_buf_free(&b);
 }
 
 /* A newer minor: larger records, a section and a property this loader
@@ -1432,23 +1604,76 @@ static void seed(const char *name, const sk_buf *b)
     }
 }
 
+/* A skin given layers of the kinds skinc makes: with boxes, a rounded
+ * box (STATIC), one that the pointer lights (STATE) and one that turns
+ * (SPRITE); else a bar as wide as the window, its shadow css (NINE). */
+static bool layered_pack(bool boxes, const char *shadow, sk_buf *out)
+{
+    sk_buf css = {0};
+    if (boxes)
+        sk_buf_append_c(&css, ".s { border-radius: 2px; background: #c33; }\n"
+                              ".h { border-radius: 2px; background: #33c; }\n"
+                              ".h:hover { background: #3c3; }\n"
+                              ".t { border-radius: 1px; background: #cc3; animation: spin 2s linear infinite; }\n"
+                              "@keyframes spin { to { transform: rotate(360deg); } }\n");
+    else
+        sk_buf_printf(&css, ".n { box-shadow: %s; background: #888; }\n", shadow);
+    const char *dir =
+        sk_test_skin(boxes ? "[{\"class\": \"s\", \"rect\": {\"left\": 4, \"top\": 4, \"width\": 6, \"height\": 6}},"
+                             " {\"class\": \"h\", \"rect\": {\"left\": 14, \"top\": 4, \"width\": 6, \"height\": 6}},"
+                             " {\"class\": \"t\", \"rect\": {\"left\": 24, \"top\": 4, \"width\": 6, \"height\": 6}}]"
+                           : "[{\"class\": \"n\", \"rect\": {\"left\": 0, \"right\": 0, \"top\": 20, \"height\": 4}}]",
+                     NULL, sk_buf_cstr(&css));
+    sk_buf_free(&css);
+    sk_front f;
+    sk_buf_clear(out);
+    bool ok = write_pack(dir, &f, out);
+    sk_front_free(&f);
+    return ok;
+}
+
+/* The kinds of b's layers, a bit each. */
+static unsigned kinds_of(const sk_buf *b)
+{
+    sk_pack p;
+    unsigned kinds = 0;
+    if (load(b, &p)) {
+        for (uint32_t i = 0; i < p.nlayers; i++)
+            kinds |= 1u << p.layers[i].kind;
+        sk_pack_free(&p);
+    }
+    return kinds;
+}
+
 static void test_seeds(void)
 {
     sk_buf b = {0}, x = {0};
     SMALL(SMALL_FONT, &b);
+    bare(&b);
     seed("small.pack", &b);
     newer_minor(&b, &x);
     seed("minor.pack", &x);
     epack e;
     ep_read(&e, &b);
-    add_layer(&e, SK_LAYER_NINE, 1, 1);
+    add_layer(&e, SK_LAYER_NINE, 1, 0);
+    putf32_at(ep_rec(&e, "LAYR", 0) + 20, 2);
+    putf32_at(ep_rec(&e, "LAYR", 0) + 24, 2);
     ep_write(&e, &x);
     ep_free(&e);
     seed("layer.pack", &x);
     SMALL(SMALL_SOUND, &b);
+    bare(&b);
     seed("sound.pack", &b);
+    /* Layers as skinc makes them, of each kind it makes. */
+    CHECK(layered_pack(true, NULL, &b));
+    CHECK_INT(kinds_of(&b), 1u << SK_LAYER_STATIC | 1u << SK_LAYER_STATE | 1u << SK_LAYER_SPRITE);
+    seed("layers.pack", &b);
+    CHECK(layered_pack(false, "inset 0 0 1px #000, 0 1px 1px #000", &b));
+    CHECK_INT(kinds_of(&b), 1u << SK_LAYER_NINE);
+    seed("nine.pack", &b);
     /* The committed seeds load. */
-    static const char *const SEEDS[] = {"small.pack", "minor.pack", "layer.pack", "sound.pack"};
+    static const char *const SEEDS[] = {"small.pack", "minor.pack", "layer.pack",
+                                        "sound.pack", "layers.pack", "nine.pack"};
     for (size_t i = 0; i < SK_LEN(SEEDS); i++) {
         char *path = sk_path_join("tests/fuzz/corpus/pack", SEEDS[i]);
         size_t n = 0;
@@ -1471,7 +1696,8 @@ const sk_test sk_suite_skin_pack[] = {
     T(test_style_compare), T(test_coffee),         T(test_deck),          T(test_library),
     T(test_phosphor),      T(test_all_widgets),    T(test_same_bytes),    T(test_shipped),
     T(test_small),         T(test_header_checks),  T(test_section_checks), T(test_style_checks),
-    T(test_media_checks),  T(test_layer_checks),   T(test_newer_minor),   T(test_seeds),
+    T(test_media_checks),  T(test_layer_checks),   T(test_layer_fit),     T(test_newer_minor),
+    T(test_seeds),
     T(test_writer_refusals),
     {0},
 };

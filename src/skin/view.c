@@ -18,6 +18,7 @@
 #include "viewint.h"
 
 #include <math.h>
+#include <stdio.h>
 #include <string.h>
 #include <time.h>
 
@@ -153,6 +154,431 @@ static const sk_image *image_pixels(void *data, uint32_t source, int w, int h)
         }
     }
     return d->tried == 2 ? &d->im : NULL;
+}
+
+/* ---- Layers ---- */
+
+static uint64_t fnv(uint64_t h, const void *p, size_t n);
+static const sk_player *kept_px(sk_skinview *v, sk_vkept *k);
+
+/* The anchor of element e's layers: the element, or the svg an SVG
+ * shape or group is drawn in. */
+static uint32_t anchor_of(const sk_pack *p, uint32_t e)
+{
+    uint32_t a = e;
+    while (a != NONE && a < p->nels && p->els[a].kind != SK_EL_SVG && p->els[a].kind >= SK_EL_G &&
+           p->els[a].kind <= SK_EL_IMAGE)
+        a = p->els[a].parent;
+    return a == NONE || a >= p->nels ? e : a;
+}
+
+/* Layer i of the pack as the painter draws it, decoded once. */
+static const sk_player *layer_px(sk_skinview *v, uint32_t i)
+{
+    sk_vlayer *d = &v->vlayers[i];
+    if (!d->tried) {
+        d->tried = 1;
+        const sk_pack_layer *y = &v->p->layers[i];
+        if (sk_qoi_decode(v->p->blob + y->blob, y->len, SK_PACK_MAX_PIXELS, &d->im) && d->im.w == y->w &&
+            d->im.h == y->h) {
+            d->tried = 2;
+            d->pl = (sk_player){&d->im, y->kind, y->scale, y->x, y->y, anchor_of(v->p, y->el), y->ox, y->oy,
+                                {y->slice[0], y->slice[1], y->slice[2], y->slice[3]}};
+        }
+    }
+    return d->tried == 2 ? &d->pl : NULL;
+}
+
+/* The painter's question: the layer node n draws as for part where it
+ * is drawn at k, of those of its element for the style it shows; the
+ * one at k's scale, else the one nearest above it. */
+static const sk_player *find_layer(void *data, uint32_t n, uint8_t part, float k)
+{
+    sk_skinview *v = data;
+    uint8_t want = part == SK_PART_NINE ? SK_VLAYER_NINE : SK_VLAYER_SUBTREE;
+    if (n >= v->nnodes)
+        return NULL;
+    /* The view's own picture, painted at the frame's scale. */
+    if (part == SK_PART_SUBTREE && !(v->layer_ok[n] & want) && (v->layer_ok[n] & SK_VLAYER_KEPT) &&
+        v->kept_of[n] != NONE) {
+        if (fabs(k - v->k * v->scale) > 1e-4)
+            return NULL;
+        return kept_px(v, &v->kept[v->kept_of[n]]);
+    }
+    if (!(v->layer_ok[n] & want))
+        return NULL;
+    const sk_pack_el *e = &v->p->els[v->nodes[n].el];
+    uint32_t si = (uint32_t)(v->nodes[n].base - v->p->styles);
+    uint8_t scale = k > 1 + 1e-3f ? 2 : 1;
+    uint32_t best = NONE;
+    for (uint32_t i = e->layer; i < e->layer + e->nlayers; i++) {
+        const sk_pack_layer *y = &v->p->layers[i];
+        bool nine = y->kind == SK_LAYER_NINE;
+        if (nine != (part == SK_PART_NINE) || y->kind == SK_LAYER_MASK || (y->style != NONE && y->style != si))
+            continue;
+        if (best == NONE || y->scale == scale)
+            best = i;
+    }
+    return best == NONE ? NULL : layer_px(v, best);
+}
+
+static bool len_value(const sk_css_len *l, size_t n)
+{
+    for (size_t i = 0; i < n; i++)
+        if (l[i].kind == SK_LEN_VALUE)
+            return true;
+    return false;
+}
+
+/* Whether a style holds a length the runtime fills in. */
+static bool style_has_value(const sk_css_style *s)
+{
+    if (len_value(s->inset, 4) || len_value(&s->width, 1) || len_value(&s->height, 1) ||
+        len_value(&s->min_width, 1) || len_value(&s->min_height, 1) || len_value(&s->max_width, 1) ||
+        len_value(&s->max_height, 1) || len_value(s->margin, 4) || len_value(s->padding, 4) ||
+        len_value(&s->flex_basis, 1) || len_value(s->dasharray, s->ndasharray))
+        return true;
+    for (uint16_t i = 0; i < s->nbg_size; i++)
+        if (len_value(&s->bg_size[i].w, 1) || len_value(&s->bg_size[i].h, 1))
+            return true;
+    for (uint16_t i = 0; i < s->nbg_position; i++)
+        if (len_value(&s->bg_position[i].x, 1) || len_value(&s->bg_position[i].y, 1))
+            return true;
+    return false;
+}
+
+/* The entries of element e's state table. */
+static uint32_t entries_of(const sk_pack_el *el)
+{
+    uint32_t n = 1;
+    for (uint8_t i = 0; i < el->ninputs; i++)
+        n *= el->inputs[i].radix;
+    return n;
+}
+
+bool sk_view_shows_value(const sk_skinview *v, uint32_t e)
+{
+    const sk_pack *p = v->p;
+    const sk_pack_el *el = &p->els[e];
+    if (el->group || v->row_of[e] >= 0)
+        return true;
+    switch (el->role) {
+    case SK_ROLE_VALUE:
+    case SK_ROLE_RESETS_LEFT:
+    case SK_ROLE_FILL:
+    case SK_ROLE_ARC_FILL:
+    case SK_ROLE_SHEET:
+    case SK_ROLE_MARK:
+    case SK_ROLE_DIAL_TEXT:
+    case SK_ROLE_ITEMS:
+    case SK_ROLE_ITEM:
+    case SK_ROLE_ITEM_MARK:
+    case SK_ROLE_ITEM_TEXT:
+    case SK_ROLE_NEEDLE_GROUP:
+    case SK_ROLE_KNOB_TURN:
+        return true;
+    default:
+        break;
+    }
+    switch (el->text_source) {
+    case SK_TEXT_VALUE:
+    case SK_TEXT_RESETS:
+    case SK_TEXT_ITEM_MARK:
+    case SK_TEXT_ITEM_TEXT:
+        return true;
+    case SK_TEXT_LABEL:
+        if (el->widget < p->nwidgets && p->widgets[el->widget].fallback_bind)
+            return true;
+        break;
+    default:
+        break;
+    }
+    uint32_t n = entries_of(el);
+    for (uint32_t t = 0; t < n; t++)
+        if (style_has_value(&p->styles[el->styles[t]]))
+            return true;
+    return false;
+}
+
+/* ---- Subtrees kept painted ---- */
+
+/* At most this many bytes of pictures; a subtree past it is painted. */
+#define KEPT_MAX_BYTES (96u << 20)
+
+static bool table_animates(const sk_pack *p, const sk_pack_el *el)
+{
+    uint32_t n = entries_of(el);
+    for (uint32_t t = 0; t < n; t++) {
+        const sk_css_style *s = &p->styles[el->styles[t]];
+        for (uint16_t i = 0; i < s->nanim_name; i++)
+            if (s->anim_name[i] != NONE)
+                return true;
+    }
+    return false;
+}
+
+/* Whether a style paints what takes longer to paint than to copy: an
+ * image, a gradient, a shadow, a filter, a border image. */
+static bool costly(const sk_css_style *s)
+{
+    for (uint16_t k = 0; k < s->nbg_image; k++)
+        if (s->bg_image[k].kind != SK_IMAGE_NONE)
+            return true;
+    return s->nbox_shadow || s->ntext_shadow || s->nfilter || s->bi_source.kind != SK_IMAGE_NONE;
+}
+
+/* The subtrees kept painted: from the stage down, the first element
+ * whose subtree shows no value and runs no animation, that is a box of
+ * its own and paints something costly, and that skinc gave no layer of
+ * the whole. Below the stage only: the stage holds the widgets. */
+static void kept_find(sk_skinview *v, const uint8_t *settled, const uint8_t *dear, uint32_t e, int depth)
+{
+    const sk_pack *p = v->p;
+    for (uint32_t c = p->els[e].first_child; c != NONE; c = p->els[c].next_sibling) {
+        const sk_pack_el *el = &p->els[c];
+        bool whole = false;
+        for (uint32_t i = el->layer; i < el->layer + el->nlayers; i++)
+            whole |= p->layers[i].kind == SK_LAYER_STATIC;
+        if (settled[c] && dear[c] && !whole && el->kind >= SK_EL_DIV && el->kind <= SK_EL_SVG &&
+            el->kind != SK_EL_SPAN) {
+            v->kept = sk_xreallocarray(v->kept, v->nkept + 1, sizeof *v->kept);
+            sk_vkept *k = &v->kept[v->nkept];
+            memset(k, 0, sizeof *k);
+            k->node = c;
+            k->sub = sk_xreallocarray(NULL, p->nels, sizeof *k->sub);
+            subtree(p, c, k->sub, &k->nsub, p->nels);
+            v->kept_of[c] = v->nkept++;
+        } else if (!settled[c] && depth < 64) {
+            kept_find(v, settled, dear, c, depth + 1);
+        }
+    }
+}
+
+static void kept_init(sk_skinview *v)
+{
+    const sk_pack *p = v->p;
+    v->kept_of = sk_xreallocarray(NULL, v->nnodes ? v->nnodes : 1, sizeof *v->kept_of);
+    for (uint32_t i = 0; i < v->nnodes; i++)
+        v->kept_of[i] = NONE;
+    if (v->stage == NONE || !p->nels)
+        return;
+    /* Children come after their parents among the elements: from the
+     * last, each element's children are known before it. */
+    uint8_t *settled = sk_xcalloc(p->nels, 1), *dear = sk_xcalloc(p->nels, 1);
+    for (uint32_t e = p->nels; e-- > 0;) {
+        const sk_pack_el *el = &p->els[e];
+        bool ok = !sk_view_shows_value(v, e) && !table_animates(p, el);
+        bool d = costly(&p->styles[el->styles[0]]) || (el->text_source == SK_TEXT_STATIC && el->text);
+        for (uint32_t c = el->first_child; c != NONE; c = p->els[c].next_sibling) {
+            ok = ok && c > e && settled[c];
+            d = d || (c > e && dear[c]);
+        }
+        settled[e] = ok;
+        dear[e] = d;
+    }
+    kept_find(v, settled, dear, v->stage, 0);
+    free(settled);
+    free(dear);
+}
+
+static void kept_drop(sk_skinview *v, sk_vkept *k)
+{
+    if (k->valid)
+        v->kept_bytes -= (size_t)k->im.w * (size_t)k->im.h * sizeof(sk_px);
+    sk_image_free(&k->im);
+    k->valid = false;
+}
+
+/* Whether kept subtree root n paints at one place in the painting order
+ * in the styles it shows now: a stacking context, a positioned box all
+ * of whose positioned descendants stack at 0, or a box with none. */
+static bool kept_at_once(const sk_skinview *v, const sk_vkept *k)
+{
+    const sk_layout *l = &v->layout;
+    uint32_t n = k->node;
+    const sk_css_style *s = v->lnodes[n].style;
+    if (!s || !l->boxes[n].generated || s->display == SK_DISPLAY_INLINE)
+        return false;
+    bool positioned = s->position != SK_POS_STATIC;
+    if ((positioned && (!s->z_auto || s->position == SK_POS_FIXED)) || s->nclip || s->ntransform ||
+        s->mix_blend != SK_MIX_NORMAL || s->isolate || (s->nfilter && s->opacity >= 1))
+        return true;
+    if (positioned && s->outline_style == SK_BORDER_SOLID && s->outline_width > 0)
+        return false;
+    for (uint32_t i = 1; i < k->nsub; i++) {
+        uint32_t d = k->sub[i];
+        const sk_css_style *ds = v->lnodes[d].style;
+        if (!ds || !l->boxes[d].generated || l->boxes[d].svg_content)
+            continue;
+        if (ds->mix_blend != SK_MIX_NORMAL)
+            return false;
+        bool inl = ds->display == SK_DISPLAY_INLINE && v->lnodes[d].kind != SK_EL_SVG;
+        bool ctx = sk_paint_makes_context(l, d, NONE);
+        if (!ctx && (ds->position == SK_POS_STATIC || inl))
+            continue;
+        if (!positioned || (ctx && !ds->z_auto && ds->z_index != 0))
+            return false;
+    }
+    return true;
+}
+
+/* Kept subtree k's picture, painted anew when what it paints changed
+ * (its nodes' signatures, the scale), on whole pixels of the frame. */
+static const sk_player *kept_px(sk_skinview *v, sk_vkept *k)
+{
+    if (k->valid)
+        return &k->pl;
+    const sk_lbox *b = &v->layout.boxes[k->node];
+    float s = (float)(v->k * v->scale);
+    double x0 = floor((double)b->ink.x * s), y0 = floor((double)b->ink.y * s);
+    double x1 = ceil((double)(b->ink.x + b->ink.w) * s), y1 = ceil((double)(b->ink.y + b->ink.h) * s);
+    if (!(x1 > x0) || !(y1 > y0) || x1 - x0 > 8192 || y1 - y0 > 8192)
+        return NULL;
+    size_t bytes = (size_t)(x1 - x0) * (size_t)(y1 - y0) * sizeof(sk_px);
+    if (v->kept_bytes + bytes > KEPT_MAX_BYTES)
+        return NULL;
+    sk_image_init(&k->im, (int)(x1 - x0), (int)(y1 - y0));
+    sk_xform own = {s, 0, 0, s, (float)-x0, (float)-y0};
+    sk_paint_env env = sk_view_env(v);
+    sk_paint_layer(&k->im, &env, k->node, SK_PART_SUBTREE, &own);
+    k->pl = (sk_player){&k->im,       SK_LAYER_STATIC, s, (float)(x0 / s - b->border.x), (float)(y0 / s - b->border.y),
+                        k->node,      0,               0, {0, 0, 0, 0}};
+    k->valid = true;
+    v->kept_bytes += bytes;
+    return &k->pl;
+}
+
+/* Each kept subtree's key this frame; a picture painted for another
+ * is dropped. Kept while nothing of it eases and it paints at once,
+ * from the second run its key stays the same: a resize, or a split
+ * dragged, paints it straight into the frame, and the picture is
+ * painted when it is next drawn from. */
+static void kept_choose(sk_skinview *v)
+{
+    for (uint32_t i = 0; i < v->nkept; i++) {
+        sk_vkept *k = &v->kept[i];
+        uint32_t n = k->node;
+        const sk_vnode *x = &v->nodes[n];
+        bool ok = x->live && x->base && !v->busy[n] && !(v->layer_ok[n] & SK_VLAYER_SUBTREE) &&
+                  v->layout.boxes[n].generated && kept_at_once(v, k);
+        uint64_t key = 1469598103934665603ull;
+        double s = v->k * v->scale;
+        key = fnv(key, &s, sizeof s);
+        for (uint32_t q = 0; ok && q < k->nsub; q++) {
+            uint32_t d = k->sub[q];
+            const sk_vnode *dx = &v->nodes[d];
+            uint64_t sig = dx->live && v->layout.boxes[d].generated ? sk_view_signature(v, d, true) : 0;
+            key = fnv(key, &sig, sizeof sig);
+        }
+        if (!ok || key != k->key)
+            kept_drop(v, k);
+        k->steady = ok && key == k->key;
+        k->key = key;
+        if (k->steady)
+            v->layer_ok[n] |= SK_VLAYER_KEPT;
+    }
+}
+
+/* Each node's easing, its own or below it. */
+static bool mark_busy(sk_skinview *v, uint32_t n, int depth)
+{
+    bool b = sk_motion_easing(v->nodes[n].mo);
+    if (depth < 256)
+        for (uint32_t c = v->lnodes[n].first; c != NONE && c < v->nnodes; c = v->lnodes[c].next)
+            b |= mark_busy(v, c, depth + 1);
+    v->busy[n] = b;
+    return b;
+}
+
+/* What each node may draw from its element's layers: an element's own
+ * node, shown, in a style it has a layer for, nothing of it easing;
+ * then the subtrees kept painted. */
+static void choose_layers(sk_skinview *v)
+{
+    memset(v->layer_ok, 0, v->nnodes ? v->nnodes : 1);
+    memset(v->busy, 0, v->nnodes ? v->nnodes : 1);
+    if (v->stage == NONE)
+        return;
+    mark_busy(v, v->stage, 0);
+    for (uint32_t n = 0; v->p->nlayers && n < v->p->nels; n++) {
+        const sk_vnode *x = &v->nodes[n];
+        const sk_pack_el *e = &v->p->els[n];
+        if (!e->nlayers || !x->live || !x->base || x->hide || v->busy[n] || !v->layout.boxes[n].generated ||
+            !v->lnodes[n].style)
+            continue;
+        uint32_t si = (uint32_t)(x->base - v->p->styles);
+        uint8_t ok = 0;
+        for (uint32_t i = e->layer; i < e->layer + e->nlayers; i++) {
+            const sk_pack_layer *y = &v->p->layers[i];
+            if (y->style != NONE && y->style != si)
+                continue;
+            if (y->kind == SK_LAYER_NINE)
+                ok |= SK_VLAYER_NINE;
+            else if (y->kind != SK_LAYER_MASK)
+                ok |= SK_VLAYER_SUBTREE;
+        }
+        v->layer_ok[n] = ok;
+    }
+    kept_choose(v);
+}
+
+/* Whether a and b, edges in device pixels, are within a pixel. */
+static bool edges_near(double a0, double a1, double b0, double b1)
+{
+    return fabs(a0 - b0) <= 1.001 && fabs(a1 - b1) <= 1.001;
+}
+
+bool sk_view_layers_fit(sk_skinview *v, char *err, size_t err_len)
+{
+    const sk_pack *p = v->p;
+    if (!p->nlayers || v->stage == NONE)
+        return true;
+    sk_view_run(v);
+    const sk_layout *l = &v->layout;
+    for (uint32_t i = 0; i < p->nlayers; i++) {
+        const sk_pack_layer *y = &p->layers[i];
+        uint32_t e = y->el, a = anchor_of(p, e);
+        const sk_vnode *x = &v->nodes[e];
+        if (!x->live || !x->base || !l->boxes[e].generated || !l->boxes[a].generated || y->kind == SK_LAYER_MASK)
+            continue;
+        if (y->style != NONE && y->style != (uint32_t)(x->base - p->styles))
+            continue;
+        const sk_lbox *b = &l->boxes[e], *ab = &l->boxes[a];
+        double s = y->scale;
+        /* The layer's edges, device pixels of the anchor's space. */
+        double lx0 = (ab->border.x + y->x) * s, ly0 = (ab->border.y + y->y) * s;
+        double lx1 = lx0 + y->w, ly1 = ly0 + y->h;
+        bool ok;
+        if (y->kind == SK_LAYER_NINE) {
+            double bx0 = b->border.x * s, by0 = b->border.y * s;
+            ok = !b->svg_content && y->ox <= b->border.w + 1e-3f && y->oy <= b->border.h + 1e-3f &&
+                 lx0 <= bx0 + 1e-3 && ly0 <= by0 + 1e-3 && lx1 >= bx0 + y->ox * s - 1e-3 &&
+                 ly1 >= by0 + y->oy * s - 1e-3 && lx0 + y->slice[SK_LEFT] >= bx0 - 1e-3 &&
+                 lx0 + y->slice[SK_LEFT] < bx0 + y->ox * s && ly0 + y->slice[SK_TOP] >= by0 - 1e-3 &&
+                 ly0 + y->slice[SK_TOP] < by0 + y->oy * s;
+        } else {
+            /* What the element paints, in its anchor's space. */
+            sk_frect ink = b->ink;
+            if (b->svg_content)
+                ink = sk_frect_map(&ab->viewbox, ink);
+            ok = edges_near(lx0, lx1, floor(ink.x * s), ceil((ink.x + ink.w) * s)) &&
+                 edges_near(ly0, ly1, floor(ink.y * s), ceil((ink.y + ink.h) * s));
+        }
+        if (!ok) {
+            if (err && err_len)
+                snprintf(err, err_len, "LAYR %u: %u x %u pixels at %g, %g do not fit element %u's box of %g x %g",
+                         (unsigned)i, (unsigned)y->w, (unsigned)y->h, (double)y->x, (double)y->y, (unsigned)e,
+                         (double)b->border.w, (double)b->border.h);
+            return false;
+        }
+    }
+    return true;
+}
+
+sk_paint_env sk_view_env(sk_skinview *v)
+{
+    sk_paint_env env = {&v->layout, &v->lfonts, &v->images, v->glyphs, v->pcache, &v->layer_hook};
+    return env;
 }
 
 /* ---- The splits (splits.js) ---- */
@@ -291,6 +717,12 @@ sk_skinview *sk_skinview_new(sk_skinpack *sp, double now)
     v->decoded = sk_xcalloc(v->p->nimages ? v->p->nimages : 1, sizeof *v->decoded);
     v->glyphs = sk_glyph_cache_new(16u << 20);
     v->pcache = sk_paint_cache_new(32u << 20);
+    v->layer_hook.find = find_layer;
+    v->layer_hook.data = v;
+    v->vlayers = sk_xcalloc(v->p->nlayers ? v->p->nlayers : 1, sizeof *v->vlayers);
+    v->layer_ok = sk_xcalloc(v->nnodes ? v->nnodes : 1, 1);
+    v->busy = sk_xcalloc(v->nnodes ? v->nnodes : 1, 1);
+    kept_init(v);
     v->hover = v->pressed = NONE;
     v->fade.node = NONE;
     v->handle_hover = v->drag_split = -1;
@@ -341,6 +773,17 @@ void sk_skinview_free(sk_skinview *v)
     for (uint32_t i = 0; i < v->p->nimages; i++)
         sk_image_free(&v->decoded[i].im);
     free(v->decoded);
+    for (uint32_t i = 0; i < v->p->nlayers; i++)
+        sk_image_free(&v->vlayers[i].im);
+    free(v->vlayers);
+    free(v->layer_ok);
+    free(v->busy);
+    for (uint32_t i = 0; i < v->nkept; i++) {
+        sk_image_free(&v->kept[i].im);
+        free(v->kept[i].sub);
+    }
+    free(v->kept);
+    free(v->kept_of);
     sk_glyph_cache_free(v->glyphs);
     sk_paint_cache_free(v->pcache);
     sk_fade_free(&v->fade);
@@ -683,6 +1126,10 @@ uint64_t sk_view_signature(const sk_skinview *v, uint32_t n, bool opacity)
     float vb[6] = {b->viewbox.a, b->viewbox.b, b->viewbox.c, b->viewbox.d, b->viewbox.e, b->viewbox.f};
     h = fnv(h, vb, sizeof vb);
     h = fnv(h, &b->clipper, sizeof b->clipper);
+    /* Drawn from a layer of skinc's or painted: the two may round
+     * apart. A picture the view keeps is its own paint, composited. */
+    uint8_t lk = v->layer_ok[n] & (uint8_t)~SK_VLAYER_KEPT;
+    h = fnv(h, &lk, 1);
     for (uint32_t k = 0; k < b->nruns; k++) {
         const sk_lrun *r = &v->layout.runs[b->runs + k];
         float f[4] = {r->x, r->y, r->px, r->width};
@@ -757,12 +1204,11 @@ static void damage_ink(sk_skinview *v, sk_frect r)
     if (sk_frect_empty(r))
         return;
     double f = v->k * v->scale;
-    long x0 = (long)floor(r.x * f) - 2, y0 = (long)floor(r.y * f) - 2;
-    long x1 = (long)ceil((r.x + r.w) * f) + 2, y1 = (long)ceil((r.y + r.h) * f) + 2;
-    x0 = SK_MAX(x0, -1000000L);
-    y0 = SK_MAX(y0, -1000000L);
-    x1 = SK_MIN(x1, 1000000L);
-    y1 = SK_MIN(y1, 1000000L);
+    /* Clamped before they become integers: a hostile pack's ink may
+     * reach past any. */
+    long x0 = (long)fmax(-1e6, fmin(1e6, floor(r.x * f) - 2)), y0 = (long)fmax(-1e6, fmin(1e6, floor(r.y * f) - 2));
+    long x1 = (long)fmax(-1e6, fmin(1e6, ceil((r.x + r.w) * f) + 2));
+    long y1 = (long)fmax(-1e6, fmin(1e6, ceil((r.y + r.h) * f) + 2));
     damage_px(v, sk_rect_make((int)x0, (int)y0, (int)(x1 - x0), (int)(y1 - y0)));
 }
 
@@ -902,6 +1348,7 @@ void sk_view_run(sk_skinview *v)
     v->laid = true;
     if (had)
         sk_layout_free(&old);
+    choose_layers(v);
     /* What each node paints now, what it painted kept aside. */
     sk_vrecord *was = sk_xreallocarray(NULL, v->nnodes ? v->nnodes : 1, sizeof *was);
     for (uint32_t n = 0; n < v->nnodes; n++) {
@@ -1141,7 +1588,7 @@ void sk_view_paint_skin(sk_skinview *v, sk_image *frame, sk_rect st, sk_rect r)
     sk_image view = sk_image_view(frame, r);
     sk_fill_rect(&view, sk_image_bounds(&view), SK_RGB(0, 0, 0), SK_BLEND_SRC, NULL);
     if (v->laid && v->stage != NONE) {
-        sk_paint_env env = {&v->layout, &v->lfonts, &v->images, v->glyphs, v->pcache};
+        sk_paint_env env = sk_view_env(v);
         sk_paint_px(&view, &env, v->stage, (float)(v->k * v->scale), r.x - st.x, r.y - st.y);
     }
 }
