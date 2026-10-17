@@ -9,6 +9,7 @@
 #   make fuzz         build the fuzz targets
 #   make fuzz-run     run each target for FUZZ_SECONDS (default 30)
 #   make milkshot     build the MilkDrop renderer's frame tool
+#   make vizwin       build the visualization's window on fake tabs
 #   make clean
 #
 # MODE picks the build: release (the default), debug or fuzz, each in
@@ -100,7 +101,7 @@ FUZZ_BINS := $(FUZZ_TARGETS:%=$(BUILD)/fuzz-%)
 FUZZ_DRIVER := $(BUILD)/tests/fuzz/driver.o
 FUZZ_SECONDS ?= 30
 
-.PHONY: all test debug fuzz fuzz-run clean macdemo windemo milkshot skinshot vizshot
+.PHONY: all test debug fuzz fuzz-run clean macdemo windemo milkshot skinshot vizshot vizwin
 .SECONDARY:
 
 all: $(LIB) $(TEST_BIN) $(RELAY) $(HOOKDUMP) $(SKINNED) $(SKINC) $(BUILD)/qoi2png $(BUILD)/windemo
@@ -206,6 +207,13 @@ vizshot: $(BUILD)/vizshot
 $(BUILD)/vizshot: $(BUILD)/tools/vizshot.o $(LIB)
 	$(CC) $(OPT) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
+# The visualization's window on fake tabs fed by the scripted session,
+# to look at, or drawn offscreen and timed with -b: make vizwin. Not
+# part of all.
+vizwin: $(BUILD)/vizwin
+$(BUILD)/vizwin: $(BUILD)/tools/vizwin.o $(LIB)
+	$(CC) $(OPT) $(LDFLAGS) -o $@ $^ $(LDLIBS) $(UI_LIBS)
+
 test: $(TEST_BIN) $(RELAY) $(SKINNED) $(SKINC)
 	SK_RELAY_BIN=$(RELAY) SK_SKINNED_BIN=$(SKINNED) SK_SKINC_BIN=$(SKINC) ./$(TEST_BIN) $(T)
 
@@ -234,4 +242,5 @@ clean:
 -include $(LIB_OBJ:.o=.d) $(TEST_OBJ:.o=.d) $(SKINC_OBJ:.o=.d) $(BUILD)/skinc-objs/main.d $(BUILD)/src/relay/main.d $(BUILD)/tools/hookdump.d \
     $(BUILD)/src/main/skinned.d \
     $(BUILD)/tools/qoi2png.d $(BUILD)/tools/macdemo.d $(BUILD)/tools/windemo.d $(BUILD)/tools/gfxbench.d $(BUILD)/tools/vizshot.d \
+    $(BUILD)/tools/vizwin.d \
     $(wildcard $(BUILD)/tests/fuzz/*.d)

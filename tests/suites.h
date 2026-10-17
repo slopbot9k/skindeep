@@ -124,4 +124,7 @@
     X(viz_canvas)                                                            \
     X(viz_rules)                                                             \
     X(viz_physics)                                                           \
-    X(viz_modes)
+    X(viz_modes)                                                             \
+    X(vizfeed)                                                               \
+    X(vizwin)                                                                \
+    X(tabviz)
