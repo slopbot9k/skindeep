@@ -54,6 +54,11 @@ const char *sk_skinpack_name(const sk_skinpack *p)
     return p->pack.meta.name ? p->pack.meta.name : "";
 }
 
+size_t sk_skinpack_splits(const sk_skinpack *p)
+{
+    return p->pack.nsplits;
+}
+
 const unsigned char *sk_skinpack_hash(const sk_skinpack *p)
 {
     return p->pack.source_hash;

@@ -82,6 +82,9 @@ void sk_skinpack_unref(sk_skinpack *p);
 
 /* The manifest's name, the skin's id (decision 0008). */
 const char *sk_skinpack_name(const sk_skinpack *p);
+/* How many splits it has (decision 0035): the menu's Reset panel sizes
+ * is for a skin with any. */
+size_t sk_skinpack_splits(const sk_skinpack *p);
 /* The SHA-256 of the skin's files the pack was compiled from. */
 const unsigned char *sk_skinpack_hash(const sk_skinpack *p);
 

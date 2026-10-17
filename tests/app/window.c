@@ -8,6 +8,7 @@
 #include "../../src/base/json.h"
 #include "../../src/base/strv.h"
 #include "../../src/core/loop.h"
+#include "../../src/sessions/files.h"
 #include "../test.h"
 
 #include <errno.h>
@@ -301,6 +302,18 @@ static void test_the_app_ends_with_the_last_tabs_status(void)
     CHECK_INT(finish(&a, 10000), 7);
 }
 
+/* The middle of cell (col, row) in window points, from the probe's
+ * grid: the skin places the terminal, and sizes its font. */
+static void cell_at(const sk_json *p, double col, double row, double *x, double *y)
+{
+    const sk_json *g = sk_json_dig(p, "window", "grid", NULL);
+    double v[4] = {4, 26, 8, 16};
+    for (size_t i = 0; i < 4; i++)
+        sk_json_as_number(sk_json_at(g, i), &v[i]);
+    *x = v[0] + v[2] * (col + 0.5);
+    *y = v[1] + v[3] * (row + 0.5);
+}
+
 /* A double click selects a word, as xterm.js does. */
 static void test_a_double_click_selects_a_word(void)
 {
@@ -312,16 +325,13 @@ static void test_a_double_click_selects_a_word(void)
     sk_arena ar;
     sk_arena_init(&ar, 0);
     const sk_json *p = probe(&a, &ar);
-    double w = num(sk_json_get(p, "window"), "w"), cols = num(sk_json_get(p, "window"), "cols");
-    /* DejaVu Sans Mono at 14 px: 8 points a cell, the grid 4 points in
-     * below the 22-point identity strip, row 0 centred at y 34. */
-    (void)w, (void)cols;
-    double cell = 8;
+    double x, y;
+    cell_at(p, 7, 0, &x, &y);
     char req[256];
-    snprintf(req, sizeof req, "{\"op\":\"mouse\",\"kind\":\"down\",\"x\":%.1f,\"y\":34,\"button\":1,\"clicks\":2}",
-             4 + cell * 7.5);
+    snprintf(req, sizeof req, "{\"op\":\"mouse\",\"kind\":\"down\",\"x\":%.1f,\"y\":%.1f,\"button\":1,\"clicks\":2}",
+             x, y);
     ok(&a, req);
-    snprintf(req, sizeof req, "{\"op\":\"mouse\",\"kind\":\"up\",\"x\":%.1f,\"y\":34,\"button\":1}", 4 + cell * 7.5);
+    snprintf(req, sizeof req, "{\"op\":\"mouse\",\"kind\":\"up\",\"x\":%.1f,\"y\":%.1f,\"button\":1}", x, y);
     ok(&a, req);
     p = probe(&a, &ar);
     sk_str sel = {0};
@@ -343,13 +353,11 @@ static void test_a_url_in_the_text_is_a_link(void)
     sk_arena ar;
     sk_arena_init(&ar, 0);
     const sk_json *p = probe(&a, &ar);
-    double w = num(sk_json_get(p, "window"), "w"), cols = num(sk_json_get(p, "window"), "cols");
-    /* DejaVu Sans Mono at 14 px: 8 points a cell, the grid 4 points in
-     * below the 22-point identity strip, row 0 centred at y 34. */
-    (void)w, (void)cols;
-    double cell = 8;
+    double x, y, off_x, off_y;
+    cell_at(p, 10, 0, &x, &y);
+    cell_at(p, 1, 0, &off_x, &off_y);
     char req[256];
-    snprintf(req, sizeof req, "{\"op\":\"mouse\",\"kind\":\"move\",\"x\":%.1f,\"y\":34}", 4 + cell * 10.5);
+    snprintf(req, sizeof req, "{\"op\":\"mouse\",\"kind\":\"move\",\"x\":%.1f,\"y\":%.1f}", x, y);
     ok(&a, req);
     p = probe(&a, &ar);
     sk_str link = {0};
@@ -365,7 +373,7 @@ static void test_a_url_in_the_text_is_a_link(void)
     sk_test_sleep_ms(300);
     ok(&a, req);
     /* Off the URL, no link. */
-    snprintf(req, sizeof req, "{\"op\":\"mouse\",\"kind\":\"move\",\"x\":%.1f,\"y\":34}", 4 + cell * 1.5);
+    snprintf(req, sizeof req, "{\"op\":\"mouse\",\"kind\":\"move\",\"x\":%.1f,\"y\":%.1f}", off_x, off_y);
     ok(&a, req);
     p = probe(&a, &ar);
     CHECK(!sk_json_as_string(sk_json_get(p, "link"), &link));
@@ -847,6 +855,70 @@ static void test_the_strip_waits_for_a_rename(void)
     CHECK_INT(finish(&a, 5000), 128 + SIGHUP);
 }
 
+static void click_box(app *a, const sk_json *box);
+
+/* The skin (decisions 0008, 0022, 0037): deck by default; its own button
+ * opens the drop-down below it and closes it; Skins switches to coffee,
+ * which the probe and the next launch's record name. */
+static void test_the_skin(void)
+{
+    app a;
+    const char *cmd[] = {"cat", NULL};
+    if (!start(&a, cmd))
+        return;
+    sk_arena ar;
+    sk_arena_init(&ar, 0);
+    const sk_json *p = probe(&a, &ar);
+    sk_str name = {0};
+    sk_json_as_string(sk_json_dig(p, "skin", "name", NULL), &name);
+    CHECK_MEM(name, "deck");
+    const sk_json *b = sk_json_dig(p, "skin", "button", NULL);
+    CHECK(b && len_of(b) == 4);
+    if (b) {
+        click_box(&a, b);
+        p = wait_menu(&a, &ar, "File", 5000);
+        CHECK(p != NULL);
+        /* Below the button, as menu.js puts it. */
+        double by = -1, bh = -1;
+        sk_json_as_number(sk_json_at(b, 1), &by);
+        sk_json_as_number(sk_json_at(b, 3), &bh);
+        CHECK(num(sk_json_get(p, "menu"), "y") >= by + bh);
+        click_box(&a, sk_json_dig(probe(&a, &ar), "skin", "button", NULL));
+        CHECK(wait_menu(&a, &ar, NULL, 5000) != NULL);
+    }
+    ok(&a, "{\"op\":\"menu\",\"show\":\"Skins\"}");
+    p = wait_menu(&a, &ar, "Skins", 5000);
+    const sk_json *row = p ? menu_row(p, "  coffee") : NULL;
+    CHECK(row != NULL);
+    if (row)
+        press_row(&a, p, row, 20);
+    for (uint64_t until = sk_now_ms() + 8000; sk_now_ms() < until; sk_test_sleep_ms(100)) {
+        p = probe(&a, &ar);
+        if (sk_json_as_string(sk_json_dig(p, "skin", "name", NULL), &name) && sk_str_eq_c(name, "coffee"))
+            break;
+    }
+    CHECK_MEM(name, "coffee");
+    sk_buf rec = {0};
+    sk_buf_printf(&rec, "%s/state/claude-skins/last-skins", sk_test_tmpdir());
+    sk_strv names = {0};
+    bool recorded = false;
+    if (sk_files_list(rec.ptr, &names))
+        for (size_t i = 0; i < names.len; i++) {
+            sk_buf f = {0};
+            sk_buf_printf(&f, "%s/%s", rec.ptr, names.ptr[i]);
+            char *text = sk_test_read(f.ptr, NULL);
+            recorded |= text && strstr(text, "\"coffee\"");
+            free(text);
+            sk_buf_free(&f);
+        }
+    CHECK(recorded);
+    sk_strv_free(&names);
+    sk_buf_free(&rec);
+    sk_arena_free(&ar);
+    ok(&a, "{\"op\":\"hangup\"}");
+    CHECK_INT(finish(&a, 5000), 128 + SIGHUP);
+}
+
 #ifdef __APPLE__
 #define CMD_MODS "[\"super\"]"
 #else
@@ -940,5 +1012,6 @@ const sk_test sk_suite_window[] = {
     T(test_the_new_tab_chooser),
     T(test_a_tab_renamed),
     T(test_the_strip_waits_for_a_rename),
+    T(test_the_skin),
     {0},
 };
