@@ -15,6 +15,7 @@
 #define SK_X11_H
 
 #include "../../base/str.h"
+#include "../../base/strv.h"
 
 /* How long a reply may take before the connection counts as lost. */
 #define SK_X11_TIMEOUT_MS 10000
@@ -396,5 +397,18 @@ sk_str sk_x11_incr_next(sk_x11_incr *t, size_t max);
 /* STRING is Latin-1: a character it cannot hold goes as '?'. */
 void sk_x11_latin1_from_utf8(sk_buf *out, const char *s, size_t n);
 void sk_x11_utf8_from_latin1(sk_buf *out, const uint8_t *s, size_t n);
+
+/* ---- Drag and drop (XDND) ---- */
+
+/* The version of XDND spoken, which a window's XdndAware gives. */
+#define SK_X11_XDND_VERSION 5
+
+/* The local files a text/uri-list names (RFC 2483), each path pushed
+ * onto out in the list's order. Its lines end in CRLF, or a bare LF; a
+ * line that begins with # is a comment. A file:// URI whose host is
+ * empty or localhost is percent-decoded into its path; any other URI is
+ * dropped, as is one with a bad escape, an escaped NUL or a fragment.
+ * What of a path is not UTF-8 becomes U+FFFD. */
+void sk_x11_uri_list_files(const char *s, size_t n, sk_strv *out);
 
 #endif

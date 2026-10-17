@@ -95,6 +95,12 @@ enum {
 
 #define NSEventMaskAny (~0ull)
 
+/* NSDragOperation. */
+enum {
+    NSDragOperationNone = 0,
+    NSDragOperationCopy = 1,
+};
+
 /* NSTrackingAreaOptions. */
 enum {
     NSTrackingMouseEnteredAndExited = 0x01,
@@ -107,6 +113,8 @@ enum {
 
 extern id NSApp;
 extern id const NSPasteboardTypeString;
+extern id const NSPasteboardTypeFileURL;
+extern id const NSPasteboardURLReadingFileURLsOnlyKey;
 extern id const kCAGravityTopLeft;
 extern id const kCAGravityBottomLeft;
 

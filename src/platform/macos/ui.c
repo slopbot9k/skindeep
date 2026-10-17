@@ -13,9 +13,10 @@
  *
  * The view is an NSTextInputClient: keys the input method may want pass
  * through it, and come out as keys, text or a composition as ui.h has
- * them. */
+ * them. It is also a dragging destination for file URLs alone. */
 #include "uimac.h"
 
+#include "../../base/strv.h"
 #include "../../base/utf8.h"
 
 #include <dispatch/dispatch.h>
@@ -941,6 +942,62 @@ static void win_resigned_key(id self, SEL cmd, id note)
     focus(self, false);
 }
 
+/* ---- Files dropped ---- */
+
+/* What a drag's pasteboard is read for: NSURLs, file URLs alone. */
+static id url_classes(void)
+{
+    return SK_MSG(id (*)(id, SEL, id))(sk_cls("NSArray"), sk_sel("arrayWithObject:"), sk_cls("NSURL"));
+}
+
+static id file_urls_only(void)
+{
+    id yes = SK_MSG(id (*)(id, SEL, BOOL))(sk_cls("NSNumber"), sk_sel("numberWithBool:"), YES);
+    return SK_MSG(id (*)(id, SEL, id, id))(sk_cls("NSDictionary"), sk_sel("dictionaryWithObject:forKey:"), yes,
+                                           NSPasteboardURLReadingFileURLsOnlyKey);
+}
+
+/* A drag that holds files is taken as a copy, anywhere over the view;
+ * any other is refused. */
+static unsigned long view_drag_entered(id self, SEL cmd, id info)
+{
+    (void)cmd;
+    if (!win_of(self))
+        return NSDragOperationNone;
+    id pb = sk_msg(info, "draggingPasteboard");
+    BOOL files = SK_MSG(BOOL (*)(id, SEL, id, id))(pb, sk_sel("canReadObjectForClasses:options:"), url_classes(),
+                                                   file_urls_only());
+    return files ? NSDragOperationCopy : NSDragOperationNone;
+}
+
+/* The drop: its files' paths go to the app as SK_EV_DROP. */
+static BOOL view_perform_drag(id self, SEL cmd, id info)
+{
+    (void)cmd;
+    sk_window *w = win_of(self);
+    if (!w)
+        return NO;
+    id pb = sk_msg(info, "draggingPasteboard");
+    id urls = SK_MSG(id (*)(id, SEL, id, id))(pb, sk_sel("readObjectsForClasses:options:"), url_classes(),
+                                              file_urls_only());
+    sk_strv paths = {0};
+    for (unsigned long i = 0; urls && i < sk_msg_ulong(urls, "count"); i++) {
+        id url = SK_MSG(id (*)(id, SEL, unsigned long))(urls, sk_sel("objectAtIndex:"), i);
+        const char *p = sk_utf8(sk_msg(url, "path"));
+        if (p && *p)
+            sk_strv_push(&paths, p);
+    }
+    bool took = paths.len > 0;
+    if (took) {
+        sk_event e = {.type = SK_EV_DROP, .win = w};
+        e.drop.paths = (const char *const *)paths.ptr;
+        e.drop.n = paths.len;
+        emit(&e);
+    }
+    sk_strv_free(&paths);
+    return took ? YES : NO;
+}
+
 /* ---- The application ---- */
 
 /* Every window is asked to close, Cmd+Q's and a logout's request alike,
@@ -1038,6 +1095,9 @@ static void make_classes(void)
     add(v, "windowDidResize:", (IMP)win_resized, "v@:@");
     add(v, "windowDidBecomeKey:", (IMP)win_became_key, "v@:@");
     add(v, "windowDidResignKey:", (IMP)win_resigned_key, "v@:@");
+    add(v, "draggingEntered:", (IMP)view_drag_entered, "Q@:@");
+    add(v, "draggingUpdated:", (IMP)view_drag_entered, "Q@:@");
+    add(v, "performDragOperation:", (IMP)view_perform_drag, SK_ENC_BOOL "@:@");
     objc_registerClassPair(v);
     win_ivar = ivar_getOffset(class_getInstanceVariable(v, "sk_win"));
 
@@ -1365,6 +1425,9 @@ sk_window *sk_window_new(const sk_window_opts *o, char **err)
         view, nil);
     sk_msg_void_id(view, "addTrackingArea:", area);
     sk_release(area);
+    /* Files may be dropped on it, and nothing else. */
+    sk_msg_void_id(view, "registerForDraggedTypes:",
+                   SK_MSG(id (*)(id, SEL, id))(sk_cls("NSArray"), sk_sel("arrayWithObject:"), NSPasteboardTypeFileURL));
     sk_msg_void_id(nswin, "setContentView:", view);
     sk_msg_void_id(nswin, "setDelegate:", view);
     SK_MSG(BOOL (*)(id, SEL, id))(nswin, sk_sel("makeFirstResponder:"), view);

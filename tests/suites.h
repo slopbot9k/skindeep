@@ -38,6 +38,7 @@
     X(argv)                                                                  \
     X(options)                                                               \
     X(identity)                                                              \
+    X(drop)                                                                  \
     X(runtime)                                                               \
     X(appsettings)                                                           \
     X(background)                                                            \
