@@ -499,6 +499,63 @@ static bool compiled(const char *panels, const char *widgets, const char *css, s
     return ok;
 }
 
+/* Decisions 0004 and 0005: a skin draws inside its stage and nowhere
+ * else, whatever its CSS asks. The hostile fixture's rules put boxes
+ * fixed past every edge, at the topmost z-index; drawn into a frame of
+ * the window's size, with the stage below the strips, the strip's rows
+ * and everything past the stage keep what was there. */
+static void test_a_hostile_skin_stays_in_its_stage(void)
+{
+    sk_front f;
+    sk_buf out = {0};
+    sk_diags d = {0};
+    unsigned char hash[32];
+    char err[300];
+    const char *dir = "tests/fixtures/skins/hostile";
+    bool ok = sk_front_run(&f, dir, &d) && sk_skin_hash(dir, hash, err, sizeof err) && sk_pack_write(&f, hash, &out, &d);
+    for (size_t i = 0; i < d.items.len; i++)
+        sk_test_fail(__FILE__, __LINE__, "%s", d.items.ptr[i]);
+    sk_diags_free(&d);
+    sk_front_free(&f);
+    CHECK(ok);
+    sk_skinpack *sp = ok ? sk_skinpack_new((uint8_t *)out.ptr, out.len, false, err, sizeof err) : NULL;
+    if (ok && !sp)
+        sk_test_fail(__FILE__, __LINE__, "hostile: %s", err);
+    for (int s = 1; sp && s <= 2; s++) {
+        sk_skinview *v = sk_skinview_new(sp, 0);
+        v->wall_fn = fixed_wall;
+        /* The stage below the strips, 40 points in from the window's
+         * other edges. */
+        sk_skinview_set_stage(v, 40, SK_VIEW_STRIP, 920, 640, s);
+        sk_view_run(v);
+        sk_image im;
+        sk_image_init(&im, 1000 * s, 700 * s);
+        const sk_px sentinel = 0xff123456u;
+        for (int y = 0; y < im.h; y++)
+            for (int x = 0; x < im.w; x++)
+                sk_image_row(&im, y)[x] = sentinel;
+        sk_rect r[8];
+        for (int i = 0; i < 3; i++)
+            sk_skinview_draw(v, &im, i == 0, r, 8);
+        long outside = 0, inside = 0;
+        for (int y = 0; y < im.h; y++)
+            for (int x = 0; x < im.w; x++) {
+                bool in = x >= 40 * s && x < 960 * s && y >= SK_VIEW_STRIP * s && y < (SK_VIEW_STRIP + 640) * s;
+                bool drawn = sk_image_row(&im, y)[x] != sentinel;
+                outside += !in && drawn;
+                inside += in && drawn;
+            }
+        /* It drew: its cover, red, over the whole stage. */
+        CHECK(inside > 0);
+        if (outside)
+            sk_test_fail(__FILE__, __LINE__, "at %dx, %ld pixels drawn outside the stage", s, outside);
+        sk_image_free(&im);
+        sk_skinview_free(v);
+    }
+    sk_skinpack_unref(sp);
+    sk_buf_free(&out);
+}
+
 /* The kinds of the layers of panel klass in a skin of panels and css. */
 static unsigned panel_kinds(const char *panels, const char *widgets, const char *css, const char *klass)
 {
@@ -572,6 +629,6 @@ static void test_small_skins(void)
 
 const sk_test sk_suite_skin_layers[] = {
     T(test_coffee_kinds), T(test_deck_kinds),  T(test_library_kinds), T(test_phosphor_kinds), T(test_layer_pixels),
-    T(test_frame_alike),  T(test_layers_refused_where_drawn), T(test_kept),        T(test_small_skins),
+    T(test_frame_alike),  T(test_layers_refused_where_drawn), T(test_kept),        T(test_small_skins), T(test_a_hostile_skin_stays_in_its_stage),
     {0},
 };
