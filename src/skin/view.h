@@ -44,7 +44,23 @@
  *                       the rects presented
  *
  * After any set or mouse call, ask for a frame: the step finds out
- * whether anything changed, and returns at once when nothing did. */
+ * whether anything changed, and returns at once when nothing did.
+ *
+ * Around it, for the window (gui.c):
+ *
+ *   core thread   app/skins.h: sk_skins_start_remembered or _start at
+ *                 launch, _select and _open from the menu, _poll once a
+ *                 second, _remember on each change; the current pack,
+ *                 ref'd, posted to the UI thread. sk_skin_metrics_of
+ *                 the active tab's bus ten times a second, posted.
+ *   UI thread     sk_skinpack_window: the window's first size and its
+ *                 minimum (plus the tab strip's 24 points). The stage
+ *                 is the window below the strips. app/skinterm.h: each
+ *                 terminal's palette, colours, font set and size from
+ *                 sk_skinpack_terminal; the terminal and the dashboard
+ *                 at sk_skinview_terminal_px. A player per window
+ *                 (audio/sounds.h) given sk_skinpack_sounds. The
+ *                 drop-down below sk_skinview_menu_rect. */
 #ifndef SK_SKIN_VIEW_H
 #define SK_SKIN_VIEW_H
 

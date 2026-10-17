@@ -897,23 +897,32 @@ static void test_hover_follows_layout(void)
     sk_skinview_free(v);
 }
 
-/* A skin with a split on the terminal's right edge, and a panel that
- * stretches with it. */
-static sk_skinpack *split_pack(void)
+/* A skin with a split on the terminal's right edge, from min to max,
+ * and a panel that stretches with it. */
+static sk_skinpack *split_pack_of(int min, int max)
 {
     const char *dir = sk_test_skin(NULL, NULL, NULL);
-    sk_test_write(dir, "skin.json",
+    sk_buf b = {0};
+    sk_buf_printf(&b,
                   "{\"name\": \"split\", \"window\": {\"width\": 1000, \"height\": 700, \"minWidth\": 800, "
                   "\"minHeight\": 500},\n"
                   " \"menu\": {\"rect\": {\"left\": 8, \"top\": 8, \"width\": 24, \"height\": 24}, \"image\": "
                   "\"menu.svg\"},\n"
                   " \"terminal\": {\"rect\": {\"left\": 10, \"top\": 40, \"right\": 300, \"bottom\": 10},\n"
                   "   \"theme\": {\"foreground\": \"#e0e0e0\", \"background\": \"#000000\"}},\n"
-                  " \"splits\": [{\"id\": \"side\", \"edge\": \"right\", \"min\": 250, \"max\": 400}],\n"
+                  " \"splits\": [{\"id\": \"side\", \"edge\": \"right\", \"min\": %d, \"max\": %d}],\n"
                   " \"stylesheet\": \"skin.css\",\n"
                   " \"panels\": [{\"class\": \"side\", \"follow\": {\"width\": \"side\"}, "
-                  "\"rect\": {\"right\": 10, \"top\": 40, \"width\": 280, \"bottom\": 10}}]}\n");
+                  "\"rect\": {\"right\": 10, \"top\": 40, \"width\": 280, \"bottom\": 10}}]}\n",
+                  min, max);
+    sk_test_write(dir, "skin.json", sk_buf_cstr(&b));
+    sk_buf_free(&b);
     return pack_dir(dir);
+}
+
+static sk_skinpack *split_pack(void)
+{
+    return split_pack_of(250, 400);
 }
 
 static void test_splits(void)
@@ -1160,6 +1169,145 @@ static void test_fade(void)
 
 /* ---- What the window takes ---- */
 
+/* The mean of each channel over r of im, unpremultiplied. */
+static void mean(const sk_image *im, sk_rect r, double out[3])
+{
+    out[0] = out[1] = out[2] = 0;
+    for (int y = r.y; y < r.y + r.h; y++)
+        for (int x = r.x; x < r.x + r.w; x++) {
+            sk_color c = sk_unpremul(sk_image_row(im, y)[x]);
+            out[0] += (c >> 16) & 255;
+            out[1] += (c >> 8) & 255;
+            out[2] += c & 255;
+        }
+    for (int k = 0; k < 3; k++)
+        out[k] /= (double)r.w * r.h;
+}
+
+static sk_skinview *shipped_view(const char *name)
+{
+    char err[300];
+    const sk_embedded_file *e = sk_shipped_pack(name);
+    return view_of(e ? sk_skinpack_new((uint8_t *)e->data, e->size, false, err, sizeof err) : NULL);
+}
+
+/* app.css's #menu-button: coffee gives one image, so hover brightens
+ * and outlines it and a press darkens it and moves it a pixel down;
+ * deck gives a pressed image of its own; the dot of an unseen problem
+ * at the top right. */
+static void test_menu_button(void)
+{
+    sk_skinview *v = shipped_view("coffee");
+    if (!v)
+        return;
+    sk_skinview_step(v, 16);
+    sk_image f;
+    sk_image_init(&f, 1240, 820);
+    sk_rect out[16];
+    sk_skinview_draw(v, &f, true, out, 16);
+    double mr[4];
+    sk_skinview_menu_rect(v, mr);
+    sk_rect r = sk_rect_make((int)mr[0] + 2, (int)mr[1] + 2, (int)mr[2] - 4, (int)mr[3] - 4);
+    double plain[3], lit[3], down[3];
+    mean(&f, r, plain);
+    sk_skinview_mouse(v, SK_SKIN_MOUSE_MOVE, mr[0] + mr[2] / 2, mr[1] + mr[3] / 2, 0);
+    sk_skinview_step(v, 32);
+    CHECK(sk_skinview_draw(v, &f, false, out, 16) > 0);
+    mean(&f, r, lit);
+    /* The outline, a pixel outside the button, light. */
+    sk_color edge = sk_unpremul(sk_image_row(&f, (int)(mr[1] + mr[3] / 2))[(int)mr[0] - 1]);
+    CHECK(((edge >> 16) & 255) > 120);
+    sk_skinview_mouse(v, SK_SKIN_MOUSE_DOWN, mr[0] + mr[2] / 2, mr[1] + mr[3] / 2, 1);
+    sk_skinview_step(v, 48);
+    sk_skinview_draw(v, &f, false, out, 16);
+    mean(&f, r, down);
+    CHECK(lit[0] + lit[1] + lit[2] > plain[0] + plain[1] + plain[2] + 10);
+    CHECK(down[0] + down[1] + down[2] < plain[0] + plain[1] + plain[2]);
+    sk_skinview_mouse(v, SK_SKIN_MOUSE_UP, mr[0] + mr[2] / 2, mr[1] + mr[3] / 2, 1);
+    sk_skinview_mouse(v, SK_SKIN_MOUSE_LEAVE, 0, 0, 0);
+    /* An unseen problem: the red dot over the top right corner. */
+    sk_skinview_set_menu(v, false, true);
+    sk_skinview_step(v, 64);
+    sk_skinview_draw(v, &f, false, out, 16);
+    sk_color dot = sk_unpremul(sk_image_row(&f, (int)mr[1] + 1)[(int)(mr[0] + mr[2]) - 1]);
+    CHECK_INT(dot, 0xffff3b30u);
+    sk_skinview_set_menu(v, false, false);
+    sk_skinview_step(v, 80);
+    sk_skinview_draw(v, &f, false, out, 16);
+    dot = sk_unpremul(sk_image_row(&f, (int)mr[1] + 1)[(int)(mr[0] + mr[2]) - 1]);
+    CHECK(dot != 0xffff3b30u);
+    sk_image_free(&f);
+    sk_skinview_free(v);
+    /* deck: its own pressed image while the drop-down is open. */
+    v = shipped_view("deck");
+    if (!v)
+        return;
+    sk_skinview_step(v, 16);
+    sk_image_init(&f, 1240, 820);
+    sk_skinview_draw(v, &f, true, out, 16);
+    sk_skinview_menu_rect(v, mr);
+    r = sk_rect_make((int)mr[0], (int)mr[1], (int)mr[2], (int)mr[3]);
+    mean(&f, r, plain);
+    sk_skinview_set_menu(v, true, false);
+    sk_skinview_step(v, 32);
+    sk_skinview_draw(v, &f, false, out, 16);
+    mean(&f, r, down);
+    CHECK(fabs(down[0] - plain[0]) + fabs(down[1] - plain[1]) + fabs(down[2] - plain[2]) > 3);
+    sk_image_free(&f);
+    sk_skinview_free(v);
+}
+
+/* A split's handle: shown where its split has room, lit under the
+ * pointer, a grip at its middle. */
+static void test_handle_drawn(void)
+{
+    sk_skinview *v = view_of(split_pack());
+    if (!v)
+        return;
+    sk_skinview_step(v, 16);
+    sk_image f;
+    sk_image_init(&f, 1000, 700);
+    sk_rect out[16];
+    sk_skinview_draw(v, &f, true, out, 16);
+    /* Right of the terminal, 8 points wide, at its middle the grip. */
+    int gx = 1000 - 300 + 4, gy = 22 + 40 + (700 - 22 - 50) / 2;
+    sk_color grip = sk_unpremul(sk_image_row(&f, gy)[gx]);
+    sk_color strip = sk_unpremul(sk_image_row(&f, 22 + 45)[gx]);
+    CHECK(((grip >> 16) & 255) > 60);
+    CHECK_INT(strip, 0xff000000u);
+    sk_skinview_mouse(v, SK_SKIN_MOUSE_MOVE, gx, 22 + 45, 0);
+    sk_skinview_step(v, 32);
+    CHECK(sk_skinview_draw(v, &f, false, out, 16) > 0);
+    sk_color lit = sk_unpremul(sk_image_row(&f, 22 + 45)[gx]);
+    CHECK(((lit >> 16) & 255) > 20);
+    /* At 800 wide the split cannot grow, but it can still shrink: its
+     * handle stays. */
+    sk_skinview_set_stage(v, 0, 22, 800, 678, 1);
+    sk_skinview_mouse(v, SK_SKIN_MOUSE_MOVE, 800 - 300 + 4, 22 + 300, 0);
+    CHECK_INT(sk_skinview_cursor(v), SK_SKIN_CURSOR_RESIZE_EW);
+    sk_image_free(&f);
+    sk_skinview_free(v);
+    /* A split that can grow only into room the window does not leave:
+     * at the minimum window it cannot move, and has no handle. */
+    v = view_of(split_pack_of(300, 400));
+    if (!v)
+        return;
+    sk_skinview_set_stage(v, 0, 22, 800, 678, 1);
+    sk_skinview_step(v, 16);
+    sk_skinview_mouse(v, SK_SKIN_MOUSE_MOVE, 800 - 300 + 4, 22 + 300, 0);
+    CHECK_INT(sk_skinview_cursor(v), SK_SKIN_CURSOR_ARROW);
+    sk_skin_event ev = sk_skinview_mouse(v, SK_SKIN_MOUSE_DOWN, 800 - 300 + 4, 22 + 300, 1);
+    CHECK_INT(ev.action, SK_SKIN_TAKEN);
+    ev = sk_skinview_mouse(v, SK_SKIN_MOUSE_MOVE, 800 - 360, 22 + 300, 0);
+    CHECK_INT(ev.action, SK_SKIN_TAKEN);
+    sk_skinview_mouse(v, SK_SKIN_MOUSE_UP, 800 - 360, 22 + 300, 1);
+    /* At the first size it can grow: the handle is back. */
+    sk_skinview_set_stage(v, 0, 22, 1000, 678, 1);
+    sk_skinview_mouse(v, SK_SKIN_MOUSE_MOVE, 1000 - 300 + 4, 22 + 300, 0);
+    CHECK_INT(sk_skinview_cursor(v), SK_SKIN_CURSOR_RESIZE_EW);
+    sk_skinview_free(v);
+}
+
 static void test_pack_terminal(void)
 {
     char err[300];
@@ -1245,6 +1393,8 @@ const sk_test sk_suite_skin_view[] = {
     T(test_damage),
     T(test_damage_under_filter),
     T(test_fade),
+    T(test_menu_button),
+    T(test_handle_drawn),
     T(test_pack_terminal),
     T(test_metrics_of_bus),
     {0},
