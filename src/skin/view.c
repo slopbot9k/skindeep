@@ -1426,7 +1426,7 @@ sk_skin_event sk_skinview_mouse(sk_skinview *v, sk_skin_mouse what, double x, do
     }
     if (what == SK_SKIN_MOUSE_MOVE) {
         hover_at(v, x, y);
-        if (v->press_kind)
+        if (v->press_kind || sk_skinview_covers(v, x, y))
             ev.action = SK_SKIN_TAKEN;
         return ev;
     }

@@ -848,7 +848,7 @@ static void test_hover_and_clicks(void)
     /* The stage starts at y 22 in the window. */
     uint32_t r = part(v, "r", SK_ROLE_WIDGET, 0);
     sk_skin_event ev = sk_skinview_mouse(v, SK_SKIN_MOUSE_MOVE, 10, 22 + 210, 0);
-    CHECK_INT(ev.action, SK_SKIN_NOTHING);
+    CHECK_INT(ev.action, SK_SKIN_TAKEN);
     sk_skinview_step(v, v->now + 16);
     CHECK_INT(var(v, r, SK_VAR_HOVER), 1);
     CHECK_INT(var(v, v->stage, SK_VAR_HOVER), 1);

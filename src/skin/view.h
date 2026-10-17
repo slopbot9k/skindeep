@@ -235,8 +235,11 @@ typedef struct {
     double size;        /* SPLIT_DONE: its size, rounded */
 } sk_skin_event;
 
-/* A pointer event at (x, y) window points; button 1 is the left. While
- * a drag or a press the skin took is held, every event is the skin's. */
+/* A pointer event at (x, y) window points; button 1 is the left. The
+ * window gives the view every event first: NOTHING leaves it to the
+ * window (the terminal's, over the terminal), anything else was the
+ * skin's. While a drag or a press the skin took is held, every event
+ * is the skin's, over the terminal too. */
 sk_skin_event sk_skinview_mouse(sk_skinview *v, sk_skin_mouse what, double x, double y, int button);
 sk_skin_cursor sk_skinview_cursor(const sk_skinview *v);
 /* Whether (x, y) lies on the skin and not on the terminal. */

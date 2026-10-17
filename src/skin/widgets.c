@@ -336,9 +336,9 @@ static bool present(const sk_val *x)
 static void parts_init(sk_wparts *p)
 {
     memset(p, 0, sizeof *p);
-    uint32_t *f = &p->root;
-    for (uint32_t *x = f; x <= &p->opt_other; x++)
-        *x = SK_PACK_NONE;
+    p->root = p->label = p->value = p->resets = p->resets_left = SK_PACK_NONE;
+    p->track = p->fill = p->lamp = p->sheet = p->arc_fill = p->dial_text = p->turn = SK_PACK_NONE;
+    p->items = p->row = p->toggle = p->opt_list = p->opt_other = SK_PACK_NONE;
 }
 
 static void add_part(uint32_t **list, uint16_t *n, uint32_t e)
