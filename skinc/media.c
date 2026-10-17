@@ -117,14 +117,19 @@ static uint8_t *png_fixed(const uint8_t *d, size_t n, size_t *out_n)
 {
     sk_buf out = {0};
     size_t done = 0;
-    for (size_t at = 8; at + 12 <= n;) {
+    for (size_t at = 8; at + 8 <= n;) {
         size_t len = be32(d + at);
-        if (len > n - at - 12)
-            break;
+        /* An empty IDAT goes even when the file ends before its CRC:
+         * stb_image reads its length and type all the same. */
         if (!memcmp(d + at + 4, "IDAT", 4) && len == 0) {
             sk_buf_append(&out, d + done, at - done);
-            done = at + 12;
-        } else if (!memcmp(d + at + 4, "PLTE", 4) && len < 768 && len % 3 == 0) {
+            done = SK_MIN(at + 12, n);
+            at += 12;
+            continue;
+        }
+        if (at + 12 > n || len > n - at - 12)
+            break;
+        if (!memcmp(d + at + 4, "PLTE", 4) && len < 768 && len % 3 == 0) {
             static const uint8_t head[8] = {0, 0, 3, 0, 'P', 'L', 'T', 'E'};
             sk_buf_append(&out, d + done, at - done);
             sk_buf_append(&out, head, 8);
