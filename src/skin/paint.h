@@ -113,9 +113,13 @@ void sk_paint_px(sk_image *dst, const sk_paint_env *env, uint32_t root, float sc
  * and clip-path applied, opacity and blend not. NINE: its box shadows
  * and border, outside and inset, without its background. */
 void sk_paint_layer(sk_image *dst, const sk_paint_env *env, uint32_t i, uint8_t part, const sk_xform *own);
-/* Whether node i starts a stacking context of its own inside root's,
- * as the painter decides it: what a layer of a node that does not
- * must leave alone. */
-bool sk_paint_makes_context(const sk_layout *l, uint32_t i, uint32_t root);
+/* Whether the subtree of sub[0], its nodes sub[0..n), paints at one
+ * place in the painting order, as laid out in l: a stacking context of
+ * its own whatever its opacity does, a positioned box all of whose
+ * positioned descendants and contexts stack at z 0 and that has no
+ * outline, or a box with none of them; nothing in it blending with
+ * what lies below it. What a picture of a subtree must be, to be drawn
+ * where the painter would paint it. */
+bool sk_paint_at_once(const sk_layout *l, const uint32_t *sub, size_t n);
 
 #endif

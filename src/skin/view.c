@@ -389,38 +389,6 @@ static void kept_drop(sk_skinview *v, sk_vkept *k)
     k->valid = false;
 }
 
-/* Whether kept subtree root n paints at one place in the painting order
- * in the styles it shows now: a stacking context, a positioned box all
- * of whose positioned descendants stack at 0, or a box with none. */
-static bool kept_at_once(const sk_skinview *v, const sk_vkept *k)
-{
-    const sk_layout *l = &v->layout;
-    uint32_t n = k->node;
-    const sk_css_style *s = v->lnodes[n].style;
-    if (!s || !l->boxes[n].generated || s->display == SK_DISPLAY_INLINE)
-        return false;
-    bool positioned = s->position != SK_POS_STATIC;
-    if ((positioned && (!s->z_auto || s->position == SK_POS_FIXED)) || s->nclip || s->ntransform ||
-        s->mix_blend != SK_MIX_NORMAL || s->isolate || (s->nfilter && s->opacity >= 1))
-        return true;
-    if (positioned && s->outline_style == SK_BORDER_SOLID && s->outline_width > 0)
-        return false;
-    for (uint32_t i = 1; i < k->nsub; i++) {
-        uint32_t d = k->sub[i];
-        const sk_css_style *ds = v->lnodes[d].style;
-        if (!ds || !l->boxes[d].generated || l->boxes[d].svg_content)
-            continue;
-        if (ds->mix_blend != SK_MIX_NORMAL)
-            return false;
-        bool inl = ds->display == SK_DISPLAY_INLINE && v->lnodes[d].kind != SK_EL_SVG;
-        bool ctx = sk_paint_makes_context(l, d, NONE);
-        if (!ctx && (ds->position == SK_POS_STATIC || inl))
-            continue;
-        if (!positioned || (ctx && !ds->z_auto && ds->z_index != 0))
-            return false;
-    }
-    return true;
-}
 
 /* Kept subtree k's picture, painted anew when what it paints changed
  * (its nodes' signatures, the scale), on whole pixels of the frame. */
@@ -460,7 +428,7 @@ static void kept_choose(sk_skinview *v)
         uint32_t n = k->node;
         const sk_vnode *x = &v->nodes[n];
         bool ok = x->live && x->base && !v->busy[n] && !(v->layer_ok[n] & SK_VLAYER_SUBTREE) &&
-                  v->layout.boxes[n].generated && kept_at_once(v, k);
+                  v->layout.boxes[n].generated && sk_paint_at_once(&v->layout, k->sub, k->nsub);
         uint64_t key = 1469598103934665603ull;
         double s = v->k * v->scale;
         key = fnv(key, &s, sizeof s);

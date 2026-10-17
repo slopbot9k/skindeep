@@ -541,49 +541,12 @@ static uint64_t geom_of(const lpass *L, uint32_t e)
 }
 
 /* Whether e's subtree paints at one place in the painting order, as
- * laid out now. */
+ * laid out now (paint.h). */
 static bool paints_at_once(const lpass *L, uint32_t e)
 {
-    const sk_layout *l = &L->v->layout;
-    const sk_lbox *b = &l->boxes[e];
-    const sk_css_style *s = l->nodes[e].style;
-    if (!b->generated || !s)
-        return false;
-    if (b->svg_content)
-        return true;
-    if (s->display == SK_DISPLAY_INLINE && l->nodes[e].kind != SK_EL_SVG)
-        return false;
-    bool positioned = s->position != SK_POS_STATIC;
-    /* A context whatever its opacity does: what it holds paints inside
-     * its group. */
-    bool filtered = false;
-    for (uint16_t i = 0; i < s->nfilter; i++)
-        filtered |= s->filter[i].kind == SK_FX_BLUR ? s->filter[i].amount != 0 : true;
-    if ((positioned && (!s->z_auto || s->position == SK_POS_FIXED)) || filtered || s->nclip ||
-        s->mix_blend != SK_MIX_NORMAL || s->isolate || s->ntransform)
-        return true;
-    if (positioned && s->outline_style == SK_BORDER_SOLID && s->outline_width > 0)
-        return false;
     u32s sub = {0};
     subtree(L->p, e, &sub, 0);
-    bool ok = true;
-    for (size_t i = 1; i < sub.len && ok; i++) {
-        uint32_t d = sub.ptr[i];
-        const sk_lbox *db = &l->boxes[d];
-        const sk_css_style *ds = l->nodes[d].style;
-        if (!db->generated || db->svg_content || !ds)
-            continue;
-        if (ds->mix_blend != SK_MIX_NORMAL)
-            ok = false;
-        bool inl = ds->display == SK_DISPLAY_INLINE && l->nodes[d].kind != SK_EL_SVG;
-        bool ctx = sk_paint_makes_context(l, d, NONE);
-        bool entry = ctx || (ds->position != SK_POS_STATIC && !inl);
-        if (!entry)
-            continue;
-        int32_t z = ctx && !ds->z_auto ? ds->z_index : 0;
-        if (!positioned || z != 0)
-            ok = false;
-    }
+    bool ok = sk_paint_at_once(&L->v->layout, sub.ptr, sub.len);
     sk_vec_free(&sub);
     return ok;
 }

@@ -1569,13 +1569,43 @@ void sk_paint_layer(sk_image *dst, const sk_paint_env *env, uint32_t i, uint8_t 
     sk_vec_free(&P.masks);
 }
 
-bool sk_paint_makes_context(const sk_layout *l, uint32_t i, uint32_t root)
+bool sk_paint_at_once(const sk_layout *l, const uint32_t *sub, size_t n)
 {
-    if (i >= l->n || !l->boxes[i].generated || !l->nodes[i].style)
+    if (!n || sub[0] >= l->n)
         return false;
+    uint32_t e = sub[0];
+    const sk_lbox *b = &l->boxes[e];
+    const sk_css_style *s = l->nodes[e].style;
+    if (!b->generated || !s)
+        return false;
+    if (b->svg_content)
+        return true;
     painter P;
     memset(&P, 0, sizeof P);
     P.l = l;
     P.nodes = l->nodes;
-    return makes_context(&P, i, root);
+    if (is_inline(&P, e))
+        return false;
+    bool pos = positioned(s);
+    /* A context whatever its opacity does: what it holds paints inside
+     * its group. */
+    if ((pos && (!s->z_auto || s->position == SK_POS_FIXED)) || s->nfilter || s->nclip || s->ntransform ||
+        s->mix_blend != SK_MIX_NORMAL || s->isolate)
+        return true;
+    if (pos && s->outline_style == SK_BORDER_SOLID && s->outline_width > 0)
+        return false;
+    for (size_t i = 1; i < n; i++) {
+        uint32_t d = sub[i];
+        if (d >= l->n || !l->boxes[d].generated || l->boxes[d].svg_content || !l->nodes[d].style)
+            continue;
+        const sk_css_style *ds = l->nodes[d].style;
+        if (ds->mix_blend != SK_MIX_NORMAL)
+            return false;
+        bool ctx = makes_context(&P, d, SK_PACK_NONE);
+        if (!ctx && (!positioned(ds) || is_inline(&P, d)))
+            continue;
+        if (!pos || (ctx && !ds->z_auto && ds->z_index != 0))
+            return false;
+    }
+    return true;
 }
