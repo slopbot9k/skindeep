@@ -9,6 +9,8 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+size_t sk_tail_max_line = SK_TAIL_MAX_LINE;
+
 struct sk_tail {
     char *file;
     sk_tail_line_fn fn;
@@ -20,6 +22,10 @@ struct sk_tail {
     uint64_t last;
     bool stopped;
     sk_buf rest; /* a partial last line */
+    bool skipping; /* within a line longer than sk_tail_max_line */
+    bool known;    /* dev and ino are the file's as last read */
+    dev_t dev;
+    ino_t ino;
     sk_arena arena;
 };
 
@@ -47,15 +53,31 @@ static void deliver(sk_tail *t, const char *line, size_t n, bool history)
  * read. */
 static bool read_chunk(sk_tail *t, bool history, uint64_t limit)
 {
-    int fd = open(t->file, O_RDONLY);
+    /* Non-blocking: a fifo there would hold the thread until written. */
+    int fd = open(t->file, O_RDONLY | O_CLOEXEC | O_NONBLOCK);
     if (fd < 0)
         return false; /* not there yet, or rotated: the next poll tries */
     struct stat st;
     bool got = false;
-    if (fstat(fd, &st) == 0) {
+    if (fstat(fd, &st) == 0 && S_ISREG(st.st_mode)) {
+        /* Another file in its place: read from its start, as appended. */
+        if (t->known && (st.st_dev != t->dev || st.st_ino != t->ino)) {
+            t->dev = st.st_dev;
+            t->ino = st.st_ino;
+            t->offset = 0;
+            t->history_end = 0;
+            t->skipping = false;
+            sk_buf_clear(&t->rest);
+            close(fd);
+            return false;
+        }
+        t->known = true;
+        t->dev = st.st_dev;
+        t->ino = st.st_ino;
         uint64_t size = SK_MIN((uint64_t)st.st_size, limit);
         if (size < t->offset) {
             t->offset = 0;
+            t->skipping = false;
             sk_buf_clear(&t->rest);
         }
         if (size > t->offset) {
@@ -68,9 +90,15 @@ static bool read_chunk(sk_tail *t, bool history, uint64_t limit)
                 t->offset += (uint64_t)n;
                 t->rest.len = start + (size_t)n;
                 t->rest.ptr[t->rest.len] = 0;
-                /* Every whole line goes out; the partial last one waits. */
                 size_t from = 0;
-                for (size_t i = 0; i < t->rest.len; i++) {
+                /* The rest of a line too long to keep, up to its end. */
+                if (t->skipping) {
+                    const char *nl = memchr(t->rest.ptr, '\n', t->rest.len);
+                    from = nl ? (size_t)(nl - t->rest.ptr) + 1 : t->rest.len;
+                    t->skipping = !nl;
+                }
+                /* Every whole line goes out; the partial last one waits. */
+                for (size_t i = from; i < t->rest.len; i++) {
                     if (t->rest.ptr[i] != '\n')
                         continue;
                     deliver(t, t->rest.ptr + from, i - from, history);
@@ -79,6 +107,10 @@ static bool read_chunk(sk_tail *t, bool history, uint64_t limit)
                         break;
                 }
                 sk_buf_consume(&t->rest, from);
+                if (t->rest.len > sk_tail_max_line) {
+                    sk_buf_clear(&t->rest);
+                    t->skipping = true;
+                }
             }
         }
     }

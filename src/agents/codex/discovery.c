@@ -28,6 +28,8 @@
 #define GRACE_MS 2000
 #define ACTIVE_MS 20000
 #define CHUNK (64 * 1024)
+/* A rollout's first line, its session_meta, at most. */
+#define MAX_META ((size_t)16 << 20)
 #define MAX_TREE 4096
 #define MAX_BASES 16
 
@@ -462,9 +464,17 @@ static meta *meta_of(const sk_json *v)
 static meta *first_line(const char *file, bool *complete)
 {
     *complete = false;
-    int fd = open(file, O_RDONLY);
+    /* Non-blocking, so a fifo is refused rather than waited on; that and
+     * a first line past MAX_META are never read again. */
+    int fd = open(file, O_RDONLY | O_CLOEXEC | O_NONBLOCK);
     if (fd < 0)
         return NULL;
+    struct stat st;
+    if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
+        close(fd);
+        *complete = true;
+        return NULL;
+    }
     sk_buf line = {0};
     char *chunk = sk_xmalloc(CHUNK);
     off_t pos = 0;
@@ -483,13 +493,17 @@ static meta *first_line(const char *file, bool *complete)
             *complete = true;
             break;
         }
+        if (line.len > MAX_META) {
+            *complete = failed = true;
+            break;
+        }
         pos += n;
     }
     free(chunk);
     close(fd);
     meta *m = NULL;
     if (failed) {
-        *complete = false;
+        *complete = line.len > MAX_META;
     } else {
         sk_arena a;
         sk_arena_init(&a, 0);

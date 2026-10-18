@@ -9,12 +9,10 @@
 #include "../../core/agentdirs.h"
 #include "../../platform/procfds.h"
 #include "../../platform/file.h"
+#include "../../sessions/files.h"
 
-#include <errno.h>
-#include <fcntl.h>
 #include <string.h>
 #include <sys/stat.h>
-#include <unistd.h>
 
 static bool has(const char *s, size_t n, const char *needle, size_t m)
 {
@@ -67,23 +65,11 @@ void sk_codex_names_init(sk_codex_names *n, const sk_envp *env)
     free(home);
 }
 
+/* The index whole, a regular file of at most 64 MiB. */
 static bool read_all(const char *path, sk_buf *out)
 {
-    int fd = open(path, O_RDONLY);
-    if (fd < 0)
-        return false;
     sk_buf_clear(out);
-    char chunk[65536];
-    for (;;) {
-        ssize_t r = read(fd, chunk, sizeof chunk);
-        if (r < 0 && errno == EINTR)
-            continue;
-        if (r <= 0) {
-            close(fd);
-            return r == 0;
-        }
-        sk_buf_append(out, chunk, (size_t)r);
-    }
+    return sk_files_read(path, (size_t)64 << 20, out);
 }
 
 const char *sk_codex_names_of(sk_codex_names *n, const char *id)

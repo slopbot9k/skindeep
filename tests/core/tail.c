@@ -238,6 +238,67 @@ static void test_skips_bad_lines_and_survives_truncation(void)
     free(file);
 }
 
+/* A line longer than the tail keeps is skipped to its end, and the lines
+ * after it arrive: a file with no newline grew the partial line by a
+ * chunk every poll. */
+static void test_a_line_too_long_is_skipped(void)
+{
+    size_t was = sk_tail_max_line;
+    sk_tail_max_line = 64;
+    char *file = path_in_tmp("log.jsonl");
+    append(file, "{\"h\":1}\n{\"p\":\"");
+    got_t g = {0};
+    sk_tail *t = sk_tail_new(file, on_line, &g, -1);
+    CHECK_INT(g.values.len, 1);
+    for (int i = 0; i < 4; i++)
+        append(file, "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx");
+    sk_tail_poll(t, 1000);
+    append(file, "xxxx\"}\n{\"b\":2}\n");
+    sk_tail_poll(t, 2000);
+    CHECK_INT(g.values.len, 2);
+    CHECK(g.values.len == 2 && g.values.ptr[1] == 2 && !g.history.ptr[1]);
+    sk_tail_free(t);
+    got_free(&g);
+    free(file);
+    sk_tail_max_line = was;
+}
+
+/* Another file renamed into its place, longer than the first, is read
+ * from its start, not from where the first one ended. */
+static void test_a_file_replaced_is_read_from_its_start(void)
+{
+    char *file = path_in_tmp("log.jsonl"), *next = path_in_tmp("next.jsonl");
+    append(file, "{\"h\":1}\n");
+    got_t g = {0};
+    sk_tail *t = sk_tail_new(file, on_line, &g, -1);
+    CHECK_INT(g.values.len, 1);
+    append(next, "{\"a\":5}\n{\"b\":6}\n");
+    CHECK(rename(next, file) == 0);
+    sk_tail_poll(t, 1000);
+    sk_tail_poll(t, 2000);
+    CHECK_INT(g.values.len, 3);
+    CHECK(g.values.len == 3 && g.values.ptr[1] == 5 && g.values.ptr[2] == 6 && !g.history.ptr[1]);
+    sk_tail_free(t);
+    got_free(&g);
+    free(file);
+    free(next);
+}
+
+/* A fifo where the transcript should be is not read: opening it held
+ * the thread until something wrote to it. */
+static void test_a_fifo_is_not_waited_on(void)
+{
+    char *file = path_in_tmp("fifo.jsonl");
+    CHECK(mkfifo(file, 0600) == 0);
+    got_t g = {0};
+    sk_tail *t = sk_tail_new(file, on_line, &g, -1);
+    sk_tail_poll(t, 1000);
+    CHECK_INT(g.values.len, 0);
+    sk_tail_free(t);
+    got_free(&g);
+    free(file);
+}
+
 const sk_test sk_suite_tail[] = {
     T(test_t1_large_file_once_as_history),
     T(test_t2_appended_lines_and_a_partial_line),
@@ -247,5 +308,8 @@ const sk_test sk_suite_tail[] = {
     T(test_t6_stopped_tail_reads_no_more_history),
     T(test_t7_an_end_reads_to_that_byte_and_nothing_after),
     T(test_skips_bad_lines_and_survives_truncation),
+    T(test_a_line_too_long_is_skipped),
+    T(test_a_file_replaced_is_read_from_its_start),
+    T(test_a_fifo_is_not_waited_on),
     {0},
 };

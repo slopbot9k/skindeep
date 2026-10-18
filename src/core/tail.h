@@ -11,6 +11,11 @@
 
 #define SK_TAIL_CHUNK (8 * 1024 * 1024)
 #define SK_TAIL_POLL_MS 500
+/* A line longer than this is skipped, not kept whole: a file with no
+ * newline would grow the partial line by a chunk every poll. A test may
+ * lower it. */
+#define SK_TAIL_MAX_LINE ((size_t)64 << 20)
+extern size_t sk_tail_max_line;
 
 /* One line's value, valid during the call only. */
 typedef void (*sk_tail_line_fn)(void *ud, const sk_json *obj, bool history);
