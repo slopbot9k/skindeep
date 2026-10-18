@@ -4,6 +4,7 @@
 #include <poll.h>
 #include <pthread.h>
 #include <signal.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #define sleep_ms sk_test_sleep_ms
@@ -175,6 +176,49 @@ static void test_signal_becomes_an_event(void)
     CHECK_INT(sk_loop_signal(NULL, 0, NULL, NULL), -1);
 }
 
+/* Two children reaped together, each callback unwatching the other, as
+ * a session closing frees what its sibling's callback would be given:
+ * the second callback no longer runs. */
+typedef struct {
+    pid_t other;
+    int *calls;
+} sibling;
+
+static void on_sibling(sk_loop *loop, pid_t pid, int wstatus, void *ud)
+{
+    (void)pid;
+    (void)wstatus;
+    sibling *s = ud;
+    (*s->calls)++;
+    sk_loop_unchild(loop, s->other);
+}
+
+static void test_a_child_unwatched_by_another_s_callback_is_not_told(void)
+{
+    sk_loop *loop = sk_loop_new();
+    pid_t a = fork();
+    if (a == 0)
+        _exit(0);
+    pid_t b = fork();
+    if (b == 0)
+        _exit(0);
+    /* Both exited, neither reaped. */
+    siginfo_t info;
+    CHECK(waitid(P_PID, (id_t)a, &info, WEXITED | WNOWAIT) == 0);
+    CHECK(waitid(P_PID, (id_t)b, &info, WEXITED | WNOWAIT) == 0);
+    int calls = 0;
+    sibling sa = {b, &calls}, sb = {a, &calls};
+    CHECK_INT(sk_loop_child(loop, a, on_sibling, &sa), 0);
+    CHECK_INT(sk_loop_child(loop, b, on_sibling, &sb), 0);
+    for (int i = 0; i < 10 && !calls; i++)
+        sk_loop_once(loop, 50);
+    sk_loop_once(loop, 50);
+    CHECK_INT(calls, 1);
+    /* Both reaped all the same. */
+    CHECK(waitpid(a, NULL, WNOHANG) < 0 && waitpid(b, NULL, WNOHANG) < 0);
+    sk_loop_free(loop);
+}
+
 const sk_test sk_suite_loop[] = {
     T(test_timer_waits),
     T(test_due_timers_run_in_due_order),
@@ -182,5 +226,6 @@ const sk_test sk_suite_loop[] = {
     T(test_watch_and_unwatch),
     T(test_post_from_another_thread),
     T(test_signal_becomes_an_event),
+    T(test_a_child_unwatched_by_another_s_callback_is_not_told),
     {0},
 };

@@ -49,9 +49,12 @@ struct sk_loop {
     SK_VEC(struct pollfd) fds;
     SK_VEC(int) fd_ids;
     SK_VEC(child) children;
+    child *reaped;     /* the exited ones reap_children is telling, unchild clears */
+    size_t nreaped;
     bool children_due; /* a SIGCHLD came, or a child was just added */
     bool took_sigchld;
     int next_id;
+    bool wrapped; /* next_id passed INT_MAX: an id may still be in use */
     uint64_t round;
     bool stopped;
     int wake[2];
@@ -163,11 +166,29 @@ void sk_loop_free(sk_loop *loop)
     free(loop);
 }
 
+static bool id_used(const sk_loop *loop, int id)
+{
+    for (size_t i = 0; i < loop->watchers.len; i++)
+        if (loop->watchers.ptr[i].id == id)
+            return true;
+    for (size_t i = 0; i < loop->timers.len; i++)
+        if (loop->timers.ptr[i].id == id)
+            return true;
+    return false;
+}
+
+/* Past INT_MAX the ids start again at 1, skipping those still held. */
 static int new_id(sk_loop *loop)
 {
-    if (loop->next_id == INT_MAX)
-        loop->next_id = 1;
-    return loop->next_id++;
+    for (;;) {
+        if (loop->next_id == INT_MAX) {
+            loop->next_id = 1;
+            loop->wrapped = true;
+        }
+        int id = loop->next_id++;
+        if (!loop->wrapped || !id_used(loop, id))
+            return id;
+    }
 }
 
 int sk_loop_watch(sk_loop *loop, int fd, short events, sk_io_cb cb, void *ud)
@@ -266,6 +287,10 @@ int sk_loop_child(sk_loop *loop, pid_t pid, sk_child_cb cb, void *ud)
 
 void sk_loop_unchild(sk_loop *loop, pid_t pid)
 {
+    /* One reaped with it, its callback not yet run: it no longer runs. */
+    for (size_t i = 0; i < loop->nreaped; i++)
+        if (loop->reaped[i].pid == pid)
+            loop->reaped[i].cb = NULL;
     for (size_t i = 0; i < loop->children.len; i++) {
         if (loop->children.ptr[i].pid == pid) {
             loop->children.ptr[i] = loop->children.ptr[--loop->children.len];
@@ -275,7 +300,9 @@ void sk_loop_unchild(sk_loop *loop, pid_t pid)
 }
 
 /* Every watched child that has exited, reaped, then told: the callbacks
- * run after the list is settled, so one may add or remove others. */
+ * run after the list is settled, so one may add or remove others, and
+ * one that unwatches another reaped with it, perhaps freeing what that
+ * one's callback would be given, stops that callback. */
 static void reap_children(sk_loop *loop)
 {
     loop->children_due = false;
@@ -295,8 +322,13 @@ static void reap_children(sk_loop *loop)
         sk_vec_push(&done, c);
         sk_vec_push(&statuses, r == c.pid ? ws : -1);
     }
+    loop->reaped = done.ptr;
+    loop->nreaped = done.len;
     for (size_t i = 0; i < done.len; i++)
-        done.ptr[i].cb(loop, done.ptr[i].pid, statuses.ptr[i], done.ptr[i].ud);
+        if (done.ptr[i].cb)
+            done.ptr[i].cb(loop, done.ptr[i].pid, statuses.ptr[i], done.ptr[i].ud);
+    loop->reaped = NULL;
+    loop->nreaped = 0;
     sk_vec_free(&done);
     sk_vec_free(&statuses);
 }
