@@ -50,6 +50,7 @@
     X(foreign)                                                               \
     X(newtab)                                                                \
     X(opener)                                                                \
+    X(control)                                                               \
     X(picker)                                                                \
     X(ask)                                                                   \
     X(chooser)                                                               \

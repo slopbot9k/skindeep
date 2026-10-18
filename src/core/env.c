@@ -26,8 +26,9 @@ const char *sk_envp_get(const sk_envp *e, const char *name)
 
 void sk_envp_set(sk_envp *e, const char *name, const char *value)
 {
-    size_t i = find(e, name);
-    if (i != SIZE_MAX) {
+    /* Every entry of the name: an environment may hold one twice, and
+     * the first a getenv finds would be the old. */
+    for (size_t i; (i = find(e, name)) != SIZE_MAX;) {
         free(e->vars.ptr[i]);
         memmove(e->vars.ptr + i, e->vars.ptr + i + 1, (e->vars.len - i) * sizeof *e->vars.ptr);
         e->vars.len--;

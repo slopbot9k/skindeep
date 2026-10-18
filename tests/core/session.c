@@ -452,8 +452,10 @@ static void test_child_environment(void)
 {
     rec r;
     rec_init(&r);
-    const char *dropped[] = {"SKINNED_SKIN", "SKINNED_RUNTIME_DIR", "CHROME_DESKTOP", "FC_FONTATIONS",
-                             "SKINNED_MUTE"};
+    /* Every SKINNED_ variable: SKINNED_CONTROL names the control socket. */
+    const char *dropped[] = {"SKINNED_SKIN",    "SKINNED_RUNTIME_DIR", "CHROME_DESKTOP", "FC_FONTATIONS",
+                             "SKINNED_MUTE",    "SKINNED_CONTROL",     "SKINNED_HIDDEN", "SKINNED_SHOT",
+                             "SKINNED_ANYTHING"};
     for (size_t i = 0; i < SK_LEN(dropped); i++)
         sk_envp_set(&r.env, dropped[i], "x");
     sk_envp_set(&r.env, "TERM", "dumb");
@@ -478,6 +480,23 @@ static void test_child_environment(void)
     CHECK(sk_envp_get(&child, "SKINNED_SKIN") == NULL);
     CHECK_STR(sk_envp_get(&r.env, "TERM"), "dumb");
     sk_envp_free(&child);
+    /* A name twice in the environment: the app's value alone, once. */
+    sk_envp twice;
+    sk_envp_from(&twice, NULL);
+    sk_strv_push(&twice.vars, "TERM=dumb");
+    sk_strv_push(&twice.vars, "TERM=vt100");
+    sk_strv_push(&twice.vars, "SKINNED_CONTROL=/x");
+    sk_strv_push(&twice.vars, "SKINNED_CONTROL=/y");
+    sk_session_child_env(&twice, &child);
+    size_t terms = 0;
+    for (size_t i = 0; i < child.vars.len; i++) {
+        terms += !strncmp(child.vars.ptr[i], "TERM=", 5);
+        CHECK(strncmp(child.vars.ptr[i], "SKINNED_", 8) != 0);
+    }
+    CHECK_INT(terms, 1);
+    CHECK_STR(sk_envp_get(&child, "TERM"), "xterm-256color");
+    sk_envp_free(&child);
+    sk_envp_free(&twice);
     sk_session_child_env(NULL, &child);
     CHECK_INT(child.vars.len, 2);
     sk_envp_free(&child);

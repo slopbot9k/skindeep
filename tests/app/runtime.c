@@ -73,7 +73,7 @@ static void test_create_makes_a_private_dir_and_sweeps_dead_pids(void)
     CHECK_INT(sk_mkdirs(huge, 0700), 0);
     char *file = path(dead_deep, "f");
     touch(file);
-    char *dir = sk_runtime_create(&e, NULL);
+    char *dir = sk_runtime_create(&e);
     char *want = path(root, "%ld", (long)getpid());
     CHECK_STR(dir, want);
     struct stat st;
@@ -85,7 +85,7 @@ static void test_create_makes_a_private_dir_and_sweeps_dead_pids(void)
     CHECK(exists(other));
     CHECK(!exists(huge)); /* beyond a pid, as Node's process.kill refused it */
     /* Again: its own dir stays. */
-    char *again = sk_runtime_create(&e, NULL);
+    char *again = sk_runtime_create(&e);
     CHECK_STR(again, want);
     CHECK(exists(dir));
     CHECK_INT(sk_runtime_remove(dir), 0);
@@ -96,31 +96,6 @@ static void test_create_makes_a_private_dir_and_sweeps_dead_pids(void)
     free(dir), free(want), free(again);
 }
 
-static void test_the_launchers_dir_is_taken_when_it_lies_in_the_root(void)
-{
-    const char *tmp = sk_test_tmpdir();
-    sk_env e = env_in(tmp);
-    char *given = path(tmp, "claude-skins/4242");
-    char *dir = sk_runtime_create(&e, given);
-    CHECK_STR(dir, given);
-    CHECK(exists(given));
-    free(dir);
-    /* Built from a TMPDIR that ends with a slash, as macOS's does. */
-    char *slashed = path(tmp, "/claude-skins//4243");
-    dir = sk_runtime_create(&e, slashed);
-    CHECK_STR(dir, slashed);
-    free(dir);
-    char *elsewhere = path(tmp, "elsewhere/4244");
-    dir = sk_runtime_create(&e, elsewhere);
-    char *own = path(tmp, "claude-skins/%ld", (long)getpid());
-    CHECK_STR(dir, own);
-    CHECK(!exists(elsewhere));
-    free(dir);
-    dir = sk_runtime_create(&e, "");
-    CHECK_STR(dir, own);
-    free(dir), free(given), free(slashed), free(elsewhere), free(own);
-}
-
 static void test_a_root_that_cannot_be_made_fails(void)
 {
     const char *tmp = sk_test_tmpdir();
@@ -128,7 +103,7 @@ static void test_a_root_that_cannot_be_made_fails(void)
     touch(blocker);
     sk_env e = env_in(blocker);
     errno = 0;
-    CHECK(sk_runtime_create(&e, NULL) == NULL);
+    CHECK(sk_runtime_create(&e) == NULL);
     CHECK(errno != 0);
     free(blocker);
 }
@@ -148,7 +123,7 @@ static void test_a_root_not_of_this_user_alone_is_refused(void)
     CHECK(symlink(victim, root) == 0);
     sk_env e = env_in(base);
     errno = 0;
-    CHECK(sk_runtime_create(&e, NULL) == NULL);
+    CHECK(sk_runtime_create(&e) == NULL);
     CHECK(errno == EPERM);
     CHECK(exists(kept));
     /* This user's own, made 0755: tightened, and used. */
@@ -156,7 +131,7 @@ static void test_a_root_not_of_this_user_alone_is_refused(void)
     CHECK_INT(sk_mkdirs(loose, 0700), 0);
     CHECK(chmod(loose, 0755) == 0);
     e = env_in(loose_base);
-    char *dir = sk_runtime_create(&e, NULL);
+    char *dir = sk_runtime_create(&e);
     CHECK(dir != NULL);
     struct stat st;
     CHECK(lstat(loose, &st) == 0 && (st.st_mode & 0777) == 0700);
@@ -249,7 +224,6 @@ static void test_clear_removes_the_logs_of_ended_launches(void)
 
 const sk_test sk_suite_runtime[] = {
     T(test_create_makes_a_private_dir_and_sweeps_dead_pids),
-    T(test_the_launchers_dir_is_taken_when_it_lies_in_the_root),
     T(test_a_root_that_cannot_be_made_fails),
     T(test_a_root_not_of_this_user_alone_is_refused),
     T(test_dangling_hook_links_are_swept),

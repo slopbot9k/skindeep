@@ -11,12 +11,10 @@
 #define SK_RUNTIME_KEEP_LOGS 10
 
 /* Makes the root, mode 0700, removes the dirs of launches whose pid is
- * dead and sweeps pids/, then makes this launch's dir, mode 0700, and
- * returns it, malloc'd. That is given, the dir the launcher picked
- * (SKINNED_RUNTIME_DIR), when it lies directly in the root, else
- * <root>/<pid>. NULL with errno when a dir cannot be made, listed or
- * removed. */
-char *sk_runtime_create(const sk_env *e, const char *given);
+ * dead and sweeps pids/, then makes this launch's dir, <root>/<pid>,
+ * mode 0700, and returns it, malloc'd. NULL with errno when a dir cannot
+ * be made, listed or removed, or the root is not the user's alone. */
+char *sk_runtime_create(const sk_env *e);
 /* Removes each link of root/pids whose socket is gone. */
 void sk_runtime_sweep_links(const char *root);
 /* rm -rf: path and all under it, links not followed. 0, or -1 with

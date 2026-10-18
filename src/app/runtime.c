@@ -5,7 +5,6 @@
 #include "../base/paths.h"
 #include "../base/strv.h"
 #include "options.h"
-#include "js.h"
 
 #include <dirent.h>
 #include <errno.h>
@@ -97,30 +96,7 @@ void sk_runtime_sweep_links(const char *root)
     free(dir);
 }
 
-/* p normalized, with no slash at its end but the root's. */
-static void canonical(sk_buf *out, sk_str p)
-{
-    sk_js_normalize(out, p);
-    if (out->len > 1 && out->ptr[out->len - 1] == '/')
-        out->ptr[--out->len] = 0;
-}
-
-/* given's dir is the root. Both are compared normalized: the launcher
- * builds given from $TMPDIR, which ends with a slash on macOS. */
-static bool in_root(const char *given, const char *root)
-{
-    if (!given || !*given)
-        return false;
-    sk_buf a = {0}, b = {0};
-    canonical(&a, sk_js_dirname(sk_str_c(given)));
-    canonical(&b, sk_str_c(root));
-    bool same = !strcmp(a.ptr, b.ptr);
-    sk_buf_free(&a);
-    sk_buf_free(&b);
-    return same;
-}
-
-char *sk_runtime_create(const sk_env *e, const char *given)
+char *sk_runtime_create(const sk_env *e)
 {
     char *root = sk_path_runtime_base(e), *dir = NULL;
     sk_strv names = {0};
@@ -150,14 +126,10 @@ char *sk_runtime_create(const sk_env *e, const char *given)
             goto out;
     }
     sk_runtime_sweep_links(root);
-    if (in_root(given, root)) {
-        dir = sk_xstrdup(given);
-    } else {
-        sk_buf name = {0};
-        sk_buf_printf(&name, "%llu", (unsigned long long)self);
-        dir = sk_path_join(root, name.ptr);
-        sk_buf_free(&name);
-    }
+    sk_buf name = {0};
+    sk_buf_printf(&name, "%llu", (unsigned long long)self);
+    dir = sk_path_join(root, name.ptr);
+    sk_buf_free(&name);
     rc = sk_mkdirs(dir, 0700);
 out:;
     int saved = errno;

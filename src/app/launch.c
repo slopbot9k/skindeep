@@ -73,7 +73,7 @@ int sk_launch_open(sk_launch *l, const sk_options *o, const sk_envp *env, const 
     l->state = sk_path_state(&e);
     l->root = sk_path_runtime_base(&e);
     l->store = sk_runtime_settings_dir(&e);
-    l->run_dir = sk_runtime_create(&e, sk_envp_get(env, "SKINNED_RUNTIME_DIR"));
+    l->run_dir = sk_runtime_create(&e);
     if (!l->state || !l->root || !l->store || !l->run_dir || sk_mkdirs(l->state, 0700) != 0) {
         sk_tell("cannot make the app's directories: %s", strerror(errno));
         sk_launch_close(l);

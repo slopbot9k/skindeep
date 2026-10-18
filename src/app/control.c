@@ -1,6 +1,7 @@
 #include "control.h"
 
 #include "../base/arena.h"
+#include "../base/paths.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -14,11 +15,16 @@
 
 /* A request longer than this ends its connection. */
 #define MAX_LINE (1 << 20)
+/* Answers a peer leaves unread past this end its connection. */
+#define MAX_OUT (64u << 20)
 
 typedef struct conn {
     struct sk_control *c;
     int id, fd, watch;
     sk_buf in;
+    /* Answers not yet written, and the watch for room to write them. */
+    sk_buf out;
+    int out_watch;
     /* Requests not yet answered, and whether the peer has stopped
      * sending: a peer that sends and then shuts its side still gets
      * every answer. */
@@ -51,8 +57,11 @@ static conn *find(sk_control *c, int id)
 static void drop(sk_control *c, conn *k)
 {
     sk_loop_unwatch(c->loop, k->watch);
+    if (k->out_watch)
+        sk_loop_unwatch(c->loop, k->out_watch);
     close(k->fd);
     sk_buf_free(&k->in);
+    sk_buf_free(&k->out);
     for (size_t i = 0; i < c->conns.len; i++)
         if (c->conns.ptr[i] == k) {
             c->conns.ptr[i] = c->conns.ptr[--c->conns.len];
@@ -61,26 +70,42 @@ static void drop(sk_control *c, conn *k)
     free(k);
 }
 
-/* The socket is non-blocking for reads; an answer waits a second at
- * most for room. */
-static bool write_all(int fd, const char *p, size_t n)
+/* What the socket takes of k's answers now: the rest waits for room,
+ * so a peer that does not read holds up nothing but itself. False when
+ * the connection is to end. */
+static bool flush(sk_control *c, conn *k);
+
+static void on_writable(sk_loop *loop, int fd, short revents, void *ud)
 {
-    while (n) {
-        ssize_t w = write(fd, p, n);
+    (void)loop, (void)fd, (void)revents;
+    conn *k = ud;
+    if (!flush(k->c, k))
+        drop(k->c, k);
+}
+
+static bool flush(sk_control *c, conn *k)
+{
+    size_t done = 0;
+    while (done < k->out.len) {
+        ssize_t w = write(k->fd, k->out.ptr + done, k->out.len - done);
         if (w < 0 && errno == EINTR)
             continue;
-        if (w < 0 && errno == EAGAIN) {
-            struct pollfd pf = {fd, POLLOUT, 0};
-            if (poll(&pf, 1, 1000) <= 0)
-                return false;
-            continue;
-        }
+        if (w < 0 && errno == EAGAIN)
+            break;
         if (w <= 0)
             return false;
-        p += w;
-        n -= (size_t)w;
+        done += (size_t)w;
     }
-    return true;
+    sk_buf_consume(&k->out, done);
+    if (k->out.len > MAX_OUT)
+        return false;
+    if (k->out.len && !k->out_watch)
+        k->out_watch = sk_loop_watch(c->loop, k->fd, POLLOUT, on_writable, k);
+    else if (!k->out.len && k->out_watch) {
+        sk_loop_unwatch(c->loop, k->out_watch);
+        k->out_watch = 0;
+    }
+    return !(k->eof && !k->pending && !k->out.len);
 }
 
 typedef struct {
@@ -97,7 +122,8 @@ static void do_answer(void *ud)
     conn *k = find(a->c, a->conn);
     if (k) {
         k->pending--;
-        if (!write_all(k->fd, a->line, a->n) || (k->eof && !k->pending))
+        sk_buf_append(&k->out, a->line, a->n);
+        if (!flush(a->c, k))
             drop(a->c, k);
     }
     free(a);
@@ -169,7 +195,7 @@ static void on_conn(sk_loop *loop, int fd, short revents, void *ud)
     if (r < 0 && (errno == EAGAIN || errno == EINTR))
         return;
     if (r <= 0) {
-        if (!k->pending) {
+        if (!k->pending && !k->out.len) {
             drop(c, k);
             return;
         }
@@ -230,7 +256,24 @@ sk_control *sk_control_open(sk_loop *loop, const char *path, sk_control_fn fn, v
         return NULL;
     }
     memcpy(addr.sun_path, path, n);
-    unlink(path);
+    /* In a folder of the user's alone, and replacing nothing but an old
+     * socket: the path comes from the environment. */
+    char *dir = sk_xstrdup(path), *slash = strrchr(dir, '/');
+    if (slash)
+        *slash = 0;
+    bool private_dir = sk_path_private_dir(slash ? (*dir ? dir : "/") : ".", false);
+    free(dir);
+    struct stat st;
+    bool there = lstat(path, &st) == 0;
+    if (!private_dir || (there && !S_ISSOCK(st.st_mode))) {
+        sk_buf why = {0};
+        sk_buf_printf(&why, "%s: %s", path,
+                      !private_dir ? "its folder is not the user's alone" : "something not a socket is there");
+        *err = why.ptr;
+        return NULL;
+    }
+    if (there)
+        unlink(path);
     int fd = socket(AF_UNIX, SOCK_STREAM, 0);
     mode_t old = umask(077);
     bool ok = fd >= 0 && fcntl(fd, F_SETFD, FD_CLOEXEC) == 0 && fcntl(fd, F_SETFL, O_NONBLOCK) == 0 &&

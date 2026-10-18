@@ -39,10 +39,11 @@
 /* Read at most this much a wake, so one busy tab cannot hold the loop. */
 #define READ_MAX (16 * READ_CHUNK)
 
-/* What Chromium added to the app's environment at startup, and the
- * app's own variables. */
-static const char *const DROPPED_ENV[] = {"CHROME_DESKTOP", "FC_FONTATIONS", "SKINNED_RUNTIME_DIR",
-                                          "SKINNED_SKIN", "SKINNED_MUTE"};
+/* What Chromium added to the app's environment at startup. The app's
+ * own variables, every SKINNED_ one, go too: SKINNED_CONTROL names the
+ * control socket, which a process in a tab must never find. */
+static const char *const DROPPED_ENV[] = {"CHROME_DESKTOP", "FC_FONTATIONS"};
+#define APP_PREFIX "SKINNED_"
 
 /* Where the child failed, before the exec or at it. */
 enum { STAGE_PTY = 1, STAGE_CWD, STAGE_EXEC };
@@ -106,6 +107,15 @@ void sk_session_child_env(const sk_envp *env, sk_envp *out)
     sk_envp_set(out, "COLORTERM", "truecolor");
     for (size_t i = 0; i < SK_LEN(DROPPED_ENV); i++)
         sk_envp_set(out, DROPPED_ENV[i], NULL);
+    for (size_t i = 0; i < out->vars.len;) {
+        if (!strncmp(out->vars.ptr[i], APP_PREFIX, strlen(APP_PREFIX))) {
+            free(out->vars.ptr[i]);
+            memmove(out->vars.ptr + i, out->vars.ptr + i + 1, (out->vars.len - i) * sizeof *out->vars.ptr);
+            out->vars.len--;
+        } else {
+            i++;
+        }
+    }
 }
 
 sk_session *sk_session_new(const sk_session_opts *o)

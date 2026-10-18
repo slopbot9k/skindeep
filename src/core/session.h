@@ -113,7 +113,8 @@ void sk_session_hangup_every(uint64_t grace_ms);
 /* A wait status as the session reports it: the code, or 128+n. */
 int sk_session_exit_status(int wait_status);
 /* The child's environment: env with TERM and COLORTERM set, without
- * the variables of the app and of Chromium. out is overwritten. */
+ * the app's variables (every SKINNED_ one) and Chromium's, each name
+ * once. out is overwritten. */
 void sk_session_child_env(const sk_envp *env, sk_envp *out);
 
 #endif
