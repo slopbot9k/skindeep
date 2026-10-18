@@ -46,6 +46,9 @@ typedef struct {
  * messages: skinc's output, its stdout and stderr as it wrote them, for
  * a skin that does not compile, else a line of why. */
 bool sk_skin_compile(const char *skinc, const char *cache, const char *dir, sk_skin_pack *out, sk_buf *messages);
+/* How long skinc may take before the skin is refused and skinc killed,
+ * in ms; tests make it shorter. */
+extern unsigned sk_skinc_deadline_ms;
 void sk_skin_pack_free(sk_skin_pack *p);
 
 #endif

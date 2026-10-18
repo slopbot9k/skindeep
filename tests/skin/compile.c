@@ -6,11 +6,15 @@
  * found beside the program. */
 #include "../../src/base/paths.h"
 #include "../../src/base/sha256.h"
+#include "../../src/core/loop.h"
 #include "../../src/skin/compile.h"
 #include "../skinc/util.h"
 #include "../test.h"
 
 #include <dirent.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 static const char *skinc(void)
@@ -168,7 +172,62 @@ static void test_beside(void)
     CHECK(sk_skinc_beside("", "") == NULL);
 }
 
+/* A skinc that does not finish in time is killed and the skin refused,
+ * so a hostile skin holds the app for its deadline at most. */
+static void test_a_skinc_too_slow_is_killed(void)
+{
+    char *dir = sk_path_join(sk_test_tmpdir(), "slow"), *fake = sk_path_join(dir, "skinc");
+    char *cache = sk_path_join(sk_test_tmpdir(), "cache-slow");
+    CHECK_INT(sk_mkdirs(dir, 0700), 0);
+    FILE *f = fopen(fake, "w");
+    CHECK(f != NULL);
+    if (f) {
+        fputs("#!/bin/sh\nexec sleep 30\n", f);
+        fclose(f);
+    }
+    chmod(fake, 0755);
+    unsigned saved = sk_skinc_deadline_ms;
+    sk_skinc_deadline_ms = 300;
+    sk_skin_pack p;
+    sk_buf msg = {0};
+    uint64_t t0 = sk_now_ms();
+    CHECK(!sk_skin_compile(fake, cache, "skins/deck", &p, &msg));
+    CHECK(sk_now_ms() - t0 < 5000);
+    CHECK(strstr(sk_buf_cstr(&msg), "skinc took more than 300 ms") != NULL);
+    sk_skinc_deadline_ms = saved;
+    sk_buf_free(&msg);
+    free(dir);
+    free(fake);
+    free(cache);
+}
+
+/* The folder's hash reads no file whole, and a skin's files hold 256
+ * MiB at most, one 64: a sparse file of 100 MiB is refused at once. */
+static void test_a_huge_file_is_refused_before_skinc(void)
+{
+    char *dir = sk_path_join(sk_test_tmpdir(), "huge"), *big = sk_path_join(dir, "big.png");
+    CHECK_INT(sk_mkdirs(dir, 0700), 0);
+    int fd = open(big, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    CHECK(fd >= 0 && ftruncate(fd, (off_t)100 << 20) == 0);
+    if (fd >= 0)
+        close(fd);
+    unsigned char key[32];
+    char err[300] = "";
+    CHECK(!sk_skin_hash(dir, key, err, sizeof err));
+    CHECK(strstr(err, "a skin's files may hold 256 MiB, and one 64 MiB") != NULL);
+    /* At the bound itself, it is read. */
+    fd = open(big, O_WRONLY | O_TRUNC);
+    CHECK(fd >= 0 && ftruncate(fd, (off_t)1 << 20) == 0);
+    if (fd >= 0)
+        close(fd);
+    CHECK(sk_skin_hash(dir, key, err, sizeof err));
+    free(dir);
+    free(big);
+}
+
 const sk_test sk_suite_skin_compile[] = {
+    T(test_a_skinc_too_slow_is_killed),
+    T(test_a_huge_file_is_refused_before_skinc),
     T(test_compile_and_cache),
     T(test_a_skin_that_does_not_compile),
     T(test_key),

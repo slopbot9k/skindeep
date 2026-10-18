@@ -6,16 +6,20 @@
 #include "../base/paths.h"
 #include "../base/sha256.h"
 #include "../core/command.h"
+#include "../core/loop.h"
 #include "packfmt.h"
 
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
+#include <signal.h>
 #include <spawn.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 extern char **environ;
@@ -24,6 +28,15 @@ extern char **environ;
 #define MAX_MESSAGES (64 * 1024)
 /* How deep the folders of a skin may go. */
 #define MAX_DEPTH 32
+/* What a skin folder may hold, before skinc sees it: its hash reads every
+ * file, and a hostile folder may hold a sparse file of gigabytes. The
+ * shipped skins hold a few megabytes. */
+#define MAX_FILES 4096
+#define MAX_FILE_BYTES ((uint64_t)64 << 20)
+#define MAX_TOTAL_BYTES ((uint64_t)256 << 20)
+/* How long skinc may take: the shipped skins compile in under half a
+ * second. Past it, the skin is refused and skinc killed. */
+unsigned sk_skinc_deadline_ms = 20000;
 
 static bool say(char *err, size_t err_len, const char *fmt, ...) SK_PRINTF(3, 4);
 
@@ -103,8 +116,12 @@ static bool gather(const char *root, const char *rel, int depth, path_list *out,
             else
                 ok = gather(root, child, depth + 1, out, err, err_len);
         } else if (S_ISREG(st.st_mode) || (S_ISLNK(st.st_mode) && stat(full, &st) == 0 && S_ISREG(st.st_mode))) {
-            sk_vec_push(out, child);
-            child = NULL;
+            if (out->len >= MAX_FILES) {
+                ok = say(err, err_len, "%s: more than %d files", root, MAX_FILES);
+            } else {
+                sk_vec_push(out, child);
+                child = NULL;
+            }
         }
         free(child);
         free(full);
@@ -112,6 +129,49 @@ static bool gather(const char *root, const char *rel, int depth, path_list *out,
     closedir(d);
     free(dir);
     return ok;
+}
+
+/* The file's name, its size in 8 bytes and its bytes into h, read a
+ * chunk at a time: at most MAX_FILE_BYTES, and *total the folder's so
+ * far at most MAX_TOTAL_BYTES. */
+static bool hash_file(sk_sha256 *h, const char *full, const char *name, uint64_t *total, char *err, size_t err_len)
+{
+    /* Non-blocking: a fifo swapped in for a file never answers. */
+    int fd = open(full, O_RDONLY | O_CLOEXEC | O_NONBLOCK);
+    if (fd < 0)
+        return say(err, err_len, "cannot read %s: %s", full, strerror(errno));
+    struct stat st;
+    if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
+        close(fd);
+        return say(err, err_len, "cannot read %s: not a file", full);
+    }
+    uint64_t n = (uint64_t)st.st_size;
+    if (n > MAX_FILE_BYTES || *total + n > MAX_TOTAL_BYTES) {
+        close(fd);
+        return say(err, err_len, "%s: a skin's files may hold %llu MiB, and one %llu MiB", full,
+                   (unsigned long long)(MAX_TOTAL_BYTES >> 20), (unsigned long long)(MAX_FILE_BYTES >> 20));
+    }
+    *total += n;
+    uint8_t size[8];
+    for (int k = 0; k < 8; k++)
+        size[k] = (uint8_t)(n >> (8 * k));
+    sk_sha256_update(h, name, strlen(name) + 1);
+    sk_sha256_update(h, size, sizeof size);
+    uint8_t chunk[65536];
+    uint64_t done = 0;
+    while (done < n) {
+        ssize_t r = read(fd, chunk, (size_t)SK_MIN((uint64_t)sizeof chunk, n - done));
+        if (r < 0 && errno == EINTR)
+            continue;
+        if (r <= 0) {
+            close(fd);
+            return say(err, err_len, "cannot read %s: %s", full, r < 0 ? strerror(errno) : "it shrank as it was read");
+        }
+        sk_sha256_update(h, chunk, (size_t)r);
+        done += (uint64_t)r;
+    }
+    close(fd);
+    return true;
 }
 
 bool sk_skin_hash(const char *dir, unsigned char out[32], char *err, size_t err_len)
@@ -125,21 +185,11 @@ bool sk_skin_hash(const char *dir, unsigned char out[32], char *err, size_t err_
     uint8_t head[4] = {SK_PACK_MAJOR & 0xff, SK_PACK_MAJOR >> 8, SK_PACK_MINOR & 0xff, SK_PACK_MINOR >> 8};
     sk_sha256_update(&h, head, sizeof head);
     sk_sha256_update(&h, SK_SKINC_VERSION, sizeof SK_SKINC_VERSION);
+    uint64_t total = 0;
     for (size_t i = 0; ok && i < files.len; i++) {
         char *full = sk_path_join(dir, files.ptr[i]);
-        uint8_t *bytes;
-        size_t n;
-        ok = slurp(full, SIZE_MAX, &bytes, &n, err, err_len);
+        ok = hash_file(&h, full, files.ptr[i], &total, err, err_len);
         free(full);
-        if (!ok)
-            break;
-        uint8_t size[8];
-        for (int k = 0; k < 8; k++)
-            size[k] = (uint8_t)((uint64_t)n >> (8 * k));
-        sk_sha256_update(&h, files.ptr[i], strlen(files.ptr[i]) + 1);
-        sk_sha256_update(&h, size, sizeof size);
-        sk_sha256_update(&h, bytes, n);
-        free(bytes);
     }
     for (size_t i = 0; i < files.len; i++)
         free(files.ptr[i]);
@@ -199,9 +249,26 @@ static int run_skinc(const char *skinc, const char *dir, const char *pack, sk_bu
         sk_buf_printf(messages, "cannot run %s: %s\n", skinc, strerror(e));
         return -1;
     }
+    /* Its messages until it ends them, then its end, all within
+     * SKINC_MS: a skin that takes longer is refused and skinc killed. */
+    uint64_t deadline = sk_now_ms() + sk_skinc_deadline_ms;
     char chunk[4096];
     size_t kept = 0;
+    bool late = false;
     for (;;) {
+        uint64_t now = sk_now_ms();
+        if (now >= deadline) {
+            late = true;
+            break;
+        }
+        struct pollfd pf = {fds[0], POLLIN, 0};
+        int p = poll(&pf, 1, (int)(deadline - now));
+        if (p < 0 && errno == EINTR)
+            continue;
+        if (p == 0) {
+            late = true;
+            break;
+        }
         ssize_t r = read(fds[0], chunk, sizeof chunk);
         if (r < 0 && errno == EINTR)
             continue;
@@ -212,13 +279,27 @@ static int run_skinc(const char *skinc, const char *dir, const char *pack, sk_bu
         kept += take;
     }
     close(fds[0]);
-    int status;
-    while (waitpid(pid, &status, 0) < 0)
-        if (errno != EINTR) {
+    int status = 0;
+    for (;;) {
+        pid_t w = late ? 0 : waitpid(pid, &status, WNOHANG);
+        if (w == pid)
+            return status;
+        if (w < 0 && errno == EINTR)
+            continue;
+        if (w < 0) {
             sk_buf_printf(messages, "cannot wait for %s: %s\n", skinc, strerror(errno));
             return -1;
         }
-    return status;
+        if (late || sk_now_ms() >= deadline) {
+            kill(pid, SIGKILL);
+            while (waitpid(pid, &status, 0) < 0 && errno == EINTR)
+                ;
+            sk_buf_printf(messages, "%s: skinc took more than %u ms, the skin is refused\n", dir, sk_skinc_deadline_ms);
+            return -1;
+        }
+        struct timespec nap = {0, 10 * 1000000L};
+        nanosleep(&nap, NULL);
+    }
 }
 
 /* ---- The cache ---- */

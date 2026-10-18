@@ -17,6 +17,7 @@
 #include <errno.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/resource.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -75,6 +76,13 @@ static bool save(const char *path, const void *data, size_t n)
 
 int main(int argc, char **argv)
 {
+    /* A hostile skin runs no skinc for ever, the app's deadline aside:
+     * a minute of CPU at most. */
+    struct rlimit cpu;
+    if (getrlimit(RLIMIT_CPU, &cpu) == 0 && (cpu.rlim_cur == RLIM_INFINITY || cpu.rlim_cur > 60)) {
+        cpu.rlim_cur = 60;
+        setrlimit(RLIMIT_CPU, &cpu);
+    }
     bool verbose = false;
     const char *dir = NULL, *pack = NULL;
     for (int i = 1; i < argc; i++) {
