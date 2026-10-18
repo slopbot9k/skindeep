@@ -391,6 +391,33 @@ static void test_errors_with_lines(void)
     sk_diags_free(&d);
 }
 
+/* What a stylesheet may hold: a megabyte at most, and as many keyframes
+ * in one @keyframes as a pack's track holds, not one past 65535 that
+ * wrapped to one. */
+static void test_stylesheet_bounds(void)
+{
+    sk_front f;
+    sk_diags d = {0};
+    sk_buf css = {0};
+    while (css.len <= (1u << 20))
+        sk_buf_append_c(&css, "/* a comment, over and over */\n");
+    CHECK(!sk_test_compile(&f, &d, PANEL_PQ, NULL, sk_buf_cstr(&css)));
+    CHECK(sk_test_said(&d, "is larger than 1024 KiB, the most a skin's stylesheet may be"));
+    sk_front_free(&f);
+    sk_diags_free(&d);
+    sk_buf_clear(&css);
+    sk_buf_append_c(&css, ".p { color: red }\n@keyframes many {");
+    for (int i = 0; i <= 256; i++)
+        sk_buf_printf(&css, " %g%% { opacity: 1 }", i * 100.0 / 256);
+    sk_buf_append_c(&css, " }\n");
+    memset(&d, 0, sizeof d);
+    CHECK(!sk_test_compile(&f, &d, PANEL_PQ, NULL, sk_buf_cstr(&css)));
+    CHECK(sk_test_said(&d, "skin.css: line 2: @keyframes many has more than 256 keyframes, the most a pack holds"));
+    sk_front_free(&f);
+    sk_diags_free(&d);
+    sk_buf_free(&css);
+}
+
 static void test_too_many_states(void)
 {
     sk_front f;
@@ -528,5 +555,6 @@ const sk_test sk_suite_skinc_cascade[] = {
     T(test_selectors_do_not_backtrack),
     T(test_states_of_a_widget),    T(test_stage_and_list),              T(test_segments_and_limits),
     T(test_counters),              T(test_fonts_resolved),              T(test_errors_with_lines),
+    T(test_stylesheet_bounds),
     T(test_too_many_states),       T(test_keyframes_and_animation),     {0},
 };

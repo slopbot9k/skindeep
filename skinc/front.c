@@ -15,15 +15,20 @@
 #include <strings.h>
 #include <unistd.h>
 
-static char *slurp(const char *path, size_t *n)
+/* A skin's stylesheet, at most: the largest of the skins here is 13 KB,
+ * and the cascade's time grows with the rules it holds. */
+#define MAX_CSS_BYTES ((size_t)1 << 20)
+
+/* path's bytes, up to one past cap. */
+static char *slurp(const char *path, size_t cap, size_t *n)
 {
-    int fd = open(path, O_RDONLY);
+    int fd = open(path, O_RDONLY | O_NONBLOCK);
     if (fd < 0)
         return NULL;
     sk_buf b = {0};
     char chunk[65536];
-    ssize_t r;
-    while ((r = read(fd, chunk, sizeof chunk)) > 0)
+    ssize_t r = 0;
+    while (b.len <= cap && (r = read(fd, chunk, sizeof chunk)) > 0)
         sk_buf_append(&b, chunk, (size_t)r);
     close(fd);
     if (r < 0) {
@@ -50,10 +55,16 @@ static void check_css(void *data, const char *path, const char *shown, sk_diags 
             memcpy(text, f->css_text, n);
         text[n] = 0;
     } else {
-        text = slurp(path, &n);
+        text = slurp(path, MAX_CSS_BYTES, &n);
     }
     if (!text)
         return;
+    if (n > MAX_CSS_BYTES) {
+        sk_diag(d, shown, "(file)", "is larger than %zu KiB, the most a skin's stylesheet may be",
+                MAX_CSS_BYTES >> 10);
+        free(text);
+        return;
+    }
     f->css_shown = sk_xstrdup(shown);
     f->css_path = sk_xstrdup(path);
     sk_buf dir = {0};
@@ -194,21 +205,25 @@ static int by_offset(const void *a, const void *b)
  * winning, computed in the root's context. */
 static void keyframes(sk_front *f, sk_css_sheet *sheet)
 {
-    /* The names first, so animation-name can find a later rule. */
+    /* The names first, so animation-name can find a later rule; each
+     * name's track by a map, as a skin may hold thousands. */
+    sk_map index;
+    sk_map_init(&index);
+    for (size_t j = 0; j < f->keyframes.len; j++)
+        *sk_map_put(&index, sk_str_c(f->keyframes.ptr[j].name)) = (void *)(uintptr_t)(j + 1);
     for (size_t i = 0; i < sheet->keyframes.len; i++) {
         sk_css_keyframes *k = &sheet->keyframes.ptr[i];
-        const char *name = sk_arena_strndup(&f->arena, k->name.ptr, k->name.len);
-        size_t at = f->keyframes.len;
-        for (size_t j = 0; j < f->keyframes.len; j++)
-            if (!strcmp(f->keyframes.ptr[j].name, name))
-                at = j;
-        sk_pack_keyframes kf = {name, NULL, 0};
-        if (at == f->keyframes.len)
-            sk_vec_push(&f->keyframes, kf);
+        void **slot = sk_map_put(&index, k->name);
+        if (*slot)
+            continue;
+        sk_pack_keyframes kf = {sk_arena_strndup(&f->arena, k->name.ptr, k->name.len), NULL, 0};
+        sk_vec_push(&f->keyframes, kf);
+        *slot = (void *)(uintptr_t)f->keyframes.len;
     }
     for (size_t i = 0; i < sheet->keyframes.len; i++) {
         sk_css_keyframes *k = &sheet->keyframes.ptr[i];
         SK_VEC(sk_pack_key) keys = {0};
+        bool too_many = false;
         for (size_t fr = 0; fr < k->nframes; fr++) {
             sk_css_frame *frame = &k->frames[fr];
             sk_xdecl *x = frame->ndecls ? sk_arena_array(&f->arena, frame->ndecls, sizeof *x) : NULL;
@@ -246,7 +261,9 @@ static void keyframes(sk_front *f, sk_css_sheet *sheet)
                 for (size_t q = 0; q < keys.len; q++)
                     if (keys.ptr[q].offset == key.offset)
                         same = q;
-                if (same == keys.len) {
+                if (same == keys.len && keys.len >= SK_PACK_MAX_LIST) {
+                    too_many = true;
+                } else if (same == keys.len) {
                     sk_vec_push(&keys, key);
                 } else {
                     sk_pack_key *old = &keys.ptr[same];
@@ -268,17 +285,19 @@ static void keyframes(sk_front *f, sk_css_sheet *sheet)
         }
         if (keys.len > 1)
             qsort(keys.ptr, keys.len, sizeof *keys.ptr, by_offset);
-        const char *name = sk_arena_strndup(&f->arena, k->name.ptr, k->name.len);
-        for (size_t j = 0; j < f->keyframes.len; j++)
-            if (!strcmp(f->keyframes.ptr[j].name, name)) {
-                sk_pack_key *kept = keys.len ? sk_arena_array(&f->arena, keys.len, sizeof *kept) : NULL;
-                if (keys.len)
-                    memcpy(kept, keys.ptr, keys.len * sizeof *kept);
-                f->keyframes.ptr[j].keys = kept;
-                f->keyframes.ptr[j].nkeys = (uint16_t)keys.len;
-            }
+        if (too_many)
+            sk_diag_line(f->d, f->css_shown ? f->css_shown : "skin.css", k->line,
+                         "@keyframes %.*s has more than %u keyframes, the most a pack holds", (int)k->name.len,
+                         k->name.ptr, SK_PACK_MAX_LIST);
+        sk_pack_keyframes *t = &f->keyframes.ptr[(uintptr_t)sk_map_get(&index, k->name) - 1];
+        sk_pack_key *kept = keys.len ? sk_arena_array(&f->arena, keys.len, sizeof *kept) : NULL;
+        if (keys.len)
+            memcpy(kept, keys.ptr, keys.len * sizeof *kept);
+        t->keys = kept;
+        t->nkeys = (uint16_t)keys.len;
         sk_vec_free(&keys);
     }
+    sk_map_free(&index);
 }
 
 static void internal_sheet(sk_css_sheet *sheet, const char *name, const char *text)

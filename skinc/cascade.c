@@ -779,6 +779,11 @@ static uint32_t keep_style(sk_front *f, sk_css_style *s)
  * declaration inherits explicitly, and the custom properties. */
 static bool *inherit_used;
 
+static int by_name(const void *a, const void *b)
+{
+    return strcmp((*(const sk_custom *const *)a)->name, (*(const sk_custom *const *)b)->name);
+}
+
 static void fingerprint(sk_buf *b, const sk_css_style *s, const sk_customs *cu)
 {
     for (uint16_t id = 1; id < SK_PROP_COUNT; id++) {
@@ -792,14 +797,10 @@ static void fingerprint(sk_buf *b, const sk_css_style *s, const sk_customs *cu)
     /* The custom properties, sorted by name. */
     size_t n = cu ? cu->n : 0;
     const sk_custom **sorted = n ? sk_xcalloc(n, sizeof *sorted) : NULL;
-    for (size_t i = 0; i < n; i++) {
-        size_t k = i;
-        while (k > 0 && strcmp(sorted[k - 1]->name, cu->items[i].name) > 0) {
-            sorted[k] = sorted[k - 1];
-            k--;
-        }
-        sorted[k] = &cu->items[i];
-    }
+    for (size_t i = 0; i < n; i++)
+        sorted[i] = &cu->items[i];
+    if (n > 1)
+        qsort(sorted, n, sizeof *sorted, by_name);
     for (size_t i = 0; i < n; i++) {
         sk_buf_printf(b, "%s=", sorted[i]->name);
         sk_cv_print(b, sorted[i]->cv, sorted[i]->n);
