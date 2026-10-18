@@ -1323,17 +1323,23 @@ void sk_ui_post(sk_ui_task task, void *ud)
 }
 
 /* The tasks not yet run give up what they own; the queue frees each
- * should it ever run it. */
+ * should it ever run it. The drops run once the lock is let go: one
+ * that posts, or frees what another thread is posting to, would wait on
+ * it for ever. */
 static void drop_posted(void)
 {
+    SK_VEC(posted) dropped = {0};
     pthread_mutex_lock(&posted_lock);
     while (posted_head) {
         posted *p = posted_head;
         unlist(p);
         if (p->drop)
-            p->drop(p->ud);
+            sk_vec_push(&dropped, *p);
     }
     pthread_mutex_unlock(&posted_lock);
+    for (size_t i = 0; i < dropped.len; i++)
+        dropped.ptr[i].drop(dropped.ptr[i].ud);
+    sk_vec_free(&dropped);
 }
 
 static void remove_timer(size_t i)

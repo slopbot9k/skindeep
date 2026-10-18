@@ -1372,6 +1372,13 @@ static void get_chunk(void)
         deliver(decode(ui.get_type, 8, (const uint8_t *)ui.get_data.ptr, ui.get_data.len));
     } else if (p.format == 8) {
         ui.get_type = p.type;
+        /* The whole as one property may be at most: an owner that sends on
+         * would fill memory, each chunk within the timeout. */
+        if (ui.get_data.len + p.len > MAX_GET) {
+            sk_x11_reply_free(&r);
+            get_finish(NULL);
+            return;
+        }
         sk_buf_append(&ui.get_data, p.value, p.len);
         arm_get_timer();
     }

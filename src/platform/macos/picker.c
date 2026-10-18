@@ -45,11 +45,18 @@ static void deliver(void *p)
     free(a.dir);
 }
 
+/* The UI closed with the answer still posted: it never comes. */
+static void forget(void *p)
+{
+    free(((answer *)p)->dir);
+    free(p);
+}
+
 static void post(sk_picker_done done, void *ud, char *dir, const char *err, bool refused)
 {
     answer *a = sk_xmalloc(sizeof *a);
     *a = (answer){done, ud, dir, err, refused};
-    sk_ui_post(deliver, a);
+    sk_ui_post_owned(deliver, a, forget);
 }
 
 static void completed(void *self, long response)

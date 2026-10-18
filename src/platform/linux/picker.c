@@ -23,12 +23,11 @@ static char *dup_or_null(const char *s)
     return s ? sk_xstrdup(s) : NULL;
 }
 
-static void deliver(void *p)
+/* A request's parts. When the UI or the core loop ends with it still
+ * posted, this alone runs, and its answer never comes. */
+static void forget(void *p)
 {
     request *q = p;
-    if (!q->refused)
-        busy = false;
-    q->done(q->ud, q->dir, q->err);
     free(q->title);
     free(q->start);
     free(q->path);
@@ -37,12 +36,21 @@ static void deliver(void *p)
     free(q);
 }
 
+static void deliver(void *p)
+{
+    request *q = p;
+    if (!q->refused)
+        busy = false;
+    q->done(q->ud, q->dir, q->err);
+    forget(q);
+}
+
 static void answered(void *ud, char *dir, char *err)
 {
     request *q = ud;
     q->dir = dir;
     q->err = err;
-    sk_ui_post(deliver, q);
+    sk_ui_post_owned(deliver, q, forget);
 }
 
 static void run(void *p)
@@ -65,9 +73,9 @@ void sk_picker_folder(sk_window *parent, sk_loop *loop, const sk_picker_opts *o,
     if (busy) {
         q->refused = true;
         q->err = sk_xstrdup("a folder picker is open already");
-        sk_ui_post(deliver, q);
+        sk_ui_post_owned(deliver, q, forget);
         return;
     }
     busy = true;
-    sk_loop_post(loop, run, q);
+    sk_loop_post_owned(loop, run, q, forget);
 }
