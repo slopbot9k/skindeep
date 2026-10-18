@@ -562,6 +562,7 @@ typedef struct {
     sk_g3_events merged, swallowed;
     int *eaten;
     double clock, shed;
+    double away; /* seconds with no body in view */
     int subs, ids;
     /* The camera: its turn about the vertical and its height, in
      * radians, and the time the pointer last turned it; the press while
@@ -1270,7 +1271,9 @@ static void g3_draw(sk_vmode *m, sk_synth *s, double dt)
     size_t kept = 0;
     for (size_t i = 0; i < g->bodies.len; i++) {
         const sk_g3_body *b = &g->bodies.ptr[i];
-        if (b->star || b->hole || len3(b->x, b->y, b->z) < VIEW * 4)
+        /* A star or a hole goes too once far past what a planet may: one
+         * flung out kept planets forming about it, thousands of units off. */
+        if (len3(b->x, b->y, b->z) < (b->star || b->hole ? VIEW * 8 : VIEW * 4))
             g->bodies.ptr[kept++] = *b;
     }
     g->bodies.len = kept;
@@ -1287,8 +1290,17 @@ static void g3_draw(sk_vmode *m, sk_synth *s, double dt)
             g->dust.ptr[kept++] = *d;
     }
     g->dust.len = kept;
-    if (g->bodies.len < 2)
+    /* Bodies scattered so that none comes into view: some minutes in,
+     * a hole two views off and planets about it drew nothing for good.
+     * After 5 s of that it starts again. */
+    bool near = false;
+    for (size_t i = 0; i < g->bodies.len && !near; i++)
+        near = len3(g->bodies.ptr[i].x, g->bodies.ptr[i].y, g->bodies.ptr[i].z) < VIEW;
+    g->away = near ? 0 : g->away + dt;
+    if (g->bodies.len < 2 || g->away > 5) {
         seed(g);
+        g->away = 0;
+    }
     for (size_t i = 0; i < g->bodies.len; i++) {
         sk_g3_body *b = &g->bodies.ptr[i];
         b->flash *= sk_vm_exp(-dt / 0.6);

@@ -1310,8 +1310,12 @@ void sk_vc_flush(sk_vc *vc)
                 y0 = y1;
                 y1 = t;
             }
-            int ix0 = (int)SK_MAX(clip.x, floor(SK_MAX(x0, -1e6))), ix1 = (int)SK_MIN(clip.x + clip.w, ceil(SK_MIN(x1, 1e6)));
-            int iy0 = (int)SK_MAX(clip.y, floor(SK_MAX(y0, -1e6))), iy1 = (int)SK_MIN(clip.y + clip.h, ceil(SK_MIN(y1, 1e6)));
+            /* Both ends into +-1e6 before they are ints: a square scaled
+             * past it, or not a number, made the conversion undefined. */
+            double cx0 = sk_vm_clamp(x0, -1e6, 1e6), cx1 = sk_vm_clamp(x1, -1e6, 1e6);
+            double cy0 = sk_vm_clamp(y0, -1e6, 1e6), cy1 = sk_vm_clamp(y1, -1e6, 1e6);
+            int ix0 = (int)SK_MAX(clip.x, floor(cx0)), ix1 = (int)SK_MIN(clip.x + clip.w, ceil(cx1));
+            int iy0 = (int)SK_MAX(clip.y, floor(cy0)), iy1 = (int)SK_MIN(clip.y + clip.h, ceil(cy1));
             for (int y = iy0; y < iy1; y++) {
                 double cy = SK_MIN(y1, y + 1.0) - SK_MAX(y0, (double)y);
                 for (int x = ix0; x < ix1; x++) {

@@ -247,6 +247,11 @@ static void radial_table(double (*dens)(const int *ud, double r), const int *ud,
         double lo = c[k - 1], hi = c[k];
         q[i] = r[k - 1] + (hi > lo ? (u - lo) / (hi - lo) : 0) * (r[k] - r[k - 1]);
     }
+    /* The last share ends where the density stops adding to it, far out
+     * past where it is anything: 116 bohr for 4d, behind the camera,
+     * where its points drew a halo. It spans four of the share before
+     * it at most. */
+    q[TABLE_M] = SK_MIN(q[TABLE_M], q[TABLE_M - 1] + 4 * (q[TABLE_M - 1] - q[TABLE_M - 2]));
 }
 
 /* A radius drawn from the table, for u uniform on [0, 1). */
@@ -1938,6 +1943,8 @@ static void draw_atom(carbon *c, sk_vc *g, double dim, double scale)
         for (int i = 0; i < SOURCE_PTS; i++) {
             double px, py, ps;
             project(c, c->src[4 * i], c->src[4 * i + 1], c->src[4 * i + 2], &px, &py, &ps);
+            if (px < a->x || px >= a->x + a->w || py < a->y || py >= a->y + a->h)
+                continue;
             sk_vc_batch(g, c->src[4 * i + 3] > 0 ? SK_RGB(0x7d, 0xff, 0xd0) : SK_RGB(0xff, 0x8a, 0xd8),
                         (0.5 + 0.4 * sk_vm_clamp(ps - 0.8, 0, 1)) * s, px, py, 1.8);
         }

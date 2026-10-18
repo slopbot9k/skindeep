@@ -71,6 +71,10 @@ static void test_events(void)
     for (int i = 0; i < 70; i++)
         sk_synth_trigger(&s, SK_EV_OUTPUT, 0);
     CHECK_INT(s.voices.len, 64);
+    /* Unstepped, as while no viz draws, the newest 256 flashes. */
+    for (int i = 0; i < 1000; i++)
+        sk_synth_trigger(&s, SK_EV_OUTPUT, 0);
+    CHECK_INT(s.flashes.len, 256);
     for (int i = 0; i < 20; i++)
         sk_synth_touch(&s, 0.5, 0.5);
     CHECK_INT(s.touches.len, 16);

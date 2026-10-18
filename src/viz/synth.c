@@ -102,6 +102,13 @@ void sk_synth_trigger(sk_synth *s, int kind, int cls)
     }
     sk_synth_flash fl = {kind, cls, s->t};
     sk_vec_push(&s->flashes, fl);
+    /* The step keeps the last 1.5 s of them; unstepped, as while no
+     * viz draws, the newest 256. */
+    if (s->flashes.len > 256) {
+        size_t drop = s->flashes.len - 256;
+        memmove(s->flashes.ptr, s->flashes.ptr + drop, 256 * sizeof *s->flashes.ptr);
+        s->flashes.len = 256;
+    }
     s->beats++;
     if (s->voices.len > 64) {
         size_t drop = s->voices.len - 64;
