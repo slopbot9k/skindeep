@@ -13,6 +13,7 @@
 
 #include "../src/base/str.h"
 #include "../src/gfx/image.h"
+#include "../src/skin/pack.h"
 
 /* The pack loader's limits on an image, and the decoders'. */
 #define SK_MEDIA_MAX_SIDE 16384
@@ -23,7 +24,7 @@
 /* A sound: its rate, the loader's, and its length. */
 #define SK_MEDIA_MIN_RATE 8000
 #define SK_MEDIA_MAX_RATE 48000
-#define SK_MEDIA_MAX_SECONDS 300
+#define SK_MEDIA_MAX_SECONDS SK_PACK_MAX_SOUND_SECONDS
 
 typedef enum {
     SK_MEDIA_UNKNOWN,

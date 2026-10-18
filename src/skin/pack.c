@@ -1091,6 +1091,9 @@ static bool sounds(loader *L)
                                    (double)s.interval[1], s.mode == SK_SOUND_LOOP ? "looping" : "random");
         if (s.rate < 8000 || s.rate > 48000)
             return sk_packfmt_fail(&L->f, "%u Hz: 8 to 48 kHz", (unsigned)s.rate);
+        if (s.frames > (uint64_t)SK_PACK_MAX_SOUND_SECONDS * s.rate)
+            return sk_packfmt_fail(&L->f, "%u frames at %u Hz: %u s at most", (unsigned)s.frames, (unsigned)s.rate,
+                                   SK_PACK_MAX_SOUND_SECONDS);
         if (!sk_adpcm_block_samples(s.block_bytes) || !s.frames)
             return sk_packfmt_fail(&L->f, "blocks of %u bytes for %u frames", (unsigned)s.block_bytes,
                                    (unsigned)s.frames);

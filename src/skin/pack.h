@@ -67,6 +67,9 @@
 #define SK_PACK_MAX_LAYER_PIXELS (1u << 24)
 #define SK_PACK_MAX_SIDE 16384u    /* an image's width or height */
 #define SK_PACK_MAX_LIMITS 8u      /* meters of a limits widget */
+/* A sound's length, which skinc keeps to as well: the mixer decodes
+ * each whole. */
+#define SK_PACK_MAX_SOUND_SECONDS 300u
 /* A style's number, other than an iteration count, is at most this far
  * from 0: a length in px or percent, an angle in degrees, a time in
  * seconds, a factor. Layout and paint can then add and scale them in

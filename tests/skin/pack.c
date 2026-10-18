@@ -1352,6 +1352,8 @@ static void test_media_checks(void)
     EDIT(ep_rec(&e, "SNDS", 0)[4] = SK_SOUND_LOOP, "SNDS 0: an interval of 1 to 2 s for a looping sound");
     EDIT(putf32_at(ep_rec(&e, "SNDS", 0) + 16, 4000), "SNDS 0: an interval of 1 to 4000 s for a random sound");
     EDIT(put32_at(ep_rec(&e, "SNDS", 0) + 24, 100000), "SNDS 0: its 1024 bytes are not the blocks of 100000 frames");
+    EDIT((put32_at(ep_rec(&e, "SNDS", 0) + 20, 8000), put32_at(ep_rec(&e, "SNDS", 0) + 24, 2400001)),
+         "SNDS 0: 2400001 frames at 8000 Hz: 300 s at most");
     EDIT(ep_get(&e, "BLOB")->b.ptr[sk_le32(ep_rec(&e, "SNDS", 0) + 28) + 2] = 99,
          "SNDS 0: its 1024 bytes are not the blocks of 64 frames");
 #undef EDIT
