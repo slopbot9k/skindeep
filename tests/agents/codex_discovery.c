@@ -673,6 +673,57 @@ static void fake_files(pid_t pid, sk_strv *paths)
     }
 }
 
+/* Two new tabs in one cwd: a fresh rollout is the tab's typed into last
+ * before it was stamped, not the earliest the other tab's cut admits,
+ * and neither follows the other's. */
+static void test_t22_two_tabs_in_one_cwd_the_typed_one_takes_the_fresh_rollout(void)
+{
+    char *h = home();
+    double now = now_ms();
+    sk_codex_disc *a = disc(h, NO_ARGV, now - 10000), *b = disc(h, NO_ARGV, now - 9000);
+    sk_codex_disc_list(a);
+    sk_codex_disc_list(b);
+    sk_codex_disc_input(a, now - 5000);
+    char *as = rollout(h, day(0), (opts){.stamp = now - 4500});
+    /* b looks first: a's is a's. */
+    CHECK(sk_codex_disc_find(b, 0)->file == NULL);
+    check_found(sk_codex_disc_find(a, 0), as, "new", false);
+    sk_codex_disc_input(b, now - 3000);
+    char *bs = rollout(h, day(0), (opts){.stamp = now - 2500});
+    check_found(sk_codex_disc_find(b, 0), bs, "new", false);
+    CHECK(sk_codex_disc_holds(a) && sk_codex_disc_holds(b));
+    sk_codex_disc_free(a);
+    sk_codex_disc_free(b);
+    free(as);
+    free(bs);
+    free(h);
+}
+
+/* With no input to tell, the tab launched last before the stamp takes
+ * it; when another tab then finds it exactly, the first lets it go and
+ * looks again. */
+static void test_t23_a_rollout_found_exactly_by_another_tab_is_let_go(void)
+{
+    char *h = home();
+    double now = now_ms();
+    sk_codex_disc *a = disc(h, NO_ARGV, now - 10000), *b = disc(h, NO_ARGV, now - 9000);
+    sk_codex_disc_list(a);
+    sk_codex_disc_list(b);
+    char *f = rollout(h, day(0), (opts){.stamp = now - 4000});
+    check_found(sk_codex_disc_find(b, 0), f, "new", false);
+    CHECK(sk_codex_disc_find(a, 0)->file == NULL);
+    pid_t pid = hold(f);
+    check_found(sk_codex_disc_find(a, pid), f, "fd", true);
+    CHECK(!sk_codex_disc_holds(b));
+    CHECK(sk_codex_disc_find(b, 0)->file == NULL);
+    CHECK(sk_codex_disc_holds(a));
+    sk_codex_disc_free(a);
+    sk_codex_disc_free(b);
+    end_kids();
+    free(f);
+    free(h);
+}
+
 static void test_the_fd_route_looks_in_every_process_of_the_tree(void)
 {
     char *h = home();
@@ -839,6 +890,8 @@ const sk_test sk_suite_codex_discovery[] = {
     T(test_t17_latch_after_a_hit_a_newer_candidate_does_not_change_the_answer),
     T(test_t20_a_fork_of_a_fork_its_sources_oldest_first),
     T(test_t21_a_missing_source_a_fork_naming_itself_or_a_bad_offset_give_none),
+    T(test_t22_two_tabs_in_one_cwd_the_typed_one_takes_the_fresh_rollout),
+    T(test_t23_a_rollout_found_exactly_by_another_tab_is_let_go),
     T(test_the_fd_route_looks_in_every_process_of_the_tree),
     T(test_date_parse_reads_the_iso_format),
     T(test_the_adapter_reads_a_forks_source_first),

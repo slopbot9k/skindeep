@@ -2,7 +2,7 @@
 
 Status: accepted 2026-10-11, discovery amended 2026-10-12, and for
 `fork` (decision 0026), limits by `limit_id` 2026-10-15, and revised
-2026-10-17 for the C port (decision 0036).
+2026-10-17 for the C port (decision 0036) and for two tabs in one cwd.
 
 ## Context
 
@@ -37,6 +37,13 @@ that holds the rollout open, so the child tree rarely holds it.
      continues another's history, read first (decision 0026).
 - Routes 1 and 2 are exact, route 3 is not. A miss is reported as
   `none`, with the routes tried.
+- The app's own tabs share what they found (2026-10-17): route 3 never
+  takes a rollout another tab follows, and of two tabs in one cwd a new
+  rollout is the one typed into last before its stamp, else the one
+  launched last before it. A rollout a tab found by route 3 that another
+  tab then follows, or owns by that rule, is let go: its meters reset
+  and the search starts again. Two new tabs in one cwd once both took
+  the first tab's rollout, the second for its whole life.
 - Parser: `token_count` events give `tokens.in`, `tokens.out`,
   `tokens.cache_read` (cached_input_tokens), reasoning tokens counted in
   `tokens.out`. Each `token_count` carries one limit's snapshot, keyed

@@ -20,12 +20,15 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <math.h>
+#include <pthread.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
 
 #define GRACE_MS 2000
+/* Keyboard input up to this long after a rollout's stamp still made it. */
+#define INPUT_SLACK_MS 1000
 #define ACTIVE_MS 20000
 #define CHUNK (64 * 1024)
 /* A rollout's first line, its session_meta, at most. */
@@ -58,7 +61,18 @@ struct sk_codex_disc {
     char *found_file, *found_thread;
     sk_codex_tree_fn tree;
     sk_codex_files_fn files;
+    bool listed;  /* one of the app's tabs (sk_codex_disc_list) */
+    double input; /* the tab's last keyboard input, wall-clock ms; 0 none */
 };
+
+/* The discoveries of the app's tabs, so that two tabs in one cwd do not
+ * follow one rollout: a rollout another follows is never taken, and a
+ * fresh one goes to the tab typed into last before it was stamped, else
+ * to the tab launched last before then (decision 0013). What the others
+ * read of a discovery, its cwd, launch, input and hit, is written under
+ * the lock. */
+static pthread_mutex_t reg_lock = PTHREAD_MUTEX_INITIALIZER;
+static SK_VEC(sk_codex_disc *) listed;
 
 /* The values of kids: tags, compared by address. */
 static char OURS, NOT_OURS;
@@ -582,6 +596,15 @@ void sk_codex_disc_free(sk_codex_disc *d)
 {
     if (!d)
         return;
+    pthread_mutex_lock(&reg_lock);
+    for (size_t j = 0; d->listed && j < listed.len; j++)
+        if (listed.ptr[j] == d) {
+            listed.ptr[j] = listed.ptr[--listed.len];
+            break;
+        }
+    if (d->listed && !listed.len)
+        sk_vec_free(&listed);
+    pthread_mutex_unlock(&reg_lock);
     size_t i = 0;
     sk_str k;
     void *v;
@@ -602,7 +625,9 @@ void sk_codex_disc_free(sk_codex_disc *d)
 
 void sk_codex_disc_set_launched(sk_codex_disc *d, double launched)
 {
+    pthread_mutex_lock(&reg_lock);
     d->launched = launched;
+    pthread_mutex_unlock(&reg_lock);
 }
 
 void sk_codex_disc_set_procs(sk_codex_disc *d, sk_codex_tree_fn tree, sk_codex_files_fn files)
@@ -655,14 +680,92 @@ static bool mine(const sk_codex_disc *d, const meta *m)
     return m && m->top && m->cwd && !strcmp(m->cwd, d->cwd);
 }
 
+/* Whether file, a rollout of d's cwd stamped at created, is another
+ * listed tab's: one follows it; else, made when created is known, the
+ * tab typed into last before then, or failing that the tab launched last
+ * before then, is another. Under reg_lock. */
+static bool theirs(const sk_codex_disc *d, const char *file, double created)
+{
+    for (size_t i = 0; i < listed.len; i++) {
+        const sk_codex_disc *o = listed.ptr[i];
+        if (o != d && o->found_file && !strcmp(o->found_file, file))
+            return true;
+    }
+    if (!isfinite(created))
+        return false;
+    const sk_codex_disc *by_input = NULL, *by_launch = NULL;
+    /* d itself last, listed or not. */
+    for (size_t i = 0; i <= listed.len; i++) {
+        const sk_codex_disc *o = i < listed.len ? listed.ptr[i] : d;
+        if (i < listed.len && (o == d || o->found_file))
+            continue;
+        if (strcmp(o->cwd, d->cwd) != 0)
+            continue;
+        if (o->input > 0 && o->input >= o->launched - GRACE_MS && o->input <= created + INPUT_SLACK_MS &&
+            (!by_input || o->input > by_input->input))
+            by_input = o;
+        if (o->launched <= created && (!by_launch || o->launched > by_launch->launched))
+            by_launch = o;
+    }
+    const sk_codex_disc *owner = by_input ? by_input : by_launch;
+    return owner && owner != d;
+}
+
+static bool others(const sk_codex_disc *d, const char *file, double created)
+{
+    pthread_mutex_lock(&reg_lock);
+    bool r = theirs(d, file, created);
+    pthread_mutex_unlock(&reg_lock);
+    return r;
+}
+
 static const sk_codex_found *hit(sk_codex_disc *d, const char *file, const char *thread,
                                  const char *how, bool exact)
 {
+    pthread_mutex_lock(&reg_lock);
     d->found_file = sk_xstrdup(file);
+    pthread_mutex_unlock(&reg_lock);
     d->found_thread = thread ? sk_xstrdup(thread) : NULL;
     d->found = (sk_codex_found){d->found_file, d->found_thread, how, exact, {NULL}, 0};
     d->have_found = true;
     return &d->found;
+}
+
+void sk_codex_disc_list(sk_codex_disc *d)
+{
+    pthread_mutex_lock(&reg_lock);
+    if (!d->listed)
+        sk_vec_push(&listed, d);
+    d->listed = true;
+    pthread_mutex_unlock(&reg_lock);
+}
+
+void sk_codex_disc_input(sk_codex_disc *d, double wall_ms)
+{
+    pthread_mutex_lock(&reg_lock);
+    d->input = wall_ms;
+    pthread_mutex_unlock(&reg_lock);
+}
+
+bool sk_codex_disc_holds(sk_codex_disc *d)
+{
+    if (!d->have_found || d->found.exact)
+        return true;
+    const meta *m = sk_map_get(&d->lines, sk_str_c(d->found_file));
+    pthread_mutex_lock(&reg_lock);
+    bool lost = theirs(d, d->found_file, m ? m->created : NAN);
+    if (lost) {
+        free(d->found_file);
+        d->found_file = NULL;
+    }
+    pthread_mutex_unlock(&reg_lock);
+    if (lost) {
+        free(d->found_thread);
+        d->found_thread = NULL;
+        memset(&d->found, 0, sizeof d->found);
+        d->have_found = false;
+    }
+    return !lost;
 }
 
 char *sk_codex_disc_by_id(sk_codex_disc *d, const char *id)
@@ -737,6 +840,8 @@ static char *fresh(sk_codex_disc *d, const meta **found)
             const meta *m = meta_get(d, rs.ptr[k]);
             if (!mine(d, m) || !(m->created >= cut))
                 continue;
+            if (others(d, rs.ptr[k], m->created))
+                continue;
             if (!file || m->created < best) {
                 free(file);
                 file = sk_xstrdup(rs.ptr[k]);
@@ -772,6 +877,8 @@ static char *resumed(sk_codex_disc *d, const meta **found)
                 continue;
             const meta *m = meta_get(d, rs.ptr[k]);
             if (!mine(d, m) || !(m->created < cut))
+                continue;
+            if (others(d, rs.ptr[k], NAN))
                 continue;
             if (!file || mtime > best) {
                 free(file);

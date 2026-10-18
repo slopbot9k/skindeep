@@ -175,6 +175,8 @@ void sk_agent_on_output(sk_agent *a, size_t n)
 
 void sk_agent_on_input(sk_agent *a)
 {
+    if (!a->adapter_closed && a->adapter.ops->input)
+        a->adapter.ops->input(a->adapter.self);
     if (!a->generic_closed)
         sk_generic_on_input(a->generic.self);
 }

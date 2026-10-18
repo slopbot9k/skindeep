@@ -84,7 +84,7 @@ static void free_part(void *self)
     free(self);
 }
 
-static const sk_part_ops OPS = {NULL, attach, poll_part, report, NULL, close_part, free_part};
+static const sk_part_ops OPS = {NULL, attach, poll_part, report, NULL, close_part, free_part, NULL};
 
 sk_part sk_generic_create(const sk_agent_ctx *ctx)
 {

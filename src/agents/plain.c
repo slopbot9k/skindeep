@@ -26,7 +26,7 @@ static void nothing(void *self)
     (void)self;
 }
 
-static const sk_part_ops OPS = {NULL, attach, poll_part, report, NULL, nothing, nothing};
+static const sk_part_ops OPS = {NULL, attach, poll_part, report, NULL, nothing, nothing, NULL};
 
 static bool matches(const char *base)
 {

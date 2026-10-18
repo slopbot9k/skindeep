@@ -206,7 +206,7 @@ static void free_part(void *self)
     free(a);
 }
 
-static const sk_part_ops OPS = {prepare, attach, poll_part, report, rename_part, close_part, free_part};
+static const sk_part_ops OPS = {prepare, attach, poll_part, report, rename_part, close_part, free_part, NULL};
 
 /* ---- Subcommands ---- */
 

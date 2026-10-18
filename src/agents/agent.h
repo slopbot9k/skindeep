@@ -89,6 +89,8 @@ typedef struct {
     /* Idempotent, valid at any point: nothing of the part runs after. */
     void (*close)(void *self);
     void (*free)(void *self);
+    /* Keyboard input to the session; NULL when the part takes none. */
+    void (*input)(void *self);
 } sk_part_ops;
 
 typedef struct {

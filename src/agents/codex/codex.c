@@ -140,6 +140,25 @@ static void follow(codex *c)
     next_rollout(c);
 }
 
+/* The rollout found inexactly is another tab's now (decision 0013): its
+ * meters go, and the search starts again. */
+static void lose(codex *c)
+{
+    logf_(c, "codex adapter: %s is another tab's rollout, so it is no longer followed", c->file);
+    sk_tail_free(c->tail);
+    c->tail = NULL;
+    sk_codex_bases_free(&c->pending);
+    c->next = 0;
+    free(c->file);
+    free(c->thread);
+    c->file = c->thread = NULL;
+    c->how = NULL;
+    c->missed = false;
+    sk_codex_state_free(&c->state);
+    memset(&c->state, 0, sizeof c->state);
+    sk_source_reset(c->src);
+}
+
 /* Subagent threads of this session: a pulse per new one, and the count
  * written in the last 20 s. */
 static void count_subagents(codex *c)
@@ -171,6 +190,8 @@ static void poll_part(void *self, uint64_t now)
     if (!c->prepared || c->closed)
         return;
     if (due(&c->polled, &c->last_poll, now, POLL_MS)) {
+        if (c->file && !sk_codex_disc_holds(c->disc))
+            lose(c);
         if (!c->file)
             follow(c);
         count_subagents(c);
@@ -224,7 +245,15 @@ static void free_part(void *self)
     free(c);
 }
 
-static const sk_part_ops OPS = {prepare, attach, poll_part, report, NULL, close_part, free_part};
+/* Typing in the tab: whose a fresh rollout of the cwd is. */
+static void input_part(void *self)
+{
+    codex *c = self;
+    if (!c->closed)
+        sk_codex_disc_input(c->disc, sk_codex_wall_ms());
+}
+
+static const sk_part_ops OPS = {prepare, attach, poll_part, report, NULL, close_part, free_part, input_part};
 
 /* /^codex(_.+)?$/: codex, or codex_ and a suffix with no line break. */
 static bool matches(const char *base)
@@ -255,6 +284,7 @@ static sk_part create(const sk_agent_ctx *ctx)
     char *home = sk_codex_home(ctx->env);
     char *const *argv = ctx->cmd && ctx->cmd[0] ? ctx->cmd + 1 : NULL;
     c->disc = sk_codex_disc_new(home, argv, ctx->cwd, sk_codex_wall_ms());
+    sk_codex_disc_list(c->disc);
     free(home);
     sk_codex_names_init(&c->names, ctx->env);
     return (sk_part){&OPS, c};

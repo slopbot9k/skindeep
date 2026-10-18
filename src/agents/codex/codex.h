@@ -114,6 +114,16 @@ sk_codex_disc *sk_codex_disc_new(const char *home, char *const *argv, const char
                                  double launched);
 void sk_codex_disc_free(sk_codex_disc *d);
 void sk_codex_disc_set_launched(sk_codex_disc *d, double launched);
+/* d is an app tab's (decision 0013): until it is freed, a rollout it
+ * follows is no other tab's, and a fresh rollout of its cwd goes to the
+ * tab typed into last before it was stamped, else to the tab launched
+ * last before then. */
+void sk_codex_disc_list(sk_codex_disc *d);
+/* Keyboard input to d's tab, at wall-clock ms. */
+void sk_codex_disc_input(sk_codex_disc *d, double wall_ms);
+/* False when the rollout d found inexactly is now another tab's: the hit
+ * is forgotten, and the next find searches again. */
+bool sk_codex_disc_holds(sk_codex_disc *d);
 /* sk_proc_tree and sk_proc_open_files unless a test gives its own. */
 void sk_codex_disc_set_procs(sk_codex_disc *d, sk_codex_tree_fn tree, sk_codex_files_fn files);
 /* The session's rollout. pid 0: no child to look in. After a hit, the

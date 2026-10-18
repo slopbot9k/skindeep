@@ -63,7 +63,7 @@ static inline void fake_free(void *self)
 static inline sk_agent *fake_agent(fake_part *f, sk_bus *bus)
 {
     static const sk_part_ops ops = {fake_prepare, fake_attach, fake_poll, fake_report,
-                                    NULL,         fake_close,  fake_free};
+                                    NULL,         fake_close,  fake_free, NULL};
     sk_agent_ctx ctx;
     memset(&ctx, 0, sizeof ctx);
     ctx.bus = bus;

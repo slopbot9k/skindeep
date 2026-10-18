@@ -120,7 +120,7 @@ static void free_part(void *self)
     free(w);
 }
 
-static const sk_part_ops OPS = {prepare, attach, poll_part, report, NULL, close_part, free_part};
+static const sk_part_ops OPS = {prepare, attach, poll_part, report, NULL, close_part, free_part, NULL};
 
 sk_part sk_claude_watch_owned(const sk_agent_ctx *ctx, sk_claude_find_fn find, void *ud,
                               void (*free_ud)(void *))

@@ -264,7 +264,7 @@ static void f_free(void *self)
 {
     (void)self;
 }
-static const sk_part_ops FAKE_OPS = {f_prepare, f_attach, f_poll, f_report, NULL, f_close, f_free};
+static const sk_part_ops FAKE_OPS = {f_prepare, f_attach, f_poll, f_report, NULL, f_close, f_free, NULL};
 static bool f_matches(const char *base)
 {
     (void)base;
