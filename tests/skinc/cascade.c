@@ -81,6 +81,32 @@ static void test_custom_properties_are_bounded(void)
     sk_buf_free(&css);
 }
 
+/* A selector that could match by many paths, ~ over forty siblings here,
+ * tries each sibling once at each compound: twelve took hours. */
+static void test_selectors_do_not_backtrack(void)
+{
+    sk_buf panels = {0}, css = {0};
+    sk_buf_putc(&panels, '[');
+    for (int i = 0; i < 40; i++)
+        sk_buf_printf(&panels, "%s{\"class\": \"p n%d%s\", \"rect\": {\"left\": %d, \"top\": 0, \"width\": 10, \"height\": 10}}",
+                      i ? ", " : "", i, i ? "" : " x", i * 10);
+    sk_buf_putc(&panels, ']');
+    sk_buf_append_c(&css, ".x");
+    for (int k = 0; k < 12; k++)
+        sk_buf_append_c(&css, " ~ .p");
+    sk_buf_append_c(&css, " { color: red }\n");
+    sk_front f;
+    sk_diags d = {0};
+    COMPILES(&f, &d, sk_buf_cstr(&panels), NULL, sk_buf_cstr(&css));
+    CHECK(strcmp(sk_test_prop(sk_front_style(&f, sk_front_panel(&f, "n11"), NULL, 0), SK_PROP_COLOR), "#ff0000") != 0);
+    CHECK_STR(sk_test_prop(sk_front_style(&f, sk_front_panel(&f, "n12"), NULL, 0), SK_PROP_COLOR), "#ff0000");
+    CHECK_STR(sk_test_prop(sk_front_style(&f, sk_front_panel(&f, "n39"), NULL, 0), SK_PROP_COLOR), "#ff0000");
+    sk_front_free(&f);
+    sk_diags_free(&d);
+    sk_buf_free(&panels);
+    sk_buf_free(&css);
+}
+
 static void test_inheritance_em_currentcolor(void)
 {
     sk_front f;
@@ -499,6 +525,7 @@ const sk_test sk_suite_skinc_cascade[] = {
     T(test_blockified),
     T(test_layout_refusals),
     T(test_order_and_specificity), T(test_inheritance_em_currentcolor), T(test_custom_properties), T(test_custom_properties_are_bounded),
+    T(test_selectors_do_not_backtrack),
     T(test_states_of_a_widget),    T(test_stage_and_list),              T(test_segments_and_limits),
     T(test_counters),              T(test_fonts_resolved),              T(test_errors_with_lines),
     T(test_too_many_states),       T(test_keyframes_and_animation),     {0},

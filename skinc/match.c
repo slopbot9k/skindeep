@@ -9,6 +9,8 @@
  * state's matching never reads a variable discovery did not record. */
 #include "front.h"
 
+#include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 static sk_tri t_and(sk_tri a, sk_tri b)
@@ -304,6 +306,58 @@ static sk_tri compound(sk_match *m, const sk_compound *c, const sk_el *el, bool 
     return r;
 }
 
+/* complex_at's results within one sk_match_selector call, where it
+ * backtracks: .a .a .a .a over a deep tree, or ~ over many siblings,
+ * then tries each element once at each compound rather than once for
+ * every path to it, in polynomial time, not exponential. A result is
+ * the same however it is reached, and the variables it reads were
+ * recorded the first time it was. */
+static size_t memo_slot(const sk_memo *t, size_t cap, uint32_t gen, const void *at, const sk_el *el,
+                        const sk_el *anchor)
+{
+    uint64_t h = (uint64_t)(uintptr_t)at * 0x9e3779b97f4a7c15u;
+    h ^= (uint64_t)(uintptr_t)el * 0xc2b2ae3d27d4eb4fu;
+    h ^= (uint64_t)(uintptr_t)anchor * 0x165667b19e3779f9u;
+    h ^= h >> 31;
+    size_t i = (size_t)h & (cap - 1);
+    while (t[i].gen == gen && !(t[i].at == at && t[i].el == el && t[i].anchor == anchor))
+        i = (i + 1) & (cap - 1);
+    return i;
+}
+
+static void memo_put(sk_match *m, const void *at, const sk_el *el, const sk_el *anchor, sk_tri r)
+{
+    if ((m->memo.live + 1) * 2 > m->memo.cap) {
+        size_t cap = m->memo.cap ? m->memo.cap * 2 : 256;
+        sk_memo *t = sk_xcalloc(cap, sizeof *t);
+        for (size_t i = 0; i < m->memo.cap; i++) {
+            const sk_memo *e = &m->memo.ptr[i];
+            if (e->gen == m->memo.gen)
+                t[memo_slot(t, cap, m->memo.gen, e->at, e->el, e->anchor)] = *e;
+        }
+        free(m->memo.ptr);
+        m->memo.ptr = t;
+        m->memo.cap = cap;
+    }
+    size_t i = memo_slot(m->memo.ptr, m->memo.cap, m->memo.gen, at, el, anchor);
+    if (m->memo.ptr[i].gen != m->memo.gen)
+        m->memo.live++;
+    m->memo.ptr[i] = (sk_memo){at, el, anchor, m->memo.gen, (uint8_t)r};
+}
+
+static sk_tri complex_memo(sk_match *m, const sk_selector *s, int i, const sk_el *el, const sk_el *anchor)
+{
+    const void *at = &s->compounds[i];
+    if (m->memo.cap) {
+        const sk_memo *e = &m->memo.ptr[memo_slot(m->memo.ptr, m->memo.cap, m->memo.gen, at, el, anchor)];
+        if (e->gen == m->memo.gen)
+            return (sk_tri)e->r;
+    }
+    sk_tri r = complex_at(m, s, i, el, anchor);
+    memo_put(m, at, el, anchor, r);
+    return r;
+}
+
 /* Compound i of s at el, and the compounds left of it through their
  * combinators; anchor stands left of compound 0 in a relative
  * selector. */
@@ -353,7 +407,7 @@ static sk_tri complex_at(sk_match *m, const sk_selector *s, int i, const sk_el *
             }
             if (p == anchor)
                 break;
-            left = t_or(left, complex_at(m, s, i - 1, p, anchor));
+            left = t_or(left, complex_memo(m, s, i - 1, p, anchor));
         }
         break;
     default:
@@ -364,5 +418,19 @@ static sk_tri complex_at(sk_match *m, const sk_selector *s, int i, const sk_el *
 
 sk_tri sk_match_selector(sk_match *m, const sk_selector *s, const sk_el *el)
 {
+    if (++m->memo.gen == 0) {
+        if (m->memo.cap)
+            memset(m->memo.ptr, 0, m->memo.cap * sizeof *m->memo.ptr);
+        m->memo.gen = 1;
+    }
+    m->memo.live = 0;
     return complex_at(m, s, (int)s->n - 1, el, NULL);
+}
+
+void sk_match_free(sk_match *m)
+{
+    sk_vec_free(&m->found);
+    free(m->memo.ptr);
+    m->memo.ptr = NULL;
+    m->memo.cap = m->memo.live = 0;
 }

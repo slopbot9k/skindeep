@@ -882,7 +882,7 @@ static void discover(sk_front *f, sk_el *target, uint8_t pseudo, entry_vec *cand
     }
     for (size_t i = 0; i < m.found.len; i++)
         push_input(found, m.found.ptr[i]);
-    sk_vec_free(&m.found);
+    sk_match_free(&m);
 }
 
 static sk_el *pseudo_new(sk_front *f, sk_el *origin, uint8_t kind)
@@ -1031,6 +1031,7 @@ static void states(sk_front *f, sk_el *el, sk_el *origin, input_vec *found)
         fingerprint(&fp, c.style, &c.customs);
         prints[idx] = fp.ptr ? fp.ptr : sk_xstrdup("");
     }
+    sk_match_free(&m);
     f->states += total;
     /* An input is inherited-relevant when changing it alone changes
      * what children inherit, in some state. */

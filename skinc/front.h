@@ -184,6 +184,15 @@ extern const char sk_ua_css[];
  * a selector reads: TRUE, FALSE or UNKNOWN. */
 typedef enum { SK_NO, SK_YES, SK_MAYBE } sk_tri;
 
+/* A result of the matcher at a compound of a selector, an element and an
+ * anchor, in the sk_match_selector call of generation gen. */
+typedef struct {
+    const void *at;
+    const sk_el *el, *anchor;
+    uint32_t gen;
+    uint8_t r;
+} sk_memo;
+
 typedef struct {
     const sk_input *inputs; /* the variables known: values[i] for inputs[i] */
     const int *values;      /* -1 for unknown */
@@ -197,9 +206,15 @@ typedef struct {
     } found; /* the variables read */
     bool repeated;          /* a selector counted a list's rows */
     const sk_front *f;
+    struct {
+        sk_memo *ptr;
+        size_t cap, live;
+        uint32_t gen;
+    } memo; /* what the matcher found in this call, by generation */
 } sk_match;
 
 sk_tri sk_match_selector(sk_match *m, const sk_selector *s, const sk_el *el);
+void sk_match_free(sk_match *m);
 /* The radix of a variable on its owner. */
 uint8_t sk_var_radix(const sk_front *f, const sk_el *owner, uint8_t var);
 const char *sk_var_name(uint8_t var);
