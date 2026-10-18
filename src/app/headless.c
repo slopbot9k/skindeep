@@ -6,6 +6,7 @@
 #include "../core/command.h"
 #include "../core/loop.h"
 #include "../platform/pty.h"
+#include "../term/term.h"
 #include "clitab.h"
 #include "launch.h"
 
@@ -23,6 +24,15 @@
 
 #define METRICS_MS 1000
 
+/* A tab's last bytes of output: headless keeps no terminal of its own,
+ * so its last screen is these, drawn when the CLI ends. */
+#define TAIL_BYTES ((size_t)64 << 10)
+
+typedef struct {
+    int id;
+    sk_buf out;
+} tab_tail;
+
 typedef struct {
     sk_loop *loop;
     sk_tabs *tabs;
@@ -37,6 +47,8 @@ typedef struct {
     FILE *resizes;
     unsigned long long recorded;
     int record_tab;
+    /* What each tab printed last, for its last screen (decision 0030). */
+    SK_VEC(tab_tail) tails;
 } headless;
 
 static void log_line(void *ud, const char *msg)
@@ -70,10 +82,35 @@ static sk_session *active_session(headless *h)
     return sk_clitab_session(sk_tabs_active(h->tabs));
 }
 
+typedef struct {
+    headless *h;
+    int id;
+} start_msg;
+
+/* A tab the tabs made, a claude attach in a refusing tab's place say,
+ * starts once it is theirs, at this terminal's size. The first is
+ * started already, and a session starts once. */
+static void start_tab(void *ud)
+{
+    start_msg *m = ud;
+    sk_tab *tab = sk_tabs_get(m->h->tabs, m->id);
+    if (tab && tab->kind == SK_TAB_CLI) {
+        int cols = 80, rows = 24;
+        sk_pty_get_size(0, &cols, &rows);
+        sk_session_start(sk_clitab_session(tab), cols, rows);
+    }
+    free(m);
+}
+
 static int make_tab(void *ud, sk_tab *tab, const sk_tab_spec *spec, char **err)
 {
     headless *h = ud;
-    return sk_clitab_make(&h->cli, tab, spec, err);
+    if (sk_clitab_make(&h->cli, tab, spec, err) != 0)
+        return -1;
+    start_msg *m = sk_xmalloc(sizeof *m);
+    *m = (start_msg){h, tab->id};
+    sk_loop_post_owned(h->loop, start_tab, m, free);
+    return 0;
 }
 
 static void on_spawn(void *ud, sk_tab *tab, pid_t pid)
@@ -83,9 +120,47 @@ static void on_spawn(void *ud, sk_tab *tab, pid_t pid)
 }
 
 /* The terminal shows the active tab, as the window would. */
+static tab_tail *tail_of(headless *h, int id)
+{
+    for (size_t i = 0; i < h->tails.len; i++)
+        if (h->tails.ptr[i].id == id)
+            return &h->tails.ptr[i];
+    return NULL;
+}
+
+/* The tab's last screen: its last bytes through a terminal of this
+ * one's size. A Claude that will not open a background session prints
+ * how on it, and the tab follows with claude attach. */
+static char *tab_screen(void *ud, sk_tab *tab)
+{
+    headless *h = ud;
+    tab_tail *t = tail_of(h, tab->id);
+    if (!t)
+        return NULL;
+    int cols = 80, rows = 24;
+    sk_pty_get_size(0, &cols, &rows);
+    sk_term *term = sk_term_new(cols, rows, NULL);
+    sk_term_lock(term);
+    sk_term_feed(term, t->out.ptr ? t->out.ptr : "", t->out.len);
+    char *text = sk_term_screen_text(term);
+    sk_term_unlock(term);
+    sk_term_free(term);
+    sk_buf_free(&t->out);
+    *t = h->tails.ptr[--h->tails.len];
+    return text;
+}
+
 static void on_output(void *ud, sk_tab *tab, const char *bytes, size_t n)
 {
     headless *h = ud;
+    tab_tail *t = tail_of(h, tab->id);
+    if (!t) {
+        sk_vec_push(&h->tails, ((tab_tail){tab->id, {0}}));
+        t = &h->tails.ptr[h->tails.len - 1];
+    }
+    sk_buf_append(&t->out, bytes, n);
+    if (t->out.len > 2 * TAIL_BYTES)
+        sk_buf_consume(&t->out, t->out.len - TAIL_BYTES);
     if (h->record_fd >= 0 && tab->id == h->record_tab) {
         write_all(h->record_fd, bytes, n);
         h->recorded += n;
@@ -291,6 +366,7 @@ int sk_headless_run(const sk_options *o, const sk_headless_opts *ho, const sk_en
     h.cli.output = on_output;
     h.cli.log = log_line;
     h.cli.tell = tell_line;
+    h.cli.screen = tab_screen;
     h.cli.ud = &h;
     sk_tabs_config tc;
     memset(&tc, 0, sizeof tc);
@@ -341,6 +417,9 @@ int sk_headless_run(const sk_options *o, const sk_headless_opts *ho, const sk_en
     /* No metrics line after the end: the agent is closed and reports
      * nothing. */
     sk_tabs_free(h.tabs);
+    for (size_t i = 0; i < h.tails.len; i++)
+        sk_buf_free(&h.tails.ptr[i].out);
+    sk_vec_free(&h.tails);
     sk_loop_free(h.loop);
     if (h.record_fd >= 0)
         close(h.record_fd);

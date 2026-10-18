@@ -169,6 +169,51 @@ static void test_statuses(void)
     sk_buf_free(&metrics);
 }
 
+/* A Claude that will not open a background session prints how and
+ * exits: headless too reads that off the tab's last screen and runs
+ * claude attach in its place (decision 0030), here a claude that ends
+ * with 7 when it is attaching. */
+static void test_a_background_session_is_attached_headless(void)
+{
+    const char *bin = getenv("SK_SKINNED_BIN");
+    if (!bin || access(bin, X_OK) != 0)
+        return;
+    const char *tmp = sk_test_tmpdir();
+    sk_buf dir = {0}, script = {0}, out = {0}, state = {0}, run_dir = {0}, path = {0}, metrics = {0};
+    sk_buf_printf(&dir, "%s/bin", tmp);
+    CHECK(mkdir(dir.ptr, 0700) == 0);
+    sk_buf_printf(&script, "%s/claude", dir.ptr);
+    FILE *f = fopen(script.ptr, "w");
+    CHECK(f != NULL);
+    if (!f)
+        return;
+    fputs("#!/bin/sh\n"
+          "for a; do [ \"$a\" = attach ] && exit 7; done\n"
+          "printf '\"Sort the photos\" is running in the background (5e3a91c0). Run\\n'\n"
+          "printf '`claude attach 5e3a91c0` to open it, or `claude stop 5e3a91c0` first to\\n'\n"
+          "printf 'resume it here.\\n'\n"
+          "exit 0\n",
+          f);
+    fclose(f);
+    CHECK(chmod(script.ptr, 0700) == 0);
+    sk_buf_printf(&out, "%s/out", tmp);
+    sk_buf_printf(&state, "XDG_STATE_HOME=%s/state", tmp);
+    sk_buf_printf(&run_dir, "XDG_RUNTIME_DIR=%s/run", tmp);
+    const char *p = getenv("PATH");
+    sk_buf_printf(&path, "PATH=%s:%s", dir.ptr, p ? p : "/usr/bin:/bin");
+    sk_buf_printf(&metrics, "--headless=%s/m.jsonl", tmp);
+    const char *extra[] = {state.ptr, run_dir.ptr, path.ptr, NULL};
+    const char *args[] = {metrics.ptr, "--", "claude", "--resume", NULL};
+    CHECK_INT(run(bin, args, extra, out.ptr), 7);
+    sk_buf_free(&dir);
+    sk_buf_free(&script);
+    sk_buf_free(&out);
+    sk_buf_free(&state);
+    sk_buf_free(&run_dir);
+    sk_buf_free(&path);
+    sk_buf_free(&metrics);
+}
+
 /* Run by its bare name through a link on the PATH, skinned takes the
  * relay beside the file the link leads to, as make install's links
  * lead to it: its log names it. */
@@ -259,6 +304,7 @@ static void test_record_keeps_the_bytes(void)
 const sk_test sk_suite_headless[] = {
     T(test_the_fake_claude_session_shows_its_meters),
     T(test_statuses),
+    T(test_a_background_session_is_attached_headless),
     T(test_the_relay_is_found_past_a_link),
     T(test_record_keeps_the_bytes),
     {0},
