@@ -243,9 +243,11 @@ static bool scp_form(sk_str u, sk_str *host, sk_str *path)
     return true;
 }
 
+/* An owner or a repository: never . or .., which the forge's API path
+ * would resolve to another, decoded from %2e after the dots were. */
 static bool name_ok(sk_str s)
 {
-    if (!s.len)
+    if (!s.len || sk_str_eq_c(s, ".") || sk_str_eq_c(s, ".."))
         return false;
     for (size_t i = 0; i < s.len; i++)
         if (!(is_alpha(s.ptr[i]) || is_digit(s.ptr[i]) || s.ptr[i] == '.' || s.ptr[i] == '_' || s.ptr[i] == '-'))

@@ -74,6 +74,13 @@ static void test_remotes_plain_http_only_on_the_loopback_host_no_other_form(void
     CHECK_NO_REMOTE("https://[fe80::1%25eth0]/o/r");
     CHECK_NO_REMOTE("https://[]/o/r");
     CHECK_REMOTE("https://[2001:db8::7]/o/r", SK_FORGE_GITEA, "https://[2001:db8::7]/o/r");
+    /* . and .. as a name, decoded or in the scp form, would name
+     * another path of the forge's API. */
+    CHECK_NO_REMOTE("https://github.com/%2e%2e/r");
+    CHECK_NO_REMOTE("https://github.com/o/%2E%2E");
+    CHECK_NO_REMOTE("https://github.com/o/..git");
+    CHECK_NO_REMOTE("git@github.com:../r.git");
+    CHECK_NO_REMOTE("git@github.com:o/.");
 }
 
 /* ---- The daily series and the stamps ---- */
