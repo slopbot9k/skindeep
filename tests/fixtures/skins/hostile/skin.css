@@ -6,3 +6,5 @@
   height: 3000px !important; z-index: 2147483647 !important; background: rgba(255, 0, 0, 0.85) !important; }
 .banner { background: #224; }
 .w { color: yellow; }
+/* A shadow cast far off, whose layer would be some 300 million pixels. */
+.w { filter: drop-shadow(4000px 4000px 40px red) blur(300px); }

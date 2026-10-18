@@ -1420,7 +1420,10 @@ static void with_effects(painter *P, canvas *cv, uint32_t e, void (*inner)(paint
         sk_rect lim = cv->clip;
         lim = sk_rect_make(lim.x - reach - 1, lim.y - reach - 1, lim.w + 2 * reach + 2, lim.h + 2 * reach + 2);
         at = sk_rect_intersect(pt_round_out(dev), lim);
-        if (sk_rect_empty(at))
+        /* The clip, and 2^24 pixels of reach around it at most: a shadow
+         * cast thousands of pixels off made a layer of some 300 million,
+         * gigabytes for one box. Beyond that the box is not drawn. */
+        if (sk_rect_empty(at) || (double)at.w * at.h > (double)cv->clip.w * cv->clip.h + (double)(1 << 24))
             return;
         sk_xform t = {1, 0, 0, 1, (float)-at.x, (float)-at.y};
         base = sk_xform_mul(&t, &cv->base);
