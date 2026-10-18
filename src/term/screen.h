@@ -4,6 +4,7 @@
 #ifndef SK_TERM_SCREEN_H
 #define SK_TERM_SCREEN_H
 
+#include "../base/map.h"
 #include "buffer.h"
 #include "parser.h"
 #include "term.h"
@@ -77,6 +78,7 @@ struct sk_term {
     bool focused;
 
     SK_VEC(sk_link) links; /* by id, ascending */
+    sk_map link_keys;      /* a link's key to its id */
     uint32_t next_link;
 
     sk_selection sel;

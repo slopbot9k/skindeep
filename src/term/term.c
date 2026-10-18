@@ -18,6 +18,9 @@
 
 #define MINIMUM_COLS 2
 #define MINIMUM_ROWS 1
+/* The OSC 8 links kept at most: a scrollback of SK_TERM_SCROLLBACK lines
+ * of ls --hyperlink keeps them all, three times over. */
+#define MAX_LINKS 16384
 /* xterm.js's ColorIndex beyond the 256: OSC 10, 11 and 12. */
 enum { SPECIAL_FG = 256, SPECIAL_BG, SPECIAL_CURSOR };
 
@@ -199,8 +202,10 @@ static sk_link *link_find(sk_term *t, uint32_t id)
     return NULL;
 }
 
-static void link_free(sk_link *l)
+static void link_free(sk_term *t, sk_link *l)
 {
+    if (l->key)
+        sk_map_del(&t->link_keys, sk_str_c(l->key));
     free(l->key);
     free(l->id_param);
     free(l->uri);
@@ -214,9 +219,21 @@ static void links_prune(sk_term *t)
         if (t->links.ptr[i].lines.len)
             t->links.ptr[w++] = t->links.ptr[i];
         else
-            link_free(&t->links.ptr[i]);
+            link_free(t, &t->links.ptr[i]);
     }
     t->links.len = w;
+}
+
+/* The oldest quarter of the links goes once there are MAX_LINKS: a
+ * program printing a link to every cell made thousands a line, and the
+ * lines' every move walks them. Their cells link to nothing then. */
+static void links_drop_oldest(sk_term *t)
+{
+    size_t n = t->links.len / 4;
+    for (size_t i = 0; i < n; i++)
+        link_free(t, &t->links.ptr[i]);
+    memmove(t->links.ptr, t->links.ptr + n, (t->links.len - n) * sizeof *t->links.ptr);
+    t->links.len -= n;
 }
 
 static void add_marker(sk_link *l, sk_buffer *b, int y)
@@ -241,16 +258,15 @@ static uint32_t register_link(sk_term *t, const char *id, const char *uri)
     sk_buf key = {0};
     if (id) {
         sk_buf_printf(&key, "%s;;%s", id, uri);
-        for (size_t i = 0; i < t->links.len; i++) {
-            sk_link *l = &t->links.ptr[i];
-            if (l->key && !strcmp(l->key, key.ptr)) {
-                uint32_t found = l->id;
-                add_line_to_link(t, found, b->ybase + b->y);
-                sk_buf_free(&key);
-                return found;
-            }
+        void *found = sk_map_get(&t->link_keys, sk_buf_str(&key));
+        if (found && link_find(t, (uint32_t)(uintptr_t)found)) {
+            add_line_to_link(t, (uint32_t)(uintptr_t)found, b->ybase + b->y);
+            sk_buf_free(&key);
+            return (uint32_t)(uintptr_t)found;
         }
     }
+    if (t->links.len >= MAX_LINKS)
+        links_drop_oldest(t);
     sk_link l = {0};
     l.id = t->next_link++;
     l.key = id ? sk_xstrdup(key.ptr) : NULL;
@@ -258,6 +274,8 @@ static uint32_t register_link(sk_term *t, const char *id, const char *uri)
     l.uri = sk_xstrdup(uri);
     add_marker(&l, b, b->ybase + b->y);
     sk_vec_push(&t->links, l);
+    if (id)
+        *sk_map_put(&t->link_keys, sk_buf_str(&key)) = (void *)(uintptr_t)l.id;
     sk_buf_free(&key);
     return l.id;
 }
@@ -1898,6 +1916,7 @@ sk_term *sk_term_new(int cols, int rows, const sk_term_callbacks *cb)
     t->cur = default_attr;
     t->erase = default_attr;
     t->next_link = 1;
+    sk_map_init(&t->link_keys);
     buffers_init(t);
     modes_reset(t);
     t->mouse = SK_MOUSE_NONE;
@@ -1928,8 +1947,9 @@ void sk_term_free(sk_term *t)
     sk_buffer_free(&t->normal);
     sk_buffer_free(&t->alt);
     for (size_t i = 0; i < t->links.len; i++)
-        link_free(&t->links.ptr[i]);
+        link_free(t, &t->links.ptr[i]);
     sk_vec_free(&t->links);
+    sk_map_free(&t->link_keys);
     free(t->title);
     free(t->icon);
     free(t->seen);

@@ -70,6 +70,28 @@ static void test_link_ids(void)
     tt_close(&x);
 }
 
+/* A link to every cell, each its own id: they are looked up by a map,
+ * not each against every other, and only the newest 16384 or so are
+ * kept, so the oldest's cells link to nothing. */
+static void test_link_many(void)
+{
+    tt x;
+    tt_open(&x, 20, 3);
+    sk_buf b = {0};
+    for (int i = 0; i < 40000; i++)
+        sk_buf_printf(&b, "\x1b]8;id=%d;https://x/\x07" "a", i);
+    tt_feed(&x, sk_buf_cstr(&b));
+    uint32_t last = tt_cell(x.t, 19, 2).link;
+    CHECK(last != 0);
+    CHECK_STR(sk_term_link_id(x.t, last), "39999");
+    CHECK(sk_term_link_uri(x.t, 1) == NULL);
+    /* The newest one's id again is the same link. */
+    tt_feed(&x, "\r\n\x1b]8;id=39999;https://x/\x07" "b");
+    CHECK_INT(tt_cell(x.t, 0, 2).link, last);
+    sk_buf_free(&b);
+    tt_close(&x);
+}
+
 static void test_link_edges(void)
 {
     tt x;
@@ -133,6 +155,7 @@ const sk_test sk_suite_term_osc[] = {
     T(test_link),
     T(test_link_ids),
     T(test_link_edges),
+    T(test_link_many),
     T(test_link_lifetime),
     T(test_link_moves),
     {0},
