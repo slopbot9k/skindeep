@@ -366,6 +366,10 @@ static void test_refuses_tables(void)
     font f = made();
     sk_test_put16(f.d + f.kern + 10, 1000);
     REFUSED(f, "kern table whose pairs run past its end");
+    /* Its count of pairs, past a table of 11 bytes. */
+    f = made();
+    sk_test_put32(f.d + sk_test_font_record(f.d, "kern") + 12, 11);
+    REFUSED(f, "kern table too short for its first subtable");
     /* Its search shifts the first glyph 16 places in an int. */
     f = made();
     sk_test_put16(f.d + f.kern + 18, 0x8000);

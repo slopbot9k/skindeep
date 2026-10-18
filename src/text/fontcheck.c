@@ -781,7 +781,7 @@ static bool check_kern(checker *c)
         return fail(c, "has a kern table too short for its header");
     if (u16(t.p + 2) < 1)
         return true;
-    if (!inside(t, 0, 10))
+    if (!inside(t, 0, 12))
         return fail(c, "has a kern table too short for its first subtable");
     if (u16(t.p + 8) != 1)
         return true;
