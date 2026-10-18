@@ -1151,14 +1151,19 @@ static bool select_key(sk_chooser *c, const sk_key_event *k, uint32_t m)
         else if (k->key == SK_KEY_DOWN)
             choose_profile(c, c->prof + 1);
         return true;
+    /* With Alt they are not the select's: it chose and drew nothing. */
     case SK_KEY_HOME:
     case SK_KEY_PAGE_UP:
+        if (alt)
+            return false;
         choose_profile(c, 0);
-        return !alt;
+        return true;
     case SK_KEY_END:
     case SK_KEY_PAGE_DOWN:
+        if (alt)
+            return false;
         choose_profile(c, n ? n - 1 : 0);
-        return !alt;
+        return true;
     case SK_KEY_NONE:
         if (!strcmp(k->text, " ")) {
             open_list(c);

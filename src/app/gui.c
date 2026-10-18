@@ -1691,10 +1691,12 @@ typedef struct {
     bool waits;
     char *error, *note;
     double font_px;
+    double x, y; /* a dashboard press: where, for its error */
     char arg[];
 } act_msg;
 
 static void ui_answer(void *ud);
+static void ui_press_failed(void *ud);
 static void ui_mute(void *ud);
 static void ui_settings(void *ud);
 
@@ -1883,6 +1885,15 @@ static void do_action(void *ud)
         m->error = err;
         m->note = note;
         sk_ui_post_owned(ui_answer, m, drop_answer);
+        return;
+    }
+    /* A dashboard press waits for nothing, yet its error is the user's:
+     * logged, and shown where the press was. */
+    if (err && m->action == ACT_SESSION) {
+        sk_log("sessions: %s: %s", m->arg, err);
+        m->error = err;
+        free(note);
+        sk_ui_post_owned(ui_press_failed, m, drop_answer);
         return;
     }
     free(err);
@@ -2625,6 +2636,17 @@ static void ui_sessions(void *ud)
     free(m);
 }
 
+static void tip_set(gwin *w, const char *text, double x, double y);
+
+static void ui_press_failed(void *ud)
+{
+    act_msg *m = ud;
+    gwin *w = gwin_of(m->g, m->win);
+    if (w)
+        tip_set(w, m->error, m->x, m->y);
+    drop_answer(m);
+}
+
 static void ui_answer(void *ud)
 {
     act_msg *m = ud;
@@ -2906,11 +2928,12 @@ static void rename_finish(gwin *w, bool commit)
 }
 
 /* The clipboard answers later, maybe after its window has gone: the
- * answer finds the window by its id. */
+ * answer finds the window by its id, and goes to the tab it was asked
+ * for, the one being renamed or the one active, or nowhere. */
 typedef struct {
     gui *g;
-    int win;
-    void (*fn)(gwin *w, const char *utf8);
+    int win, tab;
+    void (*fn)(gwin *w, const char *utf8, int tab);
 } paste_req;
 
 static void on_pasted(void *ud, const char *utf8)
@@ -2918,20 +2941,21 @@ static void on_pasted(void *ud, const char *utf8)
     paste_req *r = ud;
     gwin *w = gwin_of(r->g, r->win);
     if (w)
-        r->fn(w, utf8);
+        r->fn(w, utf8, r->tab);
     free(r);
 }
 
-static void ask_clipboard(gwin *w, bool primary, void (*fn)(gwin *w, const char *utf8))
+static void ask_clipboard(gwin *w, bool primary, void (*fn)(gwin *w, const char *utf8, int tab))
 {
     paste_req *r = sk_xmalloc(sizeof *r);
-    *r = (paste_req){w->g, w->snap.id, fn};
+    int tab = sk_rename_editing(w->rename) ? sk_rename_tab(w->rename) : w->snap.active;
+    *r = (paste_req){w->g, w->snap.id, tab, fn};
     sk_clipboard_get(primary, on_pasted, r);
 }
 
-static void rename_paste(gwin *w, const char *utf8)
+static void rename_paste(gwin *w, const char *utf8, int tab)
 {
-    if (!sk_rename_editing(w->rename) || !utf8 || !*utf8)
+    if (!sk_rename_editing(w->rename) || sk_rename_tab(w->rename) != tab || !utf8 || !*utf8)
         return;
     sk_field_insert(sk_rename_field(w->rename), utf8);
     redraw_strips(w);
@@ -3301,6 +3325,8 @@ static bool dash_mouse(gwin *w, const sk_event *ev)
             m->g = w->g;
             m->win = w->snap.id;
             m->action = ACT_SESSION;
+            m->x = ev->mouse.x;
+            m->y = ev->mouse.y;
             memcpy(m->arg, key, n);
             sk_loop_post_owned(w->g->loop, do_action, m, drop_free);
         }
@@ -3806,10 +3832,10 @@ static void copy_selection(gwin *w, bool primary)
     free(text);
 }
 
-static void term_paste(gwin *w, const char *utf8)
+static void term_paste(gwin *w, const char *utf8, int tab)
 {
     sk_term *t = active_term(w);
-    if (!t || !utf8 || !*utf8)
+    if (!t || w->snap.active != tab || !utf8 || !*utf8)
         return;
     sk_term_input_modes m;
     sk_term_input_modes_of(t, &m);
@@ -3830,7 +3856,7 @@ static void on_drop(gwin *w, const char *const *paths, size_t n)
         return;
     sk_buf text = {0};
     sk_drop_text(&text, paths, n);
-    term_paste(w, sk_buf_cstr(&text));
+    term_paste(w, sk_buf_cstr(&text), w->snap.active);
     sk_buf_free(&text);
 }
 

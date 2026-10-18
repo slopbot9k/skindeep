@@ -168,6 +168,11 @@ static inline void sk_msg_void_long(id o, const char *sel, long a)
     SK_MSG(void (*)(id, SEL, long))(o, sk_sel(sel), a);
 }
 
+static inline void sk_msg_void_id_long(id o, const char *sel, id a, long b)
+{
+    SK_MSG(void (*)(id, SEL, id, long))(o, sk_sel(sel), a, b);
+}
+
 static inline BOOL sk_msg_bool(id o, const char *sel)
 {
     return SK_MSG(BOOL (*)(id, SEL))(o, sk_sel(sel));

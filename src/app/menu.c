@@ -633,6 +633,12 @@ static void say(sk_menu *m, const char *text, bool error)
     m->error = error;
     m->msg_scroll = 0;
     layout(m, false);
+    /* It stays where it is, unless the message widened or lengthened it
+     * past the window's edge: then it moves in as far as it must. */
+    if (m->x + m->w > m->win_w - EDGE)
+        m->x = SK_MAX(EDGE, m->win_w - m->w - EDGE);
+    if (m->y + m->h > m->win_h - EDGE)
+        m->y = SK_MAX(m->stage_top, m->win_h - EDGE - m->h);
 }
 
 void sk_menu_answer(sk_menu *m, unsigned press, const char *error, const char *note)

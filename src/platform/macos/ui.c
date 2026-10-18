@@ -1528,6 +1528,13 @@ void sk_window_free(sk_window *w)
     CFRelease(w->pacer);
     if (w->inside && !w->hidden)
         hide_cursor(false);
+    /* A sheet still up, a Close N tabs? or the folder picker, ends as
+     * cancelled first: its completion handler runs and the question is
+     * answered, where on a closed window it never was, and asked again
+     * nothing would open. NSModalResponseAbort. */
+    id sheet = sk_msg(w->win, "attachedSheet");
+    if (sheet)
+        sk_msg_void_id_long(w->win, "endSheet:returnCode:", sheet, -1001);
     sk_msg_void(w->win, "close");
     objc_autoreleasePoolPop(pool);
     /* Inside the app's handler, AppKit may be in the middle of a call on
