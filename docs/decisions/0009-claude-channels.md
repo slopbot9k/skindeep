@@ -33,6 +33,10 @@ subcommand:
    type, transcript path, session id). Prompt text, tool input and
    output, assistant messages and compact summaries are dropped inside
    the handler.
+   A body past 64 KiB, such as a large Write's PreToolUse, the hook
+   relay sends as its top-level numbers, booleans and strings of at most
+   4 KiB, so the event still counts and the tool's input never leaves
+   the relay (2026-10-17).
 3. Transcript tail, path taken from the payloads and retargeted whenever
    a payload's `transcript_path` or `session_id` changes (/clear,
    /resume). A new `session_id` resets the session family (`context.`,

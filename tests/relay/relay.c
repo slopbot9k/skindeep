@@ -208,6 +208,32 @@ static void test_hook_relay(void)
     server_free(&s);
 }
 
+/* A large Write's PreToolUse, past the receiver's 64 KiB, goes as its
+ * metadata alone, so the tool still counts: its input stays here. */
+static void test_hook_relay_sends_a_large_event_s_metadata(void)
+{
+    const char *root = sk_test_tmpdir();
+    server s;
+    server_start(&s, root, getpid(), 2000, false);
+    sk_buf big = {0};
+    sk_buf_append_c(&big, "{\"hook_event_name\":\"PreToolUse\",\"session_id\":\"s\",\"tool_input\":{\"content\":\"");
+    while (big.len <= 4 * SK_HTTP_MAX_BODY)
+        sk_buf_append_c(&big, "xxxxxxxxxxxxxxxx");
+    sk_buf_append_c(&big, "\"},\"tool_name\":\"Write\",\"prompt\":\"");
+    for (int i = 0; i < 5000; i++)
+        sk_buf_putc(&big, 'p');
+    sk_buf_append_c(&big, "\",\"duration_ms\":12,\"x\":true}");
+    int in = input(root, "big.json", big.ptr, big.len);
+    CHECK_INT(sk_relay_hook(root, in, getpid()), 0);
+    close(in);
+    server_stop(&s);
+    CHECK_INT(s.got, 1);
+    CHECK_STR(sk_buf_cstr(&s.body),
+              "{\"hook_event_name\":\"PreToolUse\",\"session_id\":\"s\",\"tool_name\":\"Write\",\"duration_ms\":12,\"x\":true}");
+    server_free(&s);
+    sk_buf_free(&big);
+}
+
 static void test_hook_relay_skips_what_it_must(void)
 {
     const char *root = sk_test_tmpdir();
@@ -357,6 +383,7 @@ const sk_test sk_suite_relay[] = {
     T(test_post_gives_up_in_time),
     T(test_hook_relay),
     T(test_hook_relay_skips_what_it_must),
+    T(test_hook_relay_sends_a_large_event_s_metadata),
     T(test_statusline_relay),
     T(test_statusline_without_command_or_window),
     T(test_statusline_signal_and_unread_stdin),

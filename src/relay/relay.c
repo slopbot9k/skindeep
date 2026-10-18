@@ -1,7 +1,9 @@
 #include "relay.h"
 
 #include "../base/base64.h"
+#include "../base/arena.h"
 #include "../base/http.h"
+#include "../base/json.h"
 #include "../base/paths.h"
 #include "../base/str.h"
 #include "../core/loop.h"
@@ -173,18 +175,58 @@ static void read_all(int fd, sk_buf *b, size_t cap, bool *over)
     }
 }
 
+/* A hook's body read at most, a large Write's or heredoc's input with it. */
+#define MAX_HOOK_IN ((size_t)64 << 20)
+/* A string the receiver may keep: an id, a path, a name. */
+#define MAX_KEPT_STRING 4096
+
+/* A body past the receiver's 64 KiB, such as a large Write's
+ * PreToolUse: its top-level numbers, booleans and short strings, the
+ * metadata the receiver keeps (decision 0009), so the event still
+ * counts. The tool's input and a long prompt stay here. False when it
+ * is no JSON object. */
+static bool reduce(const sk_buf *body, sk_buf *out)
+{
+    sk_arena a;
+    sk_arena_init(&a, 0);
+    const sk_json *root = sk_json_parse(&a, body->ptr, body->len, NULL);
+    bool ok = root && root->type == SK_JSON_OBJECT;
+    if (ok) {
+        sk_jw w;
+        sk_jw_init(&w, out, 0);
+        sk_jw_object(&w);
+        for (size_t i = 0; i < root->object.len; i++) {
+            const sk_json_member *m = &root->object.members[i];
+            const sk_json *v = &m->value;
+            bool scalar = v->type == SK_JSON_NUMBER || v->type == SK_JSON_BOOL ||
+                          (v->type == SK_JSON_STRING && v->string.len <= MAX_KEPT_STRING);
+            if (!scalar || m->key.len > MAX_KEPT_STRING)
+                continue;
+            sk_jw_key(&w, m->key);
+            sk_jw_value(&w, v);
+        }
+        sk_jw_object_end(&w);
+    }
+    sk_arena_free(&a);
+    return ok && out->len <= SK_HTTP_MAX_BODY;
+}
+
 int sk_relay_hook(const char *root, int in_fd, pid_t from)
 {
-    sk_buf body = {0};
+    sk_buf body = {0}, small = {0};
     bool over;
-    read_all(in_fd, &body, SK_HTTP_MAX_BODY, &over);
-    if (root && body.len && !over) {
+    read_all(in_fd, &body, MAX_HOOK_IN, &over);
+    const sk_buf *send = NULL;
+    if (!over)
+        send = body.len <= SK_HTTP_MAX_BODY ? &body : reduce(&body, &small) ? &small : NULL;
+    if (root && send && send->len) {
         char *sock = sk_relay_window(root, from);
         if (sock)
-            sk_relay_post(sock, "/hook", body.ptr, body.len, SK_RELAY_HOOK_MS);
+            sk_relay_post(sock, "/hook", send->ptr, send->len, SK_RELAY_HOOK_MS);
         free(sock);
     }
     sk_buf_free(&body);
+    sk_buf_free(&small);
     return 0;
 }
 
