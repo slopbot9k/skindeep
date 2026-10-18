@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 /* A skin's stylesheet, at most: the largest of the skins here is 13 KB,
@@ -22,7 +23,13 @@
 /* path's bytes, up to one past cap. */
 static char *slurp(const char *path, size_t cap, size_t *n)
 {
-    int fd = open(path, O_RDONLY | O_NONBLOCK);
+    /* path is real: a link there, or a fifo, was swapped in since. */
+    int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+    struct stat st;
+    if (fd >= 0 && (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode))) {
+        close(fd);
+        return NULL;
+    }
     if (fd < 0)
         return NULL;
     sk_buf b = {0};

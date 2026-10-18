@@ -657,7 +657,8 @@ static bool comma_list(sk_vctx *c, sk_vcur *v, item_fn one, size_t size, const v
 {
     SK_VEC(unsigned char) bytes = {0};
     size_t count = 0;
-    unsigned char item[256];
+    /* Aligned for the struct one() writes there. */
+    _Alignas(max_align_t) unsigned char item[256];
     while (!sk_vcur_end(v)) {
         sk_vcur it = sk_vcur_item(v);
         if (sk_vcur_end(&it) || !one(c, &it, item) || !sk_vcur_end(&it) || count >= SK_PACK_MAX_LIST) {
@@ -1465,6 +1466,7 @@ static bool radius(sk_vctx *c, sk_vcur *v, sk_css_len out[2])
     do {                                                                                                               \
         const void *p_;                                                                                                \
         uint16_t n_;                                                                                                   \
+        _Static_assert(sizeof(T) <= 256, "a list's item fits comma_list's buffer");                                    \
         if (!comma_list(c, &v, fnc, sizeof(T), &p_, &n_))                                                              \
             return false;                                                                                              \
         s->field = p_;                                                                                                 \

@@ -35,7 +35,8 @@ bool sk_files_list(const char *dir, sk_strv *names)
 
 bool sk_files_read(const char *path, size_t cap, sk_buf *out)
 {
-    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    /* Non-blocking, so a fifo is refused below rather than waited on. */
+    int fd = open(path, O_RDONLY | O_CLOEXEC | O_NONBLOCK);
     if (fd < 0)
         return false;
     struct stat st;

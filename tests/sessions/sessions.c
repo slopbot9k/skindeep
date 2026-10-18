@@ -6,6 +6,7 @@
  * the Codex rollout through a fake discovery, and the state. */
 #include "../../src/core/agentdirs.h"
 #include "../../src/platform/procinfo.h"
+#include "../../src/sessions/files.h"
 #include "../../src/sessions/sessions.h"
 #include "../test.h"
 
@@ -479,6 +480,19 @@ static void test_codex_rollout_one_try_per_sessions_folder_through_the_discovery
     free(root);
 }
 
+/* A fifo where a record or a transcript should be is refused, not
+ * waited on: opening it to read blocked until a writer came. */
+static void test_a_fifo_is_refused_not_waited_on(void)
+{
+    char *p = sk_path_join(sk_test_tmpdir(), "fifo");
+    CHECK(mkfifo(p, 0600) == 0);
+    sk_buf b = {0};
+    CHECK(!sk_files_read(p, 1024, &b));
+    CHECK_INT(b.len, 0);
+    sk_buf_free(&b);
+    free(p);
+}
+
 static void test_state_from_when_the_channel_was_written(void)
 {
     CHECK_STR(sk_sessions_state_of(0, 100000), "unknown");
@@ -489,6 +503,7 @@ static void test_state_from_when_the_channel_was_written(void)
 
 const sk_test sk_suite_sessions[] = {
     T(test_r1_the_record_names_the_session_not_the_newest_of_its_folder),
+    T(test_a_fifo_is_refused_not_waited_on),
     T(test_r2_a_record_of_another_process_with_this_pid_is_ignored),
     T(test_r3_a_session_named_before_its_transcript_is_written),
     T(test_r4_a_shared_sessions_folder_the_profile_holds_session_env),

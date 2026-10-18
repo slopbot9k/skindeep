@@ -785,7 +785,13 @@ static void follow_check(checker *k, const sk_json *o, const sk_json *r, const c
 static bool png_size(const char *path, uint32_t *w, uint32_t *h)
 {
     unsigned char b[24] = {0};
-    int fd = open(path, O_RDONLY);
+    /* path is real: a link there, or a fifo, was swapped in since. */
+    int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+    struct stat st;
+    if (fd >= 0 && (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode))) {
+        close(fd);
+        return false;
+    }
     if (fd < 0)
         return false;
     ssize_t got = 0;
@@ -1958,9 +1964,15 @@ static void model(sk_skin *s, const sk_json *root)
 
 static char *read_all(const char *path, size_t *n, int *error)
 {
-    int fd = open(path, O_RDONLY);
+    int fd = open(path, O_RDONLY | O_CLOEXEC | O_NONBLOCK);
     if (fd < 0) {
         *error = errno;
+        return NULL;
+    }
+    struct stat st;
+    if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
+        *error = S_ISDIR(st.st_mode) ? EISDIR : EINVAL;
+        close(fd);
         return NULL;
     }
     sk_buf b = {0};

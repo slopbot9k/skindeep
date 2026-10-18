@@ -49,6 +49,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <strings.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 /* The sections in decision 0037's order, which is the file's. */
@@ -188,7 +189,12 @@ static uint32_t blob_add(writer *w, const void *p, size_t n)
 
 static uint8_t *read_file(const char *path, size_t *n)
 {
-    int fd = open(path, O_RDONLY);
+    int fd = open(path, O_RDONLY | O_CLOEXEC | O_NONBLOCK);
+    struct stat st;
+    if (fd >= 0 && (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode))) {
+        close(fd);
+        return NULL;
+    }
     if (fd < 0)
         return NULL;
     sk_buf b = {0};
