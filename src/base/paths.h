@@ -40,5 +40,11 @@ char *sk_path_runtime_base(const sk_env *e);
 char *sk_path_join(const char *a, const char *b);
 /* mkdir -p, each directory it makes with mode; 0 or -1 with errno. */
 int sk_mkdirs(const char *path, mode_t mode);
+/* Whether path is a directory of this user's alone: no link, owned by
+ * the effective uid, and no bit for group or others. On a shared /tmp
+ * anyone may make a path first, so the runtime root and what the relays
+ * follow in it must be such a directory (decision 0016). When tighten,
+ * one of this user's with looser bits is made 0700 first. */
+bool sk_path_private_dir(const char *path, bool tighten);
 
 #endif

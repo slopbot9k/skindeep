@@ -2,7 +2,9 @@
  * rules are src/base/paths.h's, for both systems (decision 0036). */
 #include "runtime.h"
 
+#include "../base/paths.h"
 #include "../base/strv.h"
+#include "options.h"
 #include "js.h"
 
 #include <dirent.h>
@@ -124,7 +126,17 @@ char *sk_runtime_create(const sk_env *e, const char *given)
     sk_strv names = {0};
     uint64_t self = (uint64_t)getpid();
     int rc = -1;
-    if (sk_mkdirs(root, 0700) != 0 || !list(root, &names, NULL))
+    if (sk_mkdirs(root, 0700) != 0)
+        goto out;
+    /* Another user may have made it first, or a link to a folder of
+     * this user's, whose old pids' dirs the sweep would remove. */
+    if (!sk_path_private_dir(root, true)) {
+        sk_tell("%s is not a folder of this user's alone, so it is not used: remove it, or set XDG_RUNTIME_DIR",
+                root);
+        errno = EPERM;
+        goto out;
+    }
+    if (!list(root, &names, NULL))
         goto out;
     for (size_t i = 0; i < names.len; i++) {
         uint64_t pid = 0;

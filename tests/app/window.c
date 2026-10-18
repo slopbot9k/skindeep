@@ -829,9 +829,13 @@ static void test_a_tab_renamed(void)
     sk_arena_init(&ar, 0);
     ok(&a, "{\"op\":\"key\",\"key\":\"t\",\"mods\":" APP_MODS "}");
     const sk_json *p = NULL;
-    for (uint64_t until = sk_now_ms() + 5000; sk_now_ms() < until; sk_test_sleep_ms(50)) {
+    /* Both tabs in the strip, laid out: a loaded machine, as under the
+     * sanitizers, takes a while. */
+    for (uint64_t until = sk_now_ms() + 15000; sk_now_ms() < until; sk_test_sleep_ms(50)) {
         p = probe(&a, &ar);
-        if (len_of(sk_json_dig(p, "window", "tabs", NULL)) == 2)
+        double w = 0;
+        sk_json_as_number(sk_json_at(sk_json_at(sk_json_dig(p, "window", "tab_rects", NULL), 0), 1), &w);
+        if (len_of(sk_json_dig(p, "window", "tabs", NULL)) == 2 && w > 0)
             break;
     }
     double id = -1, x0 = 0, w0 = 0;

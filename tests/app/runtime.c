@@ -133,6 +133,37 @@ static void test_a_root_that_cannot_be_made_fails(void)
     free(blocker);
 }
 
+/* A root that is not this user's alone is not used (decision 0016): a
+ * link another user made on a shared /tmp, here one to a folder of this
+ * user's whose numbered dirs the sweep would remove. One of this user's
+ * with loose bits is made 0700. */
+static void test_a_root_not_of_this_user_alone_is_refused(void)
+{
+    const char *tmp = sk_test_tmpdir();
+    char *victim = path(tmp, "victim"), *kept = path(victim, "%ld", (long)dead_pid());
+    char *base = path(tmp, "linked");
+    char *root = path(base, "claude-skins");
+    CHECK_INT(sk_mkdirs(kept, 0700), 0);
+    CHECK_INT(sk_mkdirs(base, 0700), 0);
+    CHECK(symlink(victim, root) == 0);
+    sk_env e = env_in(base);
+    errno = 0;
+    CHECK(sk_runtime_create(&e, NULL) == NULL);
+    CHECK(errno == EPERM);
+    CHECK(exists(kept));
+    /* This user's own, made 0755: tightened, and used. */
+    char *loose_base = path(tmp, "loose"), *loose = path(loose_base, "claude-skins");
+    CHECK_INT(sk_mkdirs(loose, 0700), 0);
+    CHECK(chmod(loose, 0755) == 0);
+    e = env_in(loose_base);
+    char *dir = sk_runtime_create(&e, NULL);
+    CHECK(dir != NULL);
+    struct stat st;
+    CHECK(lstat(loose, &st) == 0 && (st.st_mode & 0777) == 0700);
+    CHECK_INT(sk_runtime_remove(dir), 0);
+    free(dir), free(victim), free(kept), free(base), free(root), free(loose_base), free(loose);
+}
+
 static void test_dangling_hook_links_are_swept(void)
 {
     const char *tmp = sk_test_tmpdir();
@@ -220,6 +251,7 @@ const sk_test sk_suite_runtime[] = {
     T(test_create_makes_a_private_dir_and_sweeps_dead_pids),
     T(test_the_launchers_dir_is_taken_when_it_lies_in_the_root),
     T(test_a_root_that_cannot_be_made_fails),
+    T(test_a_root_not_of_this_user_alone_is_refused),
     T(test_dangling_hook_links_are_swept),
     T(test_the_logs_and_the_settings_live_in_the_state_dir),
     T(test_rotate_keeps_the_newest_ten_logs),

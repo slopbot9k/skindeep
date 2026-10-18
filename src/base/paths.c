@@ -91,6 +91,23 @@ char *sk_path_runtime_base(const sk_env *e)
     return p;
 }
 
+bool sk_path_private_dir(const char *path, bool tighten)
+{
+    struct stat st;
+    if (!path || lstat(path, &st) != 0)
+        return false;
+    if (!S_ISDIR(st.st_mode) || st.st_uid != geteuid()) {
+        errno = EPERM;
+        return false;
+    }
+    if (!(st.st_mode & 077))
+        return true;
+    if (tighten && chmod(path, 0700) == 0 && lstat(path, &st) == 0 && S_ISDIR(st.st_mode) && !(st.st_mode & 077))
+        return true;
+    errno = EPERM;
+    return false;
+}
+
 int sk_mkdirs(const char *path, mode_t mode)
 {
     if (!*path) {

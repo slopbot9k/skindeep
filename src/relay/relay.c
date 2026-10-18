@@ -2,6 +2,7 @@
 
 #include "../base/base64.h"
 #include "../base/http.h"
+#include "../base/paths.h"
 #include "../base/str.h"
 #include "../core/loop.h"
 #include "../platform/proc.h"
@@ -20,14 +21,19 @@
 
 char *sk_relay_window(const char *root, pid_t from)
 {
-    if (!root || !*root)
+    /* Only a root of this user's alone: another's could link a pid to a
+     * socket that takes the hooks' payloads. */
+    if (!root || !*root || !sk_path_private_dir(root, false))
         return NULL;
+    uid_t me = geteuid();
     pid_t pid = from;
     for (int i = 0; i < SK_RELAY_MAX_DEPTH && pid > 1; i++) {
         sk_buf p = {0};
         sk_buf_printf(&p, "%s/pids/%ld", root, (long)pid);
         struct stat st;
-        if (stat(p.ptr, &st) == 0) /* follows the link: a dead one fails */
+        /* Follows the link: a dead one fails; a live one is the
+         * window's socket, this user's. */
+        if (stat(p.ptr, &st) == 0 && S_ISSOCK(st.st_mode) && st.st_uid == me)
             return p.ptr;
         sk_buf_free(&p);
         sk_proc_stat ps;

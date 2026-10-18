@@ -142,13 +142,30 @@ static void test_window_by_ancestry(void)
     CHECK(sk_relay_window(root, getpid()) == NULL);
     CHECK(sk_relay_window(NULL, getpid()) == NULL);
     mkdir(pids, 0700);
+    /* A plain file behind the link is no window. */
     fclose(fopen(target, "w"));
     CHECK(symlink(target, parents) == 0);
+    CHECK(sk_relay_window(root, getppid()) == NULL);
+    /* A socket of this user's is. */
+    unlink(target);
+    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    struct sockaddr_un addr;
+    memset(&addr, 0, sizeof addr);
+    addr.sun_family = AF_UNIX;
+    CHECK(strlen(target) < sizeof addr.sun_path);
+    memcpy(addr.sun_path, target, strlen(target));
+    CHECK(fd >= 0 && bind(fd, (struct sockaddr *)&addr, sizeof addr) == 0);
     /* This process's own link is dead: the search goes on to the parent. */
     CHECK(symlink("/nonexistent/socket", mine) == 0);
     char *found = sk_relay_window(root, getpid());
     CHECK_STR(found, parents);
     free(found);
+    /* A root others may write in is not followed (decision 0016). */
+    CHECK(chmod(root, 0755) == 0);
+    CHECK(sk_relay_window(root, getpid()) == NULL);
+    CHECK(chmod(root, 0700) == 0);
+    close(fd);
+    unlink(target);
 }
 
 static void test_post_round_trip(void)
