@@ -3,6 +3,7 @@
 #include "sessions.h"
 
 #include "../base/json.h"
+#include "../base/paths.h"
 #include "../core/agentdirs.h"
 #include "../platform/proc.h"
 #include "../platform/procinfo.h"
@@ -252,14 +253,7 @@ static char *holder(char *const *ps, const char *session)
 
 static bool plain_name(sk_str s)
 {
-    if (!s.len)
-        return false;
-    for (size_t i = 0; i < s.len; i++) {
-        char c = s.ptr[i];
-        if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-'))
-            return false;
-    }
-    return true;
+    return sk_path_plain_name(s.ptr, s.len);
 }
 
 /* The three fields of one record, read with the pull reader so that no

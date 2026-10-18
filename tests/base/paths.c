@@ -55,6 +55,22 @@ static void test_join(void)
     CHECK_PATH(sk_path_join("", "b"), "b");
 }
 
+static void test_plain_names_and_clean_paths(void)
+{
+    CHECK(sk_path_plain_name("50d19891-3b25-49d5-a0ea-18c978401581", 36));
+    CHECK(!sk_path_plain_name("..", 2));
+    CHECK(!sk_path_plain_name("a/b", 3));
+    CHECK(!sk_path_plain_name("a_b", 3));
+    CHECK(!sk_path_plain_name("", 0));
+    CHECK(sk_path_clean_absolute("/home/u/.claude/projects/-home-u/s.jsonl"));
+    CHECK(sk_path_clean_absolute("/a/..b/.c"));
+    CHECK(!sk_path_clean_absolute("rel/s.jsonl"));
+    CHECK(!sk_path_clean_absolute("/a/../b"));
+    CHECK(!sk_path_clean_absolute("/a/./b"));
+    CHECK(!sk_path_clean_absolute("/a/.."));
+    CHECK(!sk_path_clean_absolute(NULL));
+}
+
 static void test_current_env(void)
 {
     sk_env e;
@@ -100,6 +116,7 @@ const sk_test sk_suite_paths[] = {
     T(test_macos),
     T(test_no_home),
     T(test_join),
+    T(test_plain_names_and_clean_paths),
     T(test_current_env),
     T(test_mkdirs),
     {0},

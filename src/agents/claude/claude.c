@@ -38,12 +38,21 @@ static void on_line(void *ud, const sk_json *obj, bool history)
     sk_claude_core_line(a->core, a->tail_file, obj, history);
 }
 
+/* Where Claude Code keeps a transcript: an absolute path to a .jsonl
+ * file, with no . or .. in it. A payload naming anything else is not
+ * followed, and no title is appended to what it names. */
+static bool transcript_ok(const char *file)
+{
+    size_t n = file ? strlen(file) : 0;
+    return n > 6 && !strcmp(file + n - 6, ".jsonl") && sk_path_clean_absolute(file);
+}
+
 /* The tail is swapped only after the core has taken the payload, so a
  * history replay never runs inside one. */
 static void follow(adapter *a)
 {
     const char *file = sk_claude_core_transcript(a->core);
-    if (!file || (a->tail && !strcmp(a->tail_file, file)))
+    if (!file || !transcript_ok(file) || (a->tail && !strcmp(a->tail_file, file)))
         return;
     if (a->tail) {
         sk_tail_stop(a->tail);
@@ -164,7 +173,8 @@ static void report(void *self, sk_report *out)
 static bool rename_part(void *self, const char *name)
 {
     adapter *a = self;
-    if (a->closed || !a->core || !sk_claude_core_session(a->core) || !sk_claude_core_transcript(a->core))
+    if (a->closed || !a->core || !sk_claude_core_session(a->core) || !sk_claude_core_transcript(a->core) ||
+        !transcript_ok(sk_claude_core_transcript(a->core)))
         return false;
     if (sk_claude_title_record(sk_claude_core_transcript(a->core), sk_claude_core_session(a->core), name) != 0) {
         sk_claude_logf(a->ctx.log, a->ctx.log_ud, "claude adapter: rename not recorded: %s", strerror(errno));

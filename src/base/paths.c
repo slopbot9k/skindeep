@@ -143,3 +143,30 @@ int sk_mkdirs(const char *path, mode_t mode)
     free(p);
     return 0;
 }
+
+bool sk_path_plain_name(const char *s, size_t n)
+{
+    if (!s || !n)
+        return false;
+    for (size_t i = 0; i < n; i++) {
+        char c = s[i];
+        if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-'))
+            return false;
+    }
+    return true;
+}
+
+bool sk_path_clean_absolute(const char *path)
+{
+    if (!path || path[0] != '/')
+        return false;
+    for (const char *p = path; *p;) {
+        while (*p == '/')
+            p++;
+        size_t n = strcspn(p, "/");
+        if ((n == 1 && p[0] == '.') || (n == 2 && p[0] == '.' && p[1] == '.'))
+            return false;
+        p += n;
+    }
+    return true;
+}

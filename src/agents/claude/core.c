@@ -5,6 +5,8 @@
  * the subagent count. No I/O and no clock: the bus owns the rates. */
 #include "internal.h"
 
+#include "../../base/paths.h"
+
 #include <math.h>
 #include <string.h>
 
@@ -98,7 +100,9 @@ static void forget_transcript(sk_claude_core *c)
 /* A payload without a session id is placed in no session and ignored. */
 bool sk_claude_core_enter_ids(sk_claude_core *c, const char *session, const char *transcript)
 {
-    if (!session || !*session)
+    /* The id names a folder beside the transcript when a tab is renamed:
+     * a payload whose id is no plain name is not Claude Code's. */
+    if (!session || !sk_path_plain_name(session, strlen(session)))
         return false;
     if (c->session && strcmp(session, c->session) != 0) {
         sk_source_reset(c->src);

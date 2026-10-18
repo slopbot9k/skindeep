@@ -46,5 +46,10 @@ int sk_mkdirs(const char *path, mode_t mode);
  * follow in it must be such a directory (decision 0016). When tighten,
  * one of this user's with looser bits is made 0700 first. */
 bool sk_path_private_dir(const char *path, bool tighten);
+/* A name that is one component of a path and no more: A-Z a-z 0-9 and
+ * -, as Claude Code's session ids and Codex's thread ids are. */
+bool sk_path_plain_name(const char *s, size_t n);
+/* An absolute path with no . or .. component. */
+bool sk_path_clean_absolute(const char *path);
 
 #endif

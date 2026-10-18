@@ -687,6 +687,23 @@ static const sk_json *todo(const char *todos, size_t n)
     return v;
 }
 
+/* A session id names a folder when a tab is renamed: one that is no
+ * plain name, such as ../up, is not Claude Code's, and the payload is
+ * not taken. */
+static void test_c18_a_session_id_that_is_no_plain_name_is_not_taken(void)
+{
+    sk_arena_init(&A, 0);
+    made m = make();
+    CHECK(!sk_claude_core_enter_ids(m.core, "../up", "T"));
+    CHECK(!sk_claude_core_enter_ids(m.core, "a/b", "T"));
+    CHECK(!sk_claude_core_enter_ids(m.core, "", "T"));
+    CHECK(sk_claude_core_session(m.core) == NULL);
+    CHECK(sk_claude_core_enter_ids(m.core, "50d19891-3b25-49d5-a0ea-18c978401581", "T"));
+    CHECK_STR(sk_claude_core_session(m.core), "50d19891-3b25-49d5-a0ea-18c978401581");
+    unmake(&m);
+    sk_arena_free(&A);
+}
+
 static void test_c17_a_todowrite_writes_the_checklist_a_session_change_forgets_it(void)
 {
     sk_arena_init(&A, 0);
@@ -731,5 +748,6 @@ const sk_test sk_suite_claude_core[] = {
     T(test_c15_a_silent_injected_statusline_is_logged_once_per_session),
     T(test_c16_a_custom_title_names_the_session_a_new_session_clears_it),
     T(test_c17_a_todowrite_writes_the_checklist_a_session_change_forgets_it),
+    T(test_c18_a_session_id_that_is_no_plain_name_is_not_taken),
     {0},
 };

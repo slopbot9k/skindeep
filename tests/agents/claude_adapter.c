@@ -607,6 +607,28 @@ static void test_a_rename_goes_into_the_transcript_and_custom_title_json(void)
     harness_free(&h);
 }
 
+/* A payload naming a file that is no transcript, such as a shell's rc
+ * file, is neither followed nor written: a rename appends to nothing. */
+static void test_a_rename_writes_only_to_a_transcript(void)
+{
+    harness h;
+    harness_init(&h, NULL);
+    harness_ready(&h);
+    char *rc = sk_path_join(h.dir, "rc");
+    sk_buf body = {0};
+    sk_buf_printf(&body,
+                  "{\"hook_event_name\":\"SessionStart\",\"source\":\"startup\",\"session_id\":\"sess-1\","
+                  "\"transcript_path\":\"%s\"}",
+                  rc);
+    CHECK_INT(post(&h, h.target, "hook", body.ptr), 204);
+    CHECK(until(&h, first_landed));
+    CHECK(!h.part.ops->rename(h.part.self, "the plan"));
+    CHECK(access(rc, F_OK) != 0);
+    sk_buf_free(&body);
+    free(rc);
+    harness_free(&h);
+}
+
 /* ---- claude-adapter.test.js, through the built relay ---- */
 
 typedef struct {
@@ -864,6 +886,7 @@ const sk_test sk_suite_claude_adapter[] = {
     T(test_claude_attach_follows_the_jobs_transcript_keeping_two_fields),
     T(test_a_subcommand_gets_nothing_injected),
     T(test_a_rename_goes_into_the_transcript_and_custom_title_json),
+    T(test_a_rename_writes_only_to_a_transcript),
     T(test_s1_the_relays_fill_the_bus_the_transcript_follows_close_releases_all),
     T(test_s2_after_the_window_is_gone_a_hook_is_silent_and_the_settings_stay),
     T(test_s3_the_statusline_relay_runs_the_profiles_statusline_with_no_window),
