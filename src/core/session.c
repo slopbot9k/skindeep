@@ -13,6 +13,7 @@
  * node-pty waits for its socket to close. */
 #include "session.h"
 
+#include "../base/spawn.h"
 #include "../platform/pty.h"
 #include "command.h"
 
@@ -493,6 +494,7 @@ static ssize_t read_full(int fd, void *buf, size_t n)
 static int report_channel(int sv[2])
 {
     int raw[2];
+    /* Under the spawn lock spawn() holds. */
     if (socketpair(AF_UNIX, SOCK_STREAM, 0, raw) != 0)
         return -1;
     sv[0] = raw[0];
@@ -526,6 +528,10 @@ static int spawn(sk_session *s, int cols, int rows, sk_buf *why)
     int master = -1, slave = -1, report[2] = {-1, -1};
     char *name = NULL;
     const char *what = "cannot open a pty";
+    /* Until the child holds its ends and ours are closed, no other
+     * thread spawns (base/spawn.h). */
+    sk_spawn_lock();
+    bool locked = true;
     master = posix_openpt(O_RDWR | O_NOCTTY);
     if (master < 0 || fcntl(master, F_SETFD, FD_CLOEXEC) != 0 || grantpt(master) != 0 ||
         unlockpt(master) != 0)
@@ -571,6 +577,8 @@ static int spawn(sk_session *s, int cols, int rows, sk_buf *why)
     slave = -1;
     close(report[1]);
     report[1] = -1;
+    sk_spawn_unlock();
+    locked = false;
     what = "cannot fork";
     errno = fork_errno;
     if (pid < 0)
@@ -601,6 +609,8 @@ static int spawn(sk_session *s, int cols, int rows, sk_buf *why)
 
 fail:
     sk_buf_printf(why, "%s: %s", what, strerror(errno ? errno : EINVAL));
+    if (locked)
+        sk_spawn_unlock();
     for (int i = 0; i < 2; i++)
         if (report[i] >= 0)
             close(report[i]);

@@ -10,6 +10,7 @@
 #include "../audio.h"
 
 #include "../../base/log.h"
+#include "../../base/spawn.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -69,11 +70,14 @@ static bool spawn(pipe_dev *d, size_t i)
 {
     const char *name = sk_audio_player_name(d->kinds[i]);
     int p[2];
+    sk_spawn_lock();
     if (pipe(p) != 0) {
+        sk_spawn_unlock();
         sk_log("skin sounds: no pipe for %s: %s", name, strerror(errno));
         return false;
     }
     int r = high_cloexec(p[0]), w = high_cloexec(p[1]);
+    sk_spawn_unlock();
     if (r < 0 || w < 0) {
         if (r >= 0)
             close(r);
@@ -100,7 +104,9 @@ static bool spawn(pipe_dev *d, size_t i)
     sk_strv argv = {0};
     sk_audio_player_argv(&argv, d->kinds[i], d->paths.ptr[i], d->rate, SK_MIXER_CHANNELS, big_endian());
     pid_t pid;
+    sk_spawn_lock();
     int err = posix_spawn(&pid, d->paths.ptr[i], &fa, &at, sk_strv_argv(&argv), environ);
+    sk_spawn_unlock();
     sk_strv_free(&argv);
     posix_spawnattr_destroy(&at);
     posix_spawn_file_actions_destroy(&fa);

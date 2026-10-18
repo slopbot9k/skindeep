@@ -1,5 +1,6 @@
 #include "vizfeed.h"
 
+#include "../base/spawn.h"
 #include "../core/command.h"
 #include "../viz/viz.h"
 #include "lastskin.h"
@@ -368,10 +369,14 @@ static int high_cloexec(int fd)
 
 static bool make_pipe(int p[2])
 {
-    if (pipe(p) != 0)
+    sk_spawn_lock();
+    if (pipe(p) != 0) {
+        sk_spawn_unlock();
         return false;
+    }
     p[0] = high_cloexec(p[0]);
     p[1] = high_cloexec(p[1]);
+    sk_spawn_unlock();
     if (p[0] >= 0 && p[1] >= 0)
         return true;
     if (p[0] >= 0)
@@ -418,7 +423,9 @@ static bool spawn(sk_vizfeed *f, size_t i, const char *path, char **why)
     for (const char *const *a = r->args; a && *a; a++)
         sk_strv_push(&argv, *a);
     pid_t pid;
+    sk_spawn_lock();
     int err = posix_spawn(&pid, path, &fa, &at, sk_strv_argv(&argv), environ);
+    sk_spawn_unlock();
     sk_strv_free(&argv);
     posix_spawnattr_destroy(&at);
     posix_spawn_file_actions_destroy(&fa);

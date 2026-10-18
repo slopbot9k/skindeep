@@ -2,6 +2,7 @@
 
 #include "../audio/sounds.h"
 #include "../base/log.h"
+#include "../base/spawn.h"
 #include "../base/utf8.h"
 #include "../core/command.h"
 #include "../core/loop.h"
@@ -1306,7 +1307,10 @@ static void run_opener(gui *g, const char *what)
     char *argv[] = {"xdg-open", (char *)what, NULL};
 #endif
     pid_t pid;
-    if (posix_spawnp(&pid, argv[0], NULL, NULL, argv, environ) == 0)
+    sk_spawn_lock();
+    int e = posix_spawnp(&pid, argv[0], NULL, NULL, argv, environ);
+    sk_spawn_unlock();
+    if (e == 0)
         sk_loop_child(g->loop, pid, reaped, NULL);
     else
         sk_log("cannot run %s for %s", argv[0], what);

@@ -5,6 +5,7 @@
 #include "board.h"
 
 #include "../base/paths.h"
+#include "../base/spawn.h"
 #include "../core/env.h"
 
 #include <ctype.h>
@@ -748,10 +749,13 @@ static job *run_job(sk_boards *b, const char *cmd, char *const *argv, sk_str inp
     quiet_env(b, &env);
     char *path = find_program(cmd, &env);
     int in[2] = {-1, -1}, out[2] = {-1, -1}, null_fd = -1;
+    /* Marked close-on-exec before another thread spawns (base/spawn.h). */
+    sk_spawn_lock();
     bool ok = path && input.len <= MAX_INPUT && pipe(in) == 0;
     ok = ok && cloexec(in[0]) && cloexec(in[1]) && pipe(out) == 0;
     ok = ok && cloexec(out[0]) && cloexec(out[1]) &&
          (null_fd = open("/dev/null", O_RDWR | O_CLOEXEC)) >= 0;
+    sk_spawn_unlock();
     if (ok) {
         /* The input is in the pipe before the child starts, so writing
          * it never meets a reader that has gone. */
@@ -776,6 +780,7 @@ static job *run_job(sk_boards *b, const char *cmd, char *const *argv, sk_str inp
         sigfillset(&all);
         sigemptyset(&none);
         pthread_sigmask(SIG_SETMASK, &all, &old);
+        sk_spawn_lock();
         j->pid = fork();
         if (j->pid == 0) {
             for (int sig = 1; sig < MAX_SIGNAL; sig++)
@@ -786,6 +791,7 @@ static job *run_job(sk_boards *b, const char *cmd, char *const *argv, sk_str inp
             execve(path, argv, envp);
             _exit(127);
         }
+        sk_spawn_unlock();
         pthread_sigmask(SIG_SETMASK, &old, NULL);
     }
     for (int i = 0; i < 2; i++)

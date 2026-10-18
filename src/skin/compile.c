@@ -5,6 +5,7 @@
 
 #include "../base/paths.h"
 #include "../base/sha256.h"
+#include "../base/spawn.h"
 #include "../core/command.h"
 #include "../core/loop.h"
 #include "packfmt.h"
@@ -227,7 +228,11 @@ char *sk_skinc_beside(const char *self, const char *path)
 static int run_skinc(const char *skinc, const char *dir, const char *pack, sk_buf *messages)
 {
     int fds[2];
+    /* The write end is skinc's alone: no other thread spawns while it is
+     * open here (base/spawn.h), or the read would wait on that child. */
+    sk_spawn_lock();
     if (pipe(fds) != 0) {
+        sk_spawn_unlock();
         sk_buf_printf(messages, "cannot run %s: %s\n", skinc, strerror(errno));
         return -1;
     }
@@ -244,6 +249,7 @@ static int run_skinc(const char *skinc, const char *dir, const char *pack, sk_bu
     int e = posix_spawn(&pid, skinc, &fa, NULL, argv, environ);
     posix_spawn_file_actions_destroy(&fa);
     close(fds[1]);
+    sk_spawn_unlock();
     if (e != 0) {
         close(fds[0]);
         sk_buf_printf(messages, "cannot run %s: %s\n", skinc, strerror(e));

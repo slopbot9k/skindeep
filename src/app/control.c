@@ -2,6 +2,7 @@
 
 #include "../base/arena.h"
 #include "../base/paths.h"
+#include "../base/spawn.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -225,7 +226,7 @@ static void on_accept(sk_loop *loop, int fd, short revents, void *ud)
     (void)revents;
     sk_control *c = ud;
     for (;;) {
-        int cfd = accept(fd, NULL, NULL);
+        int cfd = sk_accept_cloexec(fd);
         if (cfd < 0) {
             if (errno == EINTR)
                 continue;
@@ -274,7 +275,7 @@ sk_control *sk_control_open(sk_loop *loop, const char *path, sk_control_fn fn, v
     }
     if (there)
         unlink(path);
-    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    int fd = sk_socket_cloexec(AF_UNIX, SOCK_STREAM);
     mode_t old = umask(077);
     bool ok = fd >= 0 && fcntl(fd, F_SETFD, FD_CLOEXEC) == 0 && fcntl(fd, F_SETFL, O_NONBLOCK) == 0 &&
               bind(fd, (struct sockaddr *)&addr, sizeof addr) == 0 && listen(fd, 8) == 0;

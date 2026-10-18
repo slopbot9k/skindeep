@@ -11,6 +11,7 @@
 
 #include "../../base/http.h"
 #include "../../base/paths.h"
+#include "../../base/spawn.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -135,7 +136,7 @@ static void on_accept(sk_loop *loop, int fd, short revents, void *ud)
     (void)revents;
     sk_claude_server *s = ud;
     for (;;) {
-        int cfd = accept(fd, NULL, NULL);
+        int cfd = sk_accept_cloexec(fd);
         if (cfd < 0) {
             if (errno == EINTR)
                 continue;
@@ -181,7 +182,7 @@ sk_claude_server *sk_claude_server_start(sk_loop *loop, const char *dir, const c
     }
     memcpy(addr.sun_path, path, strlen(path));
     unlink(path);
-    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    int fd = sk_socket_cloexec(AF_UNIX, SOCK_STREAM);
     if (fd < 0 || !set_flags(fd) || bind(fd, (struct sockaddr *)&addr, sizeof addr) != 0 || listen(fd, 64) != 0) {
         int saved = errno;
         if (fd >= 0)

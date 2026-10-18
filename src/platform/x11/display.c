@@ -1,6 +1,8 @@
 /* $DISPLAY and the Unix socket it leads to. */
 #include "x11.h"
 
+#include "../../base/spawn.h"
+
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -88,7 +90,7 @@ static int connect_one(const char *path, int *err_no)
         memcpy(sa.sun_path, path, n);
         len = (socklen_t)sizeof sa;
     }
-    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    int fd = sk_socket_cloexec(AF_UNIX, SOCK_STREAM);
     if (fd < 0) {
         *err_no = errno;
         return -1;

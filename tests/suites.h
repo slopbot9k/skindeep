@@ -10,6 +10,7 @@
     X(base64)                                                                \
     X(http)                                                                  \
     X(paths)                                                                 \
+    X(spawn)                                                                 \
     X(loop)                                                                  \
     X(relay)                                                                 \
     X(bus)                                                                   \

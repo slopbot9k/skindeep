@@ -5,6 +5,7 @@
  * 1 is a cancel. */
 #include "picker.h"
 
+#include "../../base/spawn.h"
 #include "../../core/command.h"
 
 #include <errno.h>
@@ -176,12 +177,16 @@ void sk_picker_run(sk_loop *loop, const sk_picker_opts *o, const char *path, sk_
         return;
     }
     int p[2];
+    sk_spawn_lock();
     if (pipe(p) != 0) {
-        cannot(done, ud, name_of(prog), errno);
+        int e = errno;
+        sk_spawn_unlock();
+        cannot(done, ud, name_of(prog), e);
         free(file);
         return;
     }
     int r = high_cloexec(p[0]), w = high_cloexec(p[1]);
+    sk_spawn_unlock();
     if (r < 0 || w < 0) {
         int e = errno;
         if (r >= 0)
@@ -210,7 +215,9 @@ void sk_picker_run(sk_loop *loop, const sk_picker_opts *o, const char *path, sk_
     sk_strv argv = {0};
     sk_picker_argv(prog, o, &argv);
     pid_t pid;
+    sk_spawn_lock();
     int e = posix_spawnp(&pid, file, &fa, &at, sk_strv_argv(&argv), environ);
+    sk_spawn_unlock();
     sk_strv_free(&argv);
     posix_spawnattr_destroy(&at);
     posix_spawn_file_actions_destroy(&fa);

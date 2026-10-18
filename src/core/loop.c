@@ -1,5 +1,7 @@
 #include "loop.h"
 
+#include "../base/spawn.h"
+
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -80,12 +82,11 @@ uint64_t sk_now_ms(void)
 
 static int nonblocking_pipe(int p[2])
 {
-    if (pipe(p) != 0)
+    if (sk_pipe_cloexec(p) != 0)
         return -1;
     for (int i = 0; i < 2; i++) {
         int fl = fcntl(p[i], F_GETFL);
-        if (fl < 0 || fcntl(p[i], F_SETFL, fl | O_NONBLOCK) != 0 ||
-            fcntl(p[i], F_SETFD, FD_CLOEXEC) != 0) {
+        if (fl < 0 || fcntl(p[i], F_SETFL, fl | O_NONBLOCK) != 0) {
             close(p[0]);
             close(p[1]);
             return -1;

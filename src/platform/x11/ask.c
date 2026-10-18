@@ -4,6 +4,8 @@
  * its stdout read to its end, then the child reaped by its pid. */
 #include "ask.h"
 
+#include "../../base/spawn.h"
+
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
@@ -101,12 +103,15 @@ int sk_ask_run(const char *path, const char *title, const char *message, const c
     if (prog == SK_PICKER_NONE)
         return -1;
     int p[2];
+    sk_spawn_lock();
     if (pipe(p) != 0) {
+        sk_spawn_unlock();
         free(file);
         return -1;
     }
     fcntl(p[0], F_SETFD, FD_CLOEXEC);
     fcntl(p[1], F_SETFD, FD_CLOEXEC);
+    sk_spawn_unlock();
     posix_spawn_file_actions_t fa;
     posix_spawn_file_actions_init(&fa);
     posix_spawn_file_actions_addopen(&fa, 0, "/dev/null", O_RDONLY, 0);
@@ -124,7 +129,9 @@ int sk_ask_run(const char *path, const char *title, const char *message, const c
     sk_strv argv = {0};
     sk_ask_argv(prog, title, message, detail, choices, n, &argv);
     pid_t pid;
+    sk_spawn_lock();
     int e = posix_spawnp(&pid, file, &fa, &at, sk_strv_argv(&argv), environ);
+    sk_spawn_unlock();
     sk_strv_free(&argv);
     posix_spawnattr_destroy(&at);
     posix_spawn_file_actions_destroy(&fa);
@@ -228,7 +235,9 @@ void sk_ask_confirm_run(sk_loop *loop, const char *path, const sk_ask_question *
     sk_strv argv = {0};
     sk_ask_confirm_argv(prog, q, &argv);
     pid_t pid;
+    sk_spawn_lock();
     int e = posix_spawnp(&pid, file, &fa, &at, sk_strv_argv(&argv), environ);
+    sk_spawn_unlock();
     sk_strv_free(&argv);
     posix_spawnattr_destroy(&at);
     posix_spawn_file_actions_destroy(&fa);
