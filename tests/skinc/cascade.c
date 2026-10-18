@@ -44,6 +44,43 @@ static void test_order_and_specificity(void)
     sk_diags_free(&d);
 }
 
+/* var() as browsers bound it: a value that would expand past its size
+ * or nest past the parser's depth is invalid, so a few lines of CSS
+ * cannot take gigabytes (a review's six levels took 3.7 GB) or crash
+ * skinc's stack; the fallback stands instead. */
+static void test_custom_properties_are_bounded(void)
+{
+    sk_buf css = {0};
+    sk_buf_append_c(&css, ".p { --v0: x x x x x x x x x x;\n");
+    for (int l = 1; l <= 6; l++) {
+        sk_buf_printf(&css, "  --v%d:", l);
+        for (int k = 0; k < 10; k++)
+            sk_buf_printf(&css, " var(--v%d)", l - 1);
+        sk_buf_append_c(&css, ";\n");
+    }
+    /* Each wraps the one before in 25 parentheses: past 64 by the third. */
+    sk_buf_append_c(&css, "  --d0: 1px;\n");
+    for (int l = 1; l <= 40; l++) {
+        sk_buf_printf(&css, "  --d%d: ", l);
+        for (int k = 0; k < 25; k++)
+            sk_buf_putc(&css, '(');
+        sk_buf_printf(&css, "var(--d%d)", l - 1);
+        for (int k = 0; k < 25; k++)
+            sk_buf_putc(&css, ')');
+        sk_buf_append_c(&css, ";\n");
+    }
+    sk_buf_append_c(&css, "  padding-top: var(--v6, 3px); padding-left: var(--d40, 4px) }\n");
+    sk_front f;
+    sk_diags d = {0};
+    COMPILES(&f, &d, PANEL_PQ, NULL, sk_buf_cstr(&css));
+    const sk_css_style *s = panel_style(&f);
+    CHECK_STR(sk_test_prop(s, SK_PROP_PADDING_TOP), "3px");
+    CHECK_STR(sk_test_prop(s, SK_PROP_PADDING_LEFT), "4px");
+    sk_front_free(&f);
+    sk_diags_free(&d);
+    sk_buf_free(&css);
+}
+
 static void test_inheritance_em_currentcolor(void)
 {
     sk_front f;
@@ -461,7 +498,7 @@ const sk_test sk_suite_skinc_cascade[] = {
     T(test_app_declarations_from_the_manifest),
     T(test_blockified),
     T(test_layout_refusals),
-    T(test_order_and_specificity), T(test_inheritance_em_currentcolor), T(test_custom_properties),
+    T(test_order_and_specificity), T(test_inheritance_em_currentcolor), T(test_custom_properties), T(test_custom_properties_are_bounded),
     T(test_states_of_a_widget),    T(test_stage_and_list),              T(test_segments_and_limits),
     T(test_counters),              T(test_fonts_resolved),              T(test_errors_with_lines),
     T(test_too_many_states),       T(test_keyframes_and_animation),     {0},

@@ -153,12 +153,42 @@ static void value_text(sk_buf *b, const sk_cv *cv, size_t n)
 
 typedef SK_VEC(sk_cv) cv_vec;
 
+/* var() is bounded as browsers bound it: a value of more than
+ * MAX_VALUE component values, or nesting deeper than MAX_NEST, the
+ * parser's own depth, is invalid; and an element's substitutions make
+ * MAX_MADE component values at most, past which all fail. Without them
+ * a few lines of CSS expand to gigabytes, or nest past any stack. */
+#define MAX_VALUE 16384
+#define MAX_NEST 64
+#define MAX_MADE ((size_t)1 << 20)
+
 typedef struct {
     sk_front *f;
     sk_custom *items; /* the element's custom properties as they stand */
     size_t n;
     uint8_t *state;   /* per item: 0 raw, 1 resolving, 2 done, 3 invalid */
+    size_t made;      /* component values substitution made, this element */
 } customs_ctx;
+
+/* How deep x's blocks and functions nest: 0 for a token. */
+static int depth_of(const sk_cv *x)
+{
+    if (x->kind == SK_CV_TOKEN)
+        return 0;
+    int d = 0;
+    for (size_t i = 0; i < x->n && d < MAX_NEST; i++)
+        d = SK_MAX(d, depth_of(&x->kids[i]));
+    return d + 1;
+}
+
+/* One more component value into out, counted against the bounds. */
+static bool put(customs_ctx *c, cv_vec *out, sk_cv x)
+{
+    if (out->len >= MAX_VALUE || ++c->made > MAX_MADE)
+        return false;
+    sk_vec_push(out, x);
+    return true;
+}
 
 static bool resolve_custom(customs_ctx *c, size_t i, int depth);
 
@@ -173,8 +203,9 @@ static sk_custom *find_custom(customs_ctx *c, sk_str name, size_t *at)
 }
 
 /* cv with every var() replaced by its custom property's tokens, or its
- * fallback; false when one names nothing and has none. */
-static bool substitute(customs_ctx *c, const sk_cv *cv, size_t n, cv_vec *out, int depth)
+ * fallback, and in *deep how deep what it made nests; false when one
+ * names nothing and has none, or past the bounds. */
+static bool substitute(customs_ctx *c, const sk_cv *cv, size_t n, cv_vec *out, int depth, int *deep)
 {
     if (depth > 32)
         return false;
@@ -202,9 +233,11 @@ static bool substitute(customs_ctx *c, const sk_cv *cv, size_t n, cv_vec *out, i
             sk_custom *cu = find_custom(c, name, &at);
             if (cu && resolve_custom(c, at, depth + 1)) {
                 for (size_t q = 0; q < cu->n; q++)
-                    sk_vec_push(out, cu->cv[q]);
+                    if (!put(c, out, cu->cv[q]))
+                        return false;
+                *deep = SK_MAX(*deep, cu->deep);
             } else if (has_fallback) {
-                if (!substitute(c, x->kids + j, x->n - j, out, depth + 1))
+                if (!substitute(c, x->kids + j, x->n - j, out, depth + 1, deep))
                     return false;
             } else {
                 return false;
@@ -213,20 +246,25 @@ static bool substitute(customs_ctx *c, const sk_cv *cv, size_t n, cv_vec *out, i
         }
         if (x->kind != SK_CV_TOKEN && sk_has_var(x->kids, x->n)) {
             cv_vec kids = {0};
-            if (!substitute(c, x->kids, x->n, &kids, depth + 1)) {
+            int inner = 0;
+            if (!substitute(c, x->kids, x->n, &kids, depth + 1, &inner) || inner + 1 > MAX_NEST) {
                 sk_vec_free(&kids);
                 return false;
             }
+            *deep = SK_MAX(*deep, inner + 1);
             sk_cv y = *x;
             y.n = kids.len;
             y.kids = kids.len ? sk_arena_array(&c->f->arena, kids.len, sizeof *y.kids) : NULL;
             if (kids.len)
                 memcpy(y.kids, kids.ptr, kids.len * sizeof *y.kids);
             sk_vec_free(&kids);
-            sk_vec_push(out, y);
+            if (!put(c, out, y))
+                return false;
             continue;
         }
-        sk_vec_push(out, *x);
+        if (!put(c, out, *x))
+            return false;
+        *deep = SK_MAX(*deep, depth_of(x));
     }
     return true;
 }
@@ -241,8 +279,10 @@ static bool resolve_custom(customs_ctx *c, size_t i, int depth)
     }
     c->state[i] = 1;
     cv_vec out = {0};
-    bool ok = substitute(c, c->items[i].cv, c->items[i].n, &out, depth + 1);
+    int deep = 0;
+    bool ok = substitute(c, c->items[i].cv, c->items[i].n, &out, depth + 1, &deep) && deep <= MAX_NEST;
     if (ok) {
+        c->items[i].deep = deep;
         sk_cv *cv = out.len ? sk_arena_array(&c->f->arena, out.len, sizeof *cv) : NULL;
         if (out.len)
             memcpy(cv, out.ptr, out.len * sizeof *cv);
@@ -486,7 +526,8 @@ static const sk_cv *tokens(computer *c, sk_xdecl *x, size_t *n, bool *bad)
         return x->d->value;
     }
     cv_vec out = {0};
-    if (!substitute(&c->cc, x->d->value, x->d->n, &out, 0)) {
+    int deep = 0;
+    if (!substitute(&c->cc, x->d->value, x->d->n, &out, 0, &deep) || deep > MAX_NEST) {
         sk_vec_free(&out);
         *bad = true;
         return NULL;
@@ -599,7 +640,7 @@ static void customs(computer *c, const sk_customs *parent, ranked *r, size_t nr)
                 items.ptr[at] = *p;
             continue;
         }
-        sk_custom cu = {name, x->d->value, x->d->n};
+        sk_custom cu = {name, x->d->value, x->d->n, 0};
         if (at != SIZE_MAX)
             items.ptr[at] = cu;
         else
@@ -612,6 +653,7 @@ static void customs(computer *c, const sk_customs *parent, ranked *r, size_t nr)
         memcpy(c->cc.items, items.ptr, items.len * sizeof *items.ptr);
     sk_vec_free(&items);
     c->cc.state = c->cc.n ? sk_arena_zalloc(&c->f->arena, c->cc.n) : NULL;
+    c->cc.made = 0;
     /* The parent's are resolved already. */
     for (size_t i = 0; i < c->cc.n; i++)
         for (size_t k = 0; parent && k < parent->n; k++)

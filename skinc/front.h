@@ -63,11 +63,13 @@ typedef struct {
     uint32_t matched;   /* elements it matched in some state */
 } sk_entry;
 
-/* A custom property's computed value: its tokens. */
+/* A custom property's computed value: its tokens, and how deep their
+ * blocks and functions nest once resolved. */
 typedef struct {
     const char *name;
     const sk_cv *cv;
     size_t n;
+    int deep;
 } sk_custom;
 
 typedef struct {
