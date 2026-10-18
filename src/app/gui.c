@@ -499,6 +499,15 @@ static void drop_snapshot(void *ud)
     free(pair);
 }
 
+/* Every window's id, as many as there are: malloc'd, *n of them. */
+static int *win_ids(const gui *g, size_t *n)
+{
+    size_t want = sk_tabs_wins(g->tabs, NULL, 0);
+    int *ids = sk_xcalloc(want ? want : 1, sizeof *ids);
+    *n = SK_MIN(sk_tabs_wins(g->tabs, ids, want), want);
+    return ids;
+}
+
 /* Every window's tabs as the UI shows them, posted to it. */
 static void post_snapshot(gui *g)
 {
@@ -506,9 +515,8 @@ static void post_snapshot(gui *g)
     if (!g->tabs)
         return;
     snapshot *s = sk_xcalloc(1, sizeof *s);
-    int ids[64];
-    size_t nw = sk_tabs_wins(g->tabs, ids, SK_LEN(ids));
-    nw = SK_MIN(nw, SK_LEN(ids));
+    size_t nw;
+    int *ids = win_ids(g, &nw);
     s->wins = sk_xcalloc(nw ? nw : 1, sizeof *s->wins);
     sk_tab_list list = {0};
     for (size_t k = 0; k < nw; k++) {
@@ -540,6 +548,7 @@ static void post_snapshot(gui *g)
         if (active)
             strip_of(g, active, &w->strip);
     }
+    free(ids);
     sk_vec_free(&list);
     s->current = sk_tabs_current(g->tabs);
     s->unseen = (int)(g->problems.len - g->problems_seen);
@@ -557,8 +566,8 @@ static void on_strip_poll(sk_loop *loop, void *ud)
     (void)loop;
     gui *g = ud;
     sk_buf key = {0};
-    int ids[64];
-    size_t nw = SK_MIN(sk_tabs_wins(g->tabs, ids, SK_LEN(ids)), SK_LEN(ids));
+    size_t nw;
+    int *ids = win_ids(g, &nw);
     for (size_t k = 0; k < nw; k++) {
         sk_tab *a = sk_tabs_active_of(g->tabs, ids[k]);
         if (!a)
@@ -569,6 +578,7 @@ static void on_strip_poll(sk_loop *loop, void *ud)
                       s.notice ? s.notice : "");
         free_strip(&s);
     }
+    free(ids);
     if (!g->strip_key || strcmp(g->strip_key, sk_buf_cstr(&key))) {
         free(g->strip_key);
         g->strip_key = sk_xstrdup(sk_buf_cstr(&key));
@@ -950,8 +960,8 @@ static void on_metrics(sk_loop *loop, void *ud)
     (void)loop;
     gui *g = ud;
     check_names(g);
-    int ids[64];
-    size_t nw = SK_MIN(sk_tabs_wins(g->tabs, ids, SK_LEN(ids)), SK_LEN(ids));
+    size_t nw;
+    int *ids = win_ids(g, &nw);
     for (size_t k = 0; k < nw; k++) {
         sk_tab *a = sk_tabs_active_of(g->tabs, ids[k]);
         sk_bus *bus = a ? bus_of(a) : NULL;
@@ -963,6 +973,7 @@ static void on_metrics(sk_loop *loop, void *ud)
         sk_skin_metrics_of(bus, &m->m);
         sk_ui_post_owned(ui_metrics, m, drop_metrics);
     }
+    free(ids);
 }
 
 typedef struct {

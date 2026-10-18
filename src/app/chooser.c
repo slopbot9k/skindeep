@@ -540,6 +540,8 @@ static size_t row_at(const sk_chooser *c, double y)
 static size_t offset_at(sk_chooser *c, int k, double x)
 {
     field *f = field_of(c, k);
+    if (!f)
+        return 0;
     double want = x - (c->lay.ctl[k].x + BORDER + FIELD_PAD - f->scroll);
     size_t best = 0;
     double best_d = fabs(want);
@@ -1294,9 +1296,13 @@ static bool mouse_move(sk_chooser *c, double x, double y)
 {
     bool redraw = false;
     if (c->selecting) {
+        /* A drag whose focus left the fields, as a key may move it,
+         * selects no more. */
         field *f = focused_field(c);
-        size_t at = offset_at(c, c->focus, x);
-        if (f && at != f->caret) {
+        size_t at = f ? offset_at(c, c->focus, x) : 0;
+        if (!f)
+            c->selecting = false;
+        else if (at != f->caret) {
             f->caret = at;
             redraw = true;
         }
