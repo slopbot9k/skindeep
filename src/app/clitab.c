@@ -46,6 +46,19 @@ static void on_log(void *ud, const char *msg)
         t->c->log(t->c->ud, msg);
 }
 
+/* The agent's and the bus's lines, the adapter's "following ..." among
+ * them, say which tab they are of. */
+static void tab_log(void *ud, const char *msg)
+{
+    clitab *t = ud;
+    if (!t->c->log)
+        return;
+    sk_buf b = {0};
+    sk_buf_printf(&b, "tab %d: %s", t->id, msg);
+    t->c->log(t->c->ud, sk_buf_cstr(&b));
+    sk_buf_free(&b);
+}
+
 static void on_tell(void *ud, const char *msg)
 {
     clitab *t = ud;
@@ -154,7 +167,7 @@ int sk_clitab_make(const sk_clitab_config *c, sk_tab *tab, const sk_tab_spec *sp
     t->id = tab->id;
     t->dir = dir;
     t->note = spec->note ? sk_xstrdup(spec->note) : NULL;
-    t->bus = sk_bus_new(c->log, c->ud);
+    t->bus = sk_bus_new(tab_log, t);
     t->ctx.cmd = tab->cmd.ptr;
     t->ctx.cwd = tab->cwd;
     t->ctx.env = &tab->env;
@@ -165,8 +178,8 @@ int sk_clitab_make(const sk_clitab_config *c, sk_tab *tab, const sk_tab_spec *sp
     t->ctx.statusline = c->statusline;
     t->ctx.bus = t->bus;
     t->ctx.loop = c->loop;
-    t->ctx.log = c->log;
-    t->ctx.log_ud = c->ud;
+    t->ctx.log = tab_log;
+    t->ctx.log_ud = t;
     t->agent = sk_agent_open(&t->ctx);
     sk_session_opts o;
     memset(&o, 0, sizeof o);

@@ -72,6 +72,27 @@ static int run(const char *bin, const char *const *args, const char *const *extr
     return WIFEXITED(ws) ? WEXITSTATUS(ws) : 128 + WTERMSIG(ws);
 }
 
+/* The text of the headless run's log under tmp/state, malloc'd, or NULL. */
+static char *headless_log(const char *tmp)
+{
+    sk_buf dir = {0};
+    sk_buf_printf(&dir, "%s/state/claude-skins", tmp);
+    DIR *d = opendir(dir.ptr);
+    char *text = NULL;
+    for (struct dirent *e; d && !text && (e = readdir(d));) {
+        if (!strstr(e->d_name, "-headless-") || !strstr(e->d_name, ".log"))
+            continue;
+        sk_buf p = {0};
+        sk_buf_printf(&p, "%s/%s", dir.ptr, e->d_name);
+        text = sk_test_read(p.ptr, NULL);
+        sk_buf_free(&p);
+    }
+    if (d)
+        closedir(d);
+    sk_buf_free(&dir);
+    return text;
+}
+
 static void test_the_fake_claude_session_shows_its_meters(void)
 {
     const char *bin = getenv("SK_SKINNED_BIN"), *fake = getenv("SK_FAKE_DIR");
@@ -114,6 +135,10 @@ static void test_the_fake_claude_session_shows_its_meters(void)
         CHECK(strstr(text, "\"limits.five_hour_pct\":1"));
         CHECK(strstr(text, "\"event.prompt\":"));
     }
+    /* The adapter's lines say which tab they are of. */
+    char *log = headless_log(tmp);
+    CHECK(log && strstr(log, "tab 1: claude adapter: injected=true"));
+    free(log);
     sk_runtime_remove(short_run);
     free(pty);
     free(text);
